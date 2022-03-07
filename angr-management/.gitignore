@@ -1,0 +1,25 @@
+projects
+
+# Python cruft
+*.pyc
+*.pyo
+*.egg-info
+dist
+build
+MANIFEST
+start.spec
+
+# vim temp files
+*.swp
+
+# emacs temp files
+*~
+
+# enaml cache
+__enamlcache__/
+
+*.spec
+
+
+.vscode
+.idea
