@@ -1,10 +1,10 @@
 from typing import List, Set, Optional, Dict, Union, TYPE_CHECKING
 
-from ...sim_type import SimStruct
+from ...sim_type import SimStruct, SimTypePointer, SimTypeArray
 from ..analysis import Analysis, AnalysesHub
 from .simple_solver import SimpleSolver
 from .translator import TypeTranslator
-from .typeconsts import Struct, Pointer, TypeConstant, Array, Int8
+from .typeconsts import Struct, Pointer, TypeConstant, Array
 from .typevars import Equivalence
 
 if TYPE_CHECKING:
@@ -26,8 +26,8 @@ class Typehoon(Analysis):
 
     User may specify ground truth, which will override all types at certain program points during constraint solving.
     """
-    def __init__(self, constraints, ground_truth=None, var_mapping: Optional[Dict['SimVariable','TypeVariable']]=None,
-                 prioritize_char_array_over_struct: bool=True,
+    def __init__(self, constraints, ground_truth=None,
+                 var_mapping: Optional[Dict['SimVariable',Set['TypeVariable']]]=None,
                  must_struct: Optional[Set['TypeVariable']]=None,
                  ):
         """
@@ -36,7 +36,6 @@ class Typehoon(Analysis):
         :param ground_truth:        A set of SimType-style solutions for some or all type variables. They will be
                                     respected during type solving.
         :param var_mapping:
-        :param prioritize_char_array_over_struct:
         :param must_struct:
         """
 
@@ -50,9 +49,6 @@ class Typehoon(Analysis):
         self.structs = None
         self.simtypes_solution = None
 
-        # a bunch of arguments to tweak with
-        self._prioritize_char_array_over_struct = prioritize_char_array_over_struct
-
         # import pprint
         # pprint.pprint(self._var_mapping)
         # pprint.pprint(self._constraints)
@@ -63,16 +59,23 @@ class Typehoon(Analysis):
     # Public methods
     #
 
-    def update_variable_types(self, func_addr: Union[int,str], var_to_typevar):
+    def update_variable_types(self, func_addr: Union[int,str], var_to_typevars):
 
-        for var, typevar in var_to_typevar.items():
-            type_ = self.simtypes_solution.get(typevar, None)
-            if type_ is not None:
-                # print("{} -> {}: {}".format(var, typevar, type_))
-                name = None
-                if isinstance(type_, SimStruct):
-                    name = type_.name
-                self.kb.variables[func_addr].set_variable_type(var, type_, name=name)
+        for var, typevars in var_to_typevars.items():
+            for typevar in typevars:
+                type_ = self.simtypes_solution.get(typevar, None)
+                if type_ is not None:
+                    # print("{} -> {}: {}".format(var, typevar, type_))
+                    # Hack: if a global address is of a pointer type and it is not an array, we unpack the type
+                    if func_addr == "global" and isinstance(type_, SimTypePointer) \
+                            and not isinstance(type_.pts_to, SimTypeArray):
+                        type_ = type_.pts_to
+
+                    name = None
+                    if isinstance(type_, SimStruct):
+                        name = type_.name
+
+                    self.kb.variables[func_addr].set_variable_type(var, type_, name=name)
 
     def pp_constraints(self) -> None:
         """
@@ -81,7 +84,11 @@ class Typehoon(Analysis):
         if self._var_mapping is None:
             raise ValueError("Variable mapping does not exist.")
 
-        typevar_to_var = dict((v, k) for k, v in self._var_mapping.items())
+        typevar_to_var = { }
+        for k, typevars in self._var_mapping.items():
+            for tv in typevars:
+                typevar_to_var[tv] = k
+
         print("### {} constraints".format(len(self._constraints)))
         for constraint in self._constraints:
             print("    " + constraint.pp_str(typevar_to_var))
@@ -96,7 +103,11 @@ class Typehoon(Analysis):
         if self.solution is None:
             raise RuntimeError("Please run type solver before calling pp_solution().")
 
-        typevar_to_var = dict((v, k) for k, v in self._var_mapping.items())
+        typevar_to_var = { }
+        for k, typevars in self._var_mapping.items():
+            for tv in typevars:
+                typevar_to_var[tv] = k
+
         print("### {} solutions".format(len(self.solution)))
         for typevar in sorted(self.solution.keys(), key=str):
             sol = self.solution[typevar]
@@ -157,18 +168,16 @@ class Typehoon(Analysis):
             offset0 = offsets[0]
             field0: TypeConstant = tc.fields[offset0]
 
-            # special case: struct {0:int8} will be translated to char if we want to prioritize char arrays over
-            # structs
-            if self._prioritize_char_array_over_struct \
-                    and len(tc.fields) == 1 \
-                    and 0 in tc.fields \
-                    and isinstance(tc.fields[0], Int8):
+            if len(tc.fields) == 1 and 0 in tc.fields:
                 return field0
 
             # are all fields the same?
             if len(tc.fields) > 1 and all(tc.fields[off] == field0 for off in offsets):
                 # are all fields aligned properly?
-                alignment = field0.size
+                try:
+                    alignment = field0.size
+                except NotImplementedError:
+                    alignment = 1
                 if all(off % alignment == 0 for off in offsets):
                     # yeah!
                     max_offset = offsets[-1]

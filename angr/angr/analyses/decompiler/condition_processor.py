@@ -1,20 +1,27 @@
 from collections import defaultdict
-from typing import Generator, Dict, Any
+from typing import Generator, Dict, Any, Optional, Set, List
 import operator
 import logging
 
 import networkx
-import sympy
 
 import claripy
 import ailment
 
+from ...utils.lazy_import import lazy_import
+from ...utils import is_pyinstaller
 from ...utils.graph import dominates, shallow_reverse
 from ...block import Block, BlockNode
 from ..cfg.cfg_utils import CFGUtils
 from .structurer_nodes import (EmptyBlockNotice, SequenceNode, CodeNode, SwitchCaseNode, BreakNode,
                                ConditionalBreakNode, LoopNode, ConditionNode, ContinueNode, CascadingConditionNode)
-from .utils import extract_jump_targets, switch_extract_cmp_bounds
+
+if is_pyinstaller():
+    # PyInstaller is not happy with lazy import
+    import sympy
+else:
+    sympy = lazy_import("sympy")
+
 
 l = logging.getLogger(__name__)
 
@@ -28,19 +35,23 @@ class ConditionProcessor:
     """
     Convert between claripy AST and AIL expressions. Also calculates reaching conditions of all nodes on a graph.
     """
-    def __init__(self, condition_mapping=None):
+    def __init__(self, arch, condition_mapping=None):
+        self.arch = arch
         self._condition_mapping: Dict[str,Any] = {} if condition_mapping is None else condition_mapping
+        self.jump_table_conds: Dict[int,Set] = defaultdict(set)
         self.reaching_conditions = {}
         self.guarding_conditions = {}
         self._ast2annotations = {}
 
     def clear(self):
         self._condition_mapping = {}
+        self.jump_table_conds = defaultdict(set)
         self.reaching_conditions = {}
         self.guarding_conditions = {}
         self._ast2annotations = {}
 
-    def recover_reaching_conditions(self, region, with_successors=False, jump_tables=None):
+    def recover_reaching_conditions(self, region, with_successors=False,
+                                    case_entry_to_switch_head: Optional[Dict[int,int]]=None):
 
         def _strictly_postdominates(inv_idoms, node_a, node_b):
             """
@@ -66,13 +77,15 @@ class ConditionProcessor:
                     edge_conditions[edge] = predicate
                     predicate_mapping[predicate] = dst
 
-        if jump_tables:
-            self.recover_reaching_conditions_for_jumptables(region, jump_tables, edge_conditions)
-
         if with_successors and region.graph_with_successors is not None:
             _g = region.graph_with_successors
         else:
             _g = region.graph
+
+        # special handling for jump table entries - do not allow crossing between cases
+        if case_entry_to_switch_head:
+            _g = self._remove_crossing_edges_between_cases(_g, case_entry_to_switch_head)
+
         end_nodes = {n for n in _g.nodes() if _g.out_degree(n) == 0}
         inverted_graph: networkx.DiGraph = shallow_reverse(_g)
         if end_nodes:
@@ -94,6 +107,15 @@ class ConditionProcessor:
         sorted_nodes = CFGUtils.quasi_topological_sort_nodes(_g)
         terminating_nodes = [ ]
         for node in sorted_nodes:
+            # create special conditions for all nodes that are jump table entries
+            if case_entry_to_switch_head:
+                if node.addr in case_entry_to_switch_head:
+                    jump_target_var = self.create_jump_target_var(case_entry_to_switch_head[node.addr])
+                    cond = jump_target_var == claripy.BVV(node.addr, self.arch.bits)
+                    reaching_conditions[node] = cond
+                    self.jump_table_conds[case_entry_to_switch_head[node.addr]].add(cond)
+                    continue
+
             preds = _g.predecessors(node)
             reaching_condition = None
 
@@ -121,23 +143,7 @@ class ConditionProcessor:
             if reaching_condition is not None:
                 reaching_conditions[node] = self.simplify_condition(reaching_condition)
 
-        # My hypothesis to be proved: in any regioned graph, there must be a node with a 0 out-degree whose reaching
-        # conditions can be marked as True. In other words, if all 0 out-degree nodes have non-trivial reaching
-        # conditions, we can always pick one of them and change its reaching condition to True, without changing the
-        # semantics of the regioned graph.
-        if terminating_nodes and all(not reaching_conditions[node].is_true() for node in terminating_nodes
-                                     if node in reaching_conditions):
-            # pick the node with the greatest in-degree
-            terminating_nodes = sorted(terminating_nodes, key=_g.in_degree)
-            node_with_greatest_indegree = terminating_nodes[-1]
-            if _g.in_degree(node_with_greatest_indegree) > 1:
-                # forcing the in-degree to be greater than 1 allows us to skip the case blocks in switch-cases
-                # otherwise structurer will fail to structure the control flow
-                reaching_conditions[node_with_greatest_indegree] = claripy.true
-                l.warning("Marking node %r as trivially reachable. Disable this optimization in condition_processor.py "
-                          "if it leads to incorrect decompilation result.", node_with_greatest_indegree)
-
-        # Another hypothesis: for nodes where two paths come together *and* those that cannot be further structured into
+        # My hypothesis: for nodes where two paths come together *and* those that cannot be further structured into
         # another if-else construct (we take the short-cut by testing if the operator is an "Or" after running our
         # condition simplifiers previously), we are better off using their "guarding conditions" instead of their
         # reaching conditions for if-else. see my super long chatlog with rhelmot on 5/14/2021.
@@ -179,43 +185,6 @@ class ConditionProcessor:
 
         self.reaching_conditions = reaching_conditions
         self.guarding_conditions = guarding_conditions
-
-    def recover_reaching_conditions_for_jumptables(self, region, jump_tables, edge_conditions):
-
-        addr2nodes = dict((node.addr, node) for node in region.graph.nodes())
-
-        # special handling for jump tables
-        for src in region.graph.nodes():
-            try:
-                last_stmt = self.get_last_statement(src)
-            except EmptyBlockNotice:
-                continue
-            successor_addrs = extract_jump_targets(last_stmt)
-            if len(successor_addrs) != 2:
-                continue
-
-            for t in successor_addrs:
-                if t in addr2nodes and t in jump_tables:
-                    # this is a candidate!
-                    target = t
-                    break
-            else:
-                continue
-
-            cmp = switch_extract_cmp_bounds(last_stmt)
-            if not cmp:
-                continue
-
-            cmp_expr, cmp_lb, cmp_ub = cmp  # pylint:disable=unused-variable
-
-            jump_table = jump_tables[target]
-            node_a = addr2nodes[target]
-
-            # edge conditions
-            for i, entry_addr in enumerate(jump_table.jumptable_entries):
-                cond = self.claripy_ast_from_ail_condition(cmp_expr) == i + cmp_lb
-                edge = node_a, addr2nodes[entry_addr]
-                edge_conditions[edge] = cond
 
     def remove_claripy_bool_asts(self, node, memo=None):
 
@@ -362,7 +331,7 @@ class ConditionProcessor:
         raise NotImplementedError()
 
     @classmethod
-    def get_last_statements(cls, block):
+    def get_last_statements(cls, block) -> List[Optional[ailment.Stmt.Statement]]:
         if type(block) is SequenceNode:
             for last_node in reversed(block.nodes):
                 try:
@@ -405,9 +374,13 @@ class ConditionProcessor:
                     s.extend(last_stmts)
                 except EmptyBlockNotice:
                     pass
+            else:
+                s.append(None)
             if block.false_node:
                 last_stmts = cls.get_last_statements(block.false_node)
                 s.extend(last_stmts)
+            else:
+                s.append(None)
             return s
         if type(block) is CascadingConditionNode:
             s = [ ]
@@ -417,6 +390,8 @@ class ConditionProcessor:
                     s.extend(last_stmts)
                 except EmptyBlockNotice:
                     pass
+            else:
+                s.append(None)
             for _, node in block.condition_and_nodes:
                 last_stmts = cls.get_last_statements(node)
                 s.extend(last_stmts)
@@ -431,6 +406,8 @@ class ConditionProcessor:
                 s.extend(cls.get_last_statements(case))
             if block.default_node is not None:
                 s.extend(cls.get_last_statements(block.default_node))
+            else:
+                s.append(None)
             return s
         if type(block) is GraphRegion:
             # normally this should not happen. however, we have test cases that trigger this case.
@@ -492,12 +469,12 @@ class ConditionProcessor:
     # Expression conversion
     #
 
-    def _convert_extract(self, hi, lo, expr, memo=None):
+    def _convert_extract(self, hi, lo, expr, tags, memo=None):
         # ailment does not support Extract. We translate Extract to Convert and shift.
         if lo == 0:
-            # TODO: Keep track of tags
             return ailment.Expr.Convert(None, expr.size(), hi + 1, False,
                                         self.convert_claripy_bool_ast(expr, memo=memo),
+                                        **tags,
                                         )
 
         raise NotImplementedError("This case will be implemented once encountered.")
@@ -521,61 +498,70 @@ class ConditionProcessor:
         if isinstance(cond, ailment.Expr.Expression):
             return cond
 
-        if cond.op == "BoolS" and claripy.is_true(cond):
-            return cond
-        if cond.args[0] in self._condition_mapping:
+        if cond.op in {"BoolS", "BoolV"} and claripy.is_true(cond):
+            return ailment.Expr.Const(None, None, True, 1)
+        if cond in self._condition_mapping:
+            return self._condition_mapping[cond]
+        if cond.op in {"BVS", "BoolS"} and cond.args[0] in self._condition_mapping:
             return self._condition_mapping[cond.args[0]]
 
-        def _binary_op_reduce(op, args, signed=False):
+        def _binary_op_reduce(op, args, tags, signed=False):
             r = None
             for arg in args:
                 if r is None:
                     r = self.convert_claripy_bool_ast(arg, memo=memo)
                 else:
-                    # TODO: Keep track of tags
-                    r = ailment.Expr.BinaryOp(None, op, (r, self.convert_claripy_bool_ast(arg, memo=memo)), signed)
+                    r = ailment.Expr.BinaryOp(None, op, (r, self.convert_claripy_bool_ast(arg, memo=memo)), signed,
+                                              **tags)
             return r
 
-        def _unary_op_reduce(op, arg):
+        def _unary_op_reduce(op, arg, tags):
             r = self.convert_claripy_bool_ast(arg, memo=memo)
             # TODO: Keep track of tags
-            return ailment.Expr.UnaryOp(None, op, r)
+            return ailment.Expr.UnaryOp(None, op, r, **tags)
 
         _mapping = {
-            'Not': lambda cond_: _unary_op_reduce('Not', cond_.args[0]),
-            'And': lambda cond_: _binary_op_reduce('LogicalAnd', cond_.args),
-            'Or': lambda cond_: _binary_op_reduce('LogicalOr', cond_.args),
-            '__le__': lambda cond_: _binary_op_reduce('CmpLE', cond_.args, signed=True),
-            'SLE': lambda cond_: _binary_op_reduce('CmpLE', cond_.args, signed=True),
-            '__lt__': lambda cond_: _binary_op_reduce('CmpLT', cond_.args, signed=True),
-            'SLT': lambda cond_: _binary_op_reduce('CmpLT', cond_.args, signed=True),
-            'UGT': lambda cond_: _binary_op_reduce('CmpGT', cond_.args),
-            'UGE': lambda cond_: _binary_op_reduce('CmpGE', cond_.args),
-            '__gt__': lambda cond_: _binary_op_reduce('CmpGT', cond_.args, signed=True),
-            '__ge__': lambda cond_: _binary_op_reduce('CmpGE', cond_.args, signed=True),
-            'SGT': lambda cond_: _binary_op_reduce('CmpGT', cond_.args, signed=True),
-            'SGE': lambda cond_: _binary_op_reduce('CmpGE', cond_.args, signed=True),
-            'ULT': lambda cond_: _binary_op_reduce('CmpLT', cond_.args),
-            'ULE': lambda cond_: _binary_op_reduce('CmpLE', cond_.args),
-            '__eq__': lambda cond_: _binary_op_reduce('CmpEQ', cond_.args),
-            '__ne__': lambda cond_: _binary_op_reduce('CmpNE', cond_.args),
-            '__add__': lambda cond_: _binary_op_reduce('Add', cond_.args, signed=False),
-            '__sub__': lambda cond_: _binary_op_reduce('Sub', cond_.args),
-            '__mul__': lambda cond_: _binary_op_reduce('Mul', cond_.args),
-            '__xor__': lambda cond_: _binary_op_reduce('Xor', cond_.args),
-            '__or__': lambda cond_: _binary_op_reduce('Or', cond_.args, signed=False),
-            '__and__': lambda cond_: _binary_op_reduce('And', cond_.args),
-            '__lshift__': lambda cond_: _binary_op_reduce('Shl', cond_.args),
-            '__rshift__': lambda cond_: _binary_op_reduce('Sar', cond_.args),
-            'LShR': lambda cond_: _binary_op_reduce('Shr', cond_.args),
-            'BVV': lambda cond_: ailment.Expr.Const(None, None, cond_.args[0], cond_.size()),
-            'BoolV': lambda cond_: ailment.Expr.Const(None, None, True, 1) if cond_.args[0] is True
-                                                                        else ailment.Expr.Const(None, None, False, 1),
-            'Extract': lambda cond_: self._convert_extract(*cond_.args, memo=memo),
+            'Not': lambda cond_, tags: _unary_op_reduce('Not', cond_.args[0], tags),
+            'And': lambda cond_, tags: _binary_op_reduce('LogicalAnd', cond_.args, tags),
+            'Or': lambda cond_, tags: _binary_op_reduce('LogicalOr', cond_.args, tags),
+            '__le__': lambda cond_, tags: _binary_op_reduce('CmpLE', cond_.args, tags, signed=True),
+            'SLE': lambda cond_, tags: _binary_op_reduce('CmpLE', cond_.args, tags, signed=True),
+            '__lt__': lambda cond_, tags: _binary_op_reduce('CmpLT', cond_.args, tags, signed=True),
+            'SLT': lambda cond_, tags: _binary_op_reduce('CmpLT', cond_.args, tags, signed=True),
+            'UGT': lambda cond_, tags: _binary_op_reduce('CmpGT', cond_.args, tags),
+            'UGE': lambda cond_, tags: _binary_op_reduce('CmpGE', cond_.args, tags),
+            '__gt__': lambda cond_, tags: _binary_op_reduce('CmpGT', cond_.args, tags, signed=True),
+            '__ge__': lambda cond_, tags: _binary_op_reduce('CmpGE', cond_.args, tags, signed=True),
+            'SGT': lambda cond_, tags: _binary_op_reduce('CmpGT', cond_.args, tags, signed=True),
+            'SGE': lambda cond_, tags: _binary_op_reduce('CmpGE', cond_.args, tags, signed=True),
+            'ULT': lambda cond_, tags: _binary_op_reduce('CmpLT', cond_.args, tags),
+            'ULE': lambda cond_, tags: _binary_op_reduce('CmpLE', cond_.args, tags),
+            '__eq__': lambda cond_, tags: _binary_op_reduce('CmpEQ', cond_.args, tags),
+            '__ne__': lambda cond_, tags: _binary_op_reduce('CmpNE', cond_.args, tags),
+            '__add__': lambda cond_, tags: _binary_op_reduce('Add', cond_.args, tags, signed=False),
+            '__sub__': lambda cond_, tags: _binary_op_reduce('Sub', cond_.args, tags),
+            '__mul__': lambda cond_, tags: _binary_op_reduce('Mul', cond_.args, tags),
+            '__xor__': lambda cond_, tags: _binary_op_reduce('Xor', cond_.args, tags),
+            '__or__': lambda cond_, tags: _binary_op_reduce('Or', cond_.args, tags, signed=False),
+            '__and__': lambda cond_, tags: _binary_op_reduce('And', cond_.args, tags),
+            '__lshift__': lambda cond_, tags: _binary_op_reduce('Shl', cond_.args, tags),
+            '__rshift__': lambda cond_, tags: _binary_op_reduce('Sar', cond_.args, tags),
+            '__floordiv__': lambda cond_, tags: _binary_op_reduce('Div', cond_.args, tags),
+            'LShR': lambda cond_, tags: _binary_op_reduce('Shr', cond_.args, tags),
+            'BVV': lambda cond_, tags: ailment.Expr.Const(None, None, cond_.args[0], cond_.size(), **tags),
+            'BoolV': lambda cond_, tags: ailment.Expr.Const(None, None, True, 1, **tags) if cond_.args[0] is True
+                                        else ailment.Expr.Const(None, None, False, 1, **tags),
+            'Extract': lambda cond_, tags: self._convert_extract(*cond_.args, tags, memo=memo),
         }
 
         if cond.op in _mapping:
-            return _mapping[cond.op](cond)
+            if cond in self._ast2annotations:
+                cond_tags = self._ast2annotations.get(cond)
+            elif claripy.Not(cond) in self._ast2annotations:
+                cond_tags = self._ast2annotations.get(claripy.Not(cond))
+            else:
+                cond_tags = { }
+            return _mapping[cond.op](cond, cond_tags)
         raise NotImplementedError(("Condition variable %s has an unsupported operator %s. "
                                    "Consider implementing.") % (cond, cond.op))
 
@@ -634,11 +620,17 @@ class ConditionProcessor:
             'Mulls': lambda expr, _: _dummy_bvs(expr),
         }
 
-        if isinstance(condition, (ailment.Expr.Load, ailment.Expr.DirtyExpression, ailment.Expr.BasePointerOffset,
+        if isinstance(condition, (ailment.Expr.DirtyExpression, ailment.Expr.BasePointerOffset,
                                   ailment.Expr.ITE, ailment.Stmt.Call)):
             return _dummy_bvs(condition)
-        elif isinstance(condition, ailment.Expr.Register):
-            var = claripy.BVS('ailexpr_%s-%d' % (repr(condition), condition.idx), condition.bits, explicit_name=True)
+        elif isinstance(condition, (ailment.Expr.Load, ailment.Expr.Register)):
+            # does it have a variable associated?
+            if condition.variable is not None:
+                var = claripy.BVS('ailexpr_%s-%s' % (repr(condition), condition.variable.name), condition.bits,
+                                  explicit_name=True)
+            else:
+                var = claripy.BVS('ailexpr_%s-%d' % (repr(condition), condition.idx), condition.bits,
+                                  explicit_name=True)
             self._condition_mapping[var.args[0]] = condition
             return var
         elif isinstance(condition, ailment.Expr.Convert):
@@ -667,8 +659,11 @@ class ConditionProcessor:
 
         lambda_expr = _mapping.get(condition.verbose_op, None)
         if lambda_expr is None:
-            raise NotImplementedError("Unsupported AIL expression operation %s. Consider implementing."
-                                      % condition.verbose_op)
+            # fall back to op
+            lambda_expr = _mapping.get(condition.op, None)
+        if lambda_expr is None:
+            raise NotImplementedError("Unsupported AIL expression operation %s or %s. Consider implementing."
+                                      % (condition.op, condition.verbose_op))
         r = lambda_expr(condition, self.claripy_ast_from_ail_condition)
         if r is NotImplemented:
             r = claripy.BVS("ailexpr_%r" % condition, condition.bits, explicit_name=True)
@@ -719,10 +714,13 @@ class ConditionProcessor:
         raise RuntimeError("Unreachable reached")
 
     @staticmethod
-    def simplify_condition(cond):
+    def simplify_condition(cond, depth_limit=8, variables_limit=8):
         memo = { }
+        if cond.depth > depth_limit or len(cond.variables) > variables_limit:
+            return cond
         sympy_expr = ConditionProcessor.claripy_ast_to_sympy_expr(cond, memo=memo)
-        return ConditionProcessor.sympy_expr_to_claripy_ast(sympy.simplify_logic(sympy_expr), memo)
+        r = ConditionProcessor.sympy_expr_to_claripy_ast(sympy.simplify_logic(sympy_expr, deep=False), memo)
+        return r
 
     @staticmethod
     def simplify_condition_deprecated(cond):
@@ -990,6 +988,56 @@ class ConditionProcessor:
 
             # TODO: Finish the implementation
             print(term, "is redundant")
+
+    #
+    # Graph processing
+    #
+
+    @staticmethod
+    def _remove_crossing_edges_between_cases(graph: networkx.DiGraph,
+                                             case_entry_to_switch_head: Dict[int,int]) -> networkx.DiGraph:
+        starting_nodes = { node for node in graph if node.addr in case_entry_to_switch_head }
+        if not starting_nodes:
+            return graph
+
+        traversed_nodes = set()
+        edges_to_remove = set()
+        for starting_node in starting_nodes:
+
+            queue = [starting_node]
+            while queue:
+                src = queue.pop(0)
+                traversed_nodes.add(src)
+                successors = graph.successors(src)
+                for succ in successors:
+                    if succ in traversed_nodes:
+                        # we should not traverse this node twice
+                        if graph.out_degree(succ) > 0:
+                            edges_to_remove.add((src, succ))
+                        continue
+                    if succ in starting_nodes:
+                        # we do not want any jump from one node to a starting node
+                        edges_to_remove.add((src, succ))
+                        continue
+                    traversed_nodes.add(src)
+                    queue.append(succ)
+
+        if not edges_to_remove:
+            return graph
+
+        # make a copy before modifying the graph
+        graph = networkx.DiGraph(graph)
+        graph.remove_edges_from(edges_to_remove)
+        return graph
+
+    #
+    # Utils
+    #
+
+    def create_jump_target_var(self, jumptable_head_addr: int):
+        return claripy.BVS("jump_table_%x" % jumptable_head_addr,
+                           self.arch.bits,
+                           explicit_name=True)
 
 
 # delayed import

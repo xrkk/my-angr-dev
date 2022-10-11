@@ -88,14 +88,8 @@ class CallSiteMaker(Analysis):
                     if type(arg_loc) is SimRegArg:
                         size = arg_loc.size
                         offset = arg_loc.check_offset(cc.arch)
-
-                        _, the_arg = self._resolve_register_argument(last_stmt, arg_loc)
-
-                        if the_arg is not None:
-                            args.append(the_arg)
-                        else:
-                            # Reaching definitions are not available. Create a register expression instead.
-                            args.append(Expr.Register(self._atom_idx(), None, offset, size * 8, reg_name=arg_loc.reg_name))
+                        args.append(Expr.Register(self._atom_idx(), None, offset, size * 8,
+                                                  reg_name=arg_loc.reg_name))
                     elif type(arg_loc) is SimStackArg:
 
                         stack_arg_locs.append(arg_loc)
@@ -141,7 +135,7 @@ class CallSiteMaker(Analysis):
                         new_stmts = new_stmts[:-1]
 
         # calculate stack offsets for arguments that are put on the stack. these offsets will be consumed by
-        # simplification steps in the future, which may decide to remove statements that stores arguments on the stack.
+        # simplification steps in the future, which may decide to remove statements that store arguments on the stack.
         if stack_arg_locs:
             sp_offset = self._stack_pointer_tracker.offset_before(last_stmt.ins_addr, self.project.arch.sp_offset)
             if sp_offset is None:
@@ -157,7 +151,17 @@ class CallSiteMaker(Analysis):
         # if ret_expr is None, it means in previous steps (such as during AIL simplification) we have deemed the return
         # value of this call statement as useless and is removed.
 
-        new_stmts.append(Stmt.Call(last_stmt, last_stmt.target,
+        if ret_expr is not None \
+                and prototype is not None \
+                and prototype.returnty is not None \
+                and not isinstance(prototype.returnty, SimTypeBottom):
+            # try to narrow the return expression if needed
+            ret_type_bits = prototype.returnty.with_arch(self.project.arch).size
+            if ret_expr.bits > ret_type_bits:
+                ret_expr = ret_expr.copy()
+                ret_expr.bits = ret_type_bits
+
+        new_stmts.append(Stmt.Call(last_stmt.idx, last_stmt.target,
                                    calling_convention=cc,
                                    prototype=prototype,
                                    args=args,
@@ -208,7 +212,7 @@ class CallSiteMaker(Analysis):
             except SimMemoryMissingError:
                 return None, None
             values_and_defs_ = set()
-            for values in vs.values.values():
+            for values in vs.values():
                 for value in values:
                     if value.concrete:
                         concrete_value = value._model_concrete.value
@@ -242,12 +246,14 @@ class CallSiteMaker(Analysis):
 
         # TODO: Support extracting values
 
-        return None, Expr.Load(self._atom_idx(),
-                         Expr.Register(self._atom_idx(), None, self.project.arch.sp_offset, self.project.arch.bits) +
-                            Expr.Const(self._atom_idx(), None, offset, self.project.arch.bits),
-                         size,
-                         self.project.arch.memory_endness,
-                         )
+        return None, Expr.Load(
+            self._atom_idx(),
+            Expr.Register(self._atom_idx(), None, self.project.arch.sp_offset, self.project.arch.bits) +
+            Expr.Const(self._atom_idx(), None, offset, self.project.arch.bits),
+            size,
+            self.project.arch.memory_endness,
+            func_arg=True,
+        )
 
     @staticmethod
     def _get_call_target(stmt):

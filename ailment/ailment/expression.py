@@ -5,7 +5,7 @@ except ImportError:
     claripy = None
 
 from .tagged_object import TaggedObject
-from .utils import get_bits, stable_hash
+from .utils import get_bits, stable_hash, is_none_or_likeable
 
 
 class Expression(TaggedObject):
@@ -264,7 +264,7 @@ class Convert(UnaryOp):
         self.is_signed = is_signed
 
     def __str__(self):
-        return "Conv(%d->%d, %s)" % (self.from_bits, self.to_bits, self.operand)
+        return "Conv(%d->%s%d, %s)" % (self.from_bits, 's' if self.is_signed else '', self.to_bits, self.operand)
 
     def __repr__(self):
         return str(self)
@@ -283,7 +283,7 @@ class Convert(UnaryOp):
         return stable_hash((self.operand, self.from_bits, self.to_bits, self.bits, self.is_signed))
 
     def replace(self, old_expr, new_expr):
-        if self.operand.likes(old_expr):
+        if self.operand == old_expr:
             r = True
             replaced_operand = new_expr
         else:
@@ -334,7 +334,7 @@ class Reinterpret(UnaryOp):
         return stable_hash((self.operand, self.from_bits, self.from_type, self.to_bits, self.to_type, ))
 
     def replace(self, old_expr, new_expr):
-        if self.operand.likes(old_expr):
+        if self.operand == old_expr:
             r = True
             replaced_operand = new_expr
         else:
@@ -435,7 +435,7 @@ class BinaryOp(Op):
                self.op == other.op and \
                self.bits == other.bits and \
                self.signed == other.signed and \
-               self.operands == other.operands
+               is_none_or_likeable(self.operands, other.operands, is_list=True)
 
     __hash__ = TaggedObject.__hash__
 
@@ -449,9 +449,9 @@ class BinaryOp(Op):
         for op in self.operands:
             if identity and op == atom:
                 return True
-            if not identity and isinstance(op, Atom) and op.likes(atom):
+            if not identity and isinstance(op, Expression) and op.likes(atom):
                 return True
-            if isinstance(op, Atom) and op.has_atom(atom, identity=identity):
+            if isinstance(op, Expression) and op.has_atom(atom, identity=identity):
                 return True
         return False
 
@@ -530,16 +530,26 @@ class Load(Expression):
         return self.addr.has_atom(atom, identity=identity)
 
     def replace(self, old_expr, new_expr):
-        r, replaced_addr = self.addr.replace(old_expr, new_expr)
+        if self.addr == old_expr:
+            r = True
+            replaced_addr = new_expr
+        else:
+            r, replaced_addr = self.addr.replace(old_expr, new_expr)
 
         if r:
             return True, Load(self.idx, replaced_addr, self.size, self.endness, **self.tags)
         else:
             return False, self
 
+    def _likes_addr(self, other_addr):
+        if hasattr(self.addr, "likes") and hasattr(other_addr, "likes"):
+            return self.addr.likes(other_addr)
+
+        return self.addr == other_addr
+
     def likes(self, other):
         return type(other) is Load and \
-               self.addr == other.addr and \
+               self._likes_addr(other.addr) and \
                self.size == other.size and \
                self.endness == other.endness and \
                self.guard == other.guard and \
@@ -620,11 +630,12 @@ class ITE(Expression):
 
 class DirtyExpression(Expression):
 
-    __slots__ = ('dirty_expr', )
+    __slots__ = ('dirty_expr', 'bits', )
 
-    def __init__(self, idx, dirty_expr, **kwargs):
+    def __init__(self, idx, dirty_expr, bits=None, **kwargs):
         super().__init__(idx, 1, **kwargs)
         self.dirty_expr = dirty_expr
+        self.bits = bits
 
     def likes(self, other):
         return type(other) is DirtyExpression and other.dirty_expr == self.dirty_expr
@@ -641,15 +652,15 @@ class DirtyExpression(Expression):
         return "[D] %s" % str(self.dirty_expr)
 
     def copy(self) -> 'DirtyExpression':
-        return DirtyExpression(self.idx, self.dirty_expr, **self.tags)
+        return DirtyExpression(self.idx, self.dirty_expr, bits=self.bits, **self.tags)
 
     def replace(self, old_expr, new_expr):
         if old_expr is self.dirty_expr:
-            return True, DirtyExpression(self.idx, new_expr, **self.tags)
+            return True, DirtyExpression(self.idx, new_expr, bits=self.bits, **self.tags)
 
         replaced, new_dirty_expr = self.dirty_expr.replace(old_expr, new_expr)
         if replaced:
-            return True, DirtyExpression(self.idx, new_dirty_expr, **self.tags)
+            return True, DirtyExpression(self.idx, new_dirty_expr, bits=self.bits, **self.tags)
         else:
             return False, self
 
@@ -660,23 +671,25 @@ class DirtyExpression(Expression):
 
 class VEXCCallExpression(Expression):
 
-    __slots__ = ('cee_name', 'operands', )
+    __slots__ = ('cee_name', 'operands', 'bits', )
 
-    def __init__(self, idx, cee_name, operands, **kwargs):
+    def __init__(self, idx, cee_name, operands, bits=None, **kwargs):
         super().__init__(idx, max(operand.depth for operand in operands), **kwargs)
         self.cee_name = cee_name
         self.operands = operands
+        self.bits = bits
 
     def likes(self, other):
         return type(other) is VEXCCallExpression and \
                other.cee_name == self.cee_name and \
                len(self.operands) == len(other.operands) and \
+               self.bits == other.bits and \
                all(op1.likes(op2) for op1, op2 in zip(other.operands, self.operands))
 
     __hash__ = TaggedObject.__hash__
 
     def _hash_core(self):
-        return stable_hash((VEXCCallExpression, self.cee_name, tuple(self.operands)))
+        return stable_hash((VEXCCallExpression, self.cee_name, self.bits, tuple(self.operands)))
 
     def __repr__(self):
         return f"VEXCCallExpression [{self.cee_name}]"
@@ -686,7 +699,7 @@ class VEXCCallExpression(Expression):
         return f"{self.cee_name}({operands_str})"
 
     def copy(self) -> 'VEXCCallExpression':
-        return VEXCCallExpression(self.idx, self.cee_name, self.operands, **self.tags)
+        return VEXCCallExpression(self.idx, self.cee_name, self.operands, bits=self.bits, **self.tags)
 
     def replace(self, old_expr, new_expr):
         new_operands = [ ]
@@ -704,7 +717,7 @@ class VEXCCallExpression(Expression):
                     new_operands.append(operand)
 
         if replaced:
-            return True, VEXCCallExpression(self.idx, self.cee_name, tuple(new_operands), **self.tags)
+            return True, VEXCCallExpression(self.idx, self.cee_name, tuple(new_operands), bits=self.bits, **self.tags)
         else:
             return False, self
 

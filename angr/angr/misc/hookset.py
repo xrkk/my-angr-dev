@@ -16,7 +16,7 @@ class HookSet:
 
         :param target:  Any object. Its methods named as keys in `hooks` will be replaced by `HookedMethod` objects.
         :param hooks:   Any keywords will be interpreted as hooks to apply. Each method named will hooked with the
-                        coresponding function value.
+                        corresponding function value.
         """
         for name, hook in hooks.items():
             func = getattr(target, name)
@@ -44,6 +44,21 @@ class HookSet:
                     raise ValueError("%s is not hooked by %s" % (target, hook)) from e
             if not hooked.pending:
                 setattr(target, name, hooked.func)
+
+    @staticmethod
+    def copy_hooks(source, target, domain):
+        """
+        Copy the hooks from source onto target.
+
+        If the current callstack includes hooked methods from source, the already-called methods will not be included in
+        the copy.
+
+        ``domain`` is a list of names that might be hooked.
+        """
+        for name in domain:
+            hooked = getattr(source, name)
+            if isinstance(hooked, HookedMethod):
+                setattr(target, name, hooked.copy_to(getattr(target, name)))
 
 
 class HookedMethod:
@@ -78,3 +93,8 @@ class HookedMethod:
             return result
         else:
             return self.func(*args, **kwargs)
+
+    def copy_to(self, new_func):
+        new_hooked = HookedMethod(new_func)
+        new_hooked.pending = list(self.pending)
+        return new_hooked

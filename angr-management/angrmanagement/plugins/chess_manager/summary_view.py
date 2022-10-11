@@ -1,18 +1,26 @@
+# pylint:disable=missing-class-docstring
+from typing import TYPE_CHECKING
 import json
 import threading
+import datetime
 from time import sleep
 
+from sqlalchemy import func as sqlalchemy_func
 from PySide2.QtCore import Qt
 from PySide2.QtWidgets import QVBoxLayout, QHBoxLayout, QTableWidget, QHeaderView, \
-    QAbstractItemView, QTableWidgetItem, QWidget, QTabWidget
+    QAbstractItemView, QTableWidgetItem, QWidget, QTabWidget, QLabel
 
 from angrmanagement.ui.views.view import BaseView
+from angrmanagement.logic.threads import gui_thread_schedule_async
 
 try:
     from slacrs import Slacrs
     from slacrs.model import PluginMessage
 except ImportError as ex:
     Slacrs = None
+
+if TYPE_CHECKING:
+    from .chess_connector import ChessConnector
 
 
 #
@@ -48,10 +56,9 @@ class QPluginsLogTable(QTableWidget):
         'Message',
     ]
 
-    def __init__(self, workspace, session, parent=None):
+    def __init__(self, workspace, parent=None):
         super().__init__(parent)
         self.workspace = workspace
-        self.session = session
 
         self.setColumnCount(len(self.HEADER))
         self.setHorizontalHeaderLabels(self.HEADER)
@@ -159,10 +166,9 @@ class QFuzztainerTable(QTableWidget):
         'edges found',
     ]
 
-    def __init__(self, workspace, session, idx, parent=None):
+    def __init__(self, workspace, idx, parent=None):
         super().__init__(parent)
         self.workspace = workspace
-        self.session = session
         self.idx = idx
 
         self.setRowCount(len(self.HEADER[self.idx*10:self.idx*10 + 10]))
@@ -192,15 +198,18 @@ class QFuzztainerTable(QTableWidget):
         self.viewport().update()
 
     def update_table(self, messages):
+        if messages is None:
+            return
+
         self.items = []
 
         messages = messages[::-1]
         for msg in messages:
-            if msg.plugin == "fuzztainer" and msg.kind == "info":
+            if msg.plugin.lower() == "fuzztainer" and msg.kind == "info":
                 try:
                     stats = json.loads(msg.message)
-                except Exception as e:
-                    print(e)
+                except Exception as ex:  # pylint:disable=broad-except
+                    print(ex)
                     continue
 
                 try:
@@ -221,18 +230,17 @@ class QFuzztainerTable(QTableWidget):
 
 
 class SummaryView(BaseView):
-    def __init__(self, workspace, default_docking_position, connector, *args, **kwargs):
-        super(SummaryView, self).__init__("chess_summary", workspace, default_docking_position, *args, **kwargs)
+    def __init__(self, workspace, default_docking_position, connector: 'ChessConnector', *args, **kwargs):
+        super().__init__("chess_summary", workspace, default_docking_position, *args, **kwargs)
         self.base_caption = "CHESS"
 
         self.workspace = workspace
         self.connector = connector
-        self.session = self._init_session()
 
         self._init_widgets()
 
         # start the worker routine
-        self.should_work = True
+        self.should_work = Slacrs is not None
         self.worker_thread = threading.Thread(target=self.worker_routine)
         self.worker_thread.setDaemon(True)
         self.worker_thread.start()
@@ -246,9 +254,9 @@ class SummaryView(BaseView):
     #
 
     def _init_widgets(self):
-        self.fuzztainer_table_1 = QFuzztainerTable(self.workspace, self.session, 0)
-        self.fuzztainer_table_2 = QFuzztainerTable(self.workspace, self.session, 1)
-        self.log_table = QPluginsLogTable(self.workspace, self.session)
+        self.fuzztainer_table_1 = QFuzztainerTable(self.workspace, 0)
+        self.fuzztainer_table_2 = QFuzztainerTable(self.workspace, 1)
+        self.log_table = QPluginsLogTable(self.workspace)
 
         #
         # fuzztainer tab
@@ -280,28 +288,53 @@ class SummaryView(BaseView):
 
         layout = QVBoxLayout()
         layout.addWidget(self.tabView)
+
+        #
+        # status bar
+        #
+        self.status_bar = QLabel()
+
+        layout.addWidget(self.status_bar)
         layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
         self.show()
+
+    def set_status(self, text: str):
+        self.status_bar.setText(text)
 
     #
     # Data Threading
     #
 
     def worker_routine(self):
-        while self.should_work and True:
-            if self.connector is None or self.session is None:
+        while self.should_work:
+            if self.connector is None or not self.connector.connected:
+                gui_thread_schedule_async(self.set_status, args=('Not connected to CHECRS backend.',))
                 sleep(10)
-            else:
-                sleep(5)
-
-            if self.session is None:
-                self.session = self._init_session()
-
-            if not self.session:
                 continue
 
-            self._update_tables(self.session)
+            if not self.connector.target_image_id:
+                gui_thread_schedule_async(self.set_status, args=('No associated remote target.',))
+                sleep(2)
+                continue
+
+            sleep(5)
+
+            gui_thread_schedule_async(self.set_status, args=('Refreshing...', ))
+            session = None
+            try:
+                session = self._init_session()
+
+                if not session:
+                    continue
+
+                self._update_tables(session, self.connector.target_image_id)
+            finally:
+                if session is not None:
+                    session.close()
+
+            last_updated = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            gui_thread_schedule_async(self.set_status, args=(f'Ready. Last updated at {last_updated}.',))
 
     def _init_session(self):
         if self.connector is None:
@@ -320,10 +353,11 @@ class SummaryView(BaseView):
         session = slacrs_instance.session()
         return session
 
-    def _find_latest_fuzztainer_stats(self, messages):
+    @staticmethod
+    def _find_latest_fuzztainer_stats(messages):
         messages = messages[::-1]
         for msg in messages:
-            if msg.plugin == "fuzztainer" and msg.kind == "info":
+            if msg.plugin.lower() == "fuzztainer" and msg.kind == "info":
                 try:
                     stats = json.loads(msg.message)
                 except Exception as e:
@@ -339,8 +373,14 @@ class SummaryView(BaseView):
                 return [msg]
         return None
 
-    def _update_tables(self, session):
-        res = session.query(PluginMessage)
+    def _update_tables(self, session, target_image_id: str):
+        res = session.query(PluginMessage).filter(
+            sqlalchemy_func.lower(PluginMessage.plugin)=="fuzztainer",
+            PluginMessage.kind=="info",
+            PluginMessage.target_image_id==target_image_id,
+        ).order_by(
+            PluginMessage.created_at.desc()
+        ).limit(50)
         if not res:
             return
 
@@ -349,6 +389,6 @@ class SummaryView(BaseView):
             return
 
         fuzztainer_msgs = self._find_latest_fuzztainer_stats(messages)
-        self.log_table.update_table(messages[-50:])
+        self.log_table.update_table(messages)
         self.fuzztainer_table_1.update_table(fuzztainer_msgs)
         self.fuzztainer_table_2.update_table(fuzztainer_msgs)

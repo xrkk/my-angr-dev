@@ -1,15 +1,20 @@
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 from PySide2.QtCore import Qt, QEvent
-from PySide2.QtGui import QTextCharFormat
+from PySide2.QtGui import QTextCharFormat, QKeySequence
 from PySide2.QtWidgets import QMenu, QAction, QInputDialog, QLineEdit, QApplication
 
 from pyqodeng.core import api
 from pyqodeng.core import modes
 from pyqodeng.core import panels
 
+from ailment.statement import Store, Assignment
+from ailment.expression import Load, Convert, BinaryOp
+from angr.sim_type import SimType
 from angr.sim_variable import SimVariable, SimTemporaryVariable
-from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CVariable, CFunctionCall, CFunction, CStructField
+from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CVariable, CFunctionCall, CFunction, \
+    CStructField, CIndexedVariable, CVariableField, CUnaryOp, CConstant, CExpression
+from angr.analyses.decompiler.optimization_passes.expr_op_swapper import OpDescriptor
 
 from ..documents.qcodedocument import QCodeDocument
 from ..dialogs.rename_node import RenameNode
@@ -101,9 +106,10 @@ class QCCodeEdit(api.CodeEdit):
 
         mnu = QMenu()
         self._selected_node = None
-        if isinstance(under_cursor, CBinaryOp) \
-                and "vex_stmt_idx" in under_cursor.tags \
-                and "vex_block_addr" in under_cursor.tags:
+        if isinstance(under_cursor, CConstant):
+            self._selected_node = under_cursor
+            mnu.addActions(self.constant_actions)
+        if isinstance(under_cursor, (CBinaryOp, CUnaryOp)):
             # operator in selection
             self._selected_node = under_cursor
             mnu.addActions(self.operator_actions)
@@ -113,7 +119,7 @@ class QCCodeEdit(api.CodeEdit):
             # function call in selection
             self._selected_node = under_cursor
             mnu.addActions(self.call_actions)
-        if isinstance(under_cursor, CVariable):
+        if isinstance(under_cursor, (CVariable, CIndexedVariable, CVariableField, CStructField)):
             # variable in selection
             self._selected_node = under_cursor
             mnu.addActions(self.variable_actions)
@@ -152,6 +158,21 @@ class QCCodeEdit(api.CodeEdit):
 
         return super().event(event)
 
+    def get_closest_insaddr(self, node, expr=None) -> Optional[int]:
+        addr = (getattr(node, 'tags', None) or {}).get('ins_addr', None)
+        if addr is None:
+            if expr:
+                addr = self.get_src_to_inst()
+            else:
+                pos = self.textCursor().position()
+                while self.document().characterAt(pos) not in ('\n', '\u2029') and \
+                        pos < self.document().characterCount():  # qt WHAT are you doing
+                    pos += 1
+                node = self.document().get_stmt_node_at_position(pos)
+                addr = (getattr(node, 'tags', None) or {}).get('ins_addr', None)
+
+        return addr
+
     def get_src_to_inst(self) -> int:
         """
         Uses the current cursor position, which is in a code view, and gets the
@@ -183,18 +204,23 @@ class QCCodeEdit(api.CodeEdit):
 
     def keyPressEvent(self, event):
         key = event.key()
-        node = self.node_under_cursor()
+        modifiers = event.modifiers()
+        xkey = key
+        if modifiers & Qt.ShiftModifier:
+            xkey += Qt.SHIFT
+        if modifiers & Qt.ControlModifier:
+            xkey += Qt.CTRL
+        if modifiers & Qt.AltModifier:
+            xkey += Qt.ALT
+        if modifiers & Qt.MetaModifier:
+            xkey += Qt.META
+        sequence = QKeySequence(xkey)
+        mnu = self.get_context_menu()
+        for item in mnu.actions():
+            if item.shortcut().matches(sequence) == QKeySequence.SequenceMatch.ExactMatch:
+                item.activate(QAction.ActionEvent.Trigger)
+                return True
 
-        if key == Qt.Key_N:
-            if isinstance(node, (CVariable, CFunction, CFunctionCall, CStructField)):
-                self.rename_node(node=node)
-            return True
-        if key == Qt.Key_Y:
-            # setting the type
-            if isinstance(node, (CVariable, )):
-                # find existing type
-                self.retype_node(node=node, node_type=node.variable_type)
-            return True
         if key in (Qt.Key_Slash, Qt.Key_Question):
             self.comment(expr=event.modifiers() & Qt.ShiftModifier == Qt.ShiftModifier)
             return True
@@ -232,7 +258,7 @@ class QCCodeEdit(api.CodeEdit):
 
     def rename_node(self, *args, node=None):  # pylint: disable=unused-argument
         n = node if node is not None else self._selected_node
-        if not isinstance(n, (CVariable, CFunction, CFunctionCall, CStructField)):
+        if not isinstance(n, (CVariable, CFunction, CFunctionCall, CStructField, SimType)):
             return
         if isinstance(n, CVariable) and isinstance(n.variable, SimTemporaryVariable):
             # unsupported right now..
@@ -248,7 +274,8 @@ class QCCodeEdit(api.CodeEdit):
         if isinstance(node, CVariable) and isinstance(node.variable, SimTemporaryVariable):
             # unsupported right now..
             return
-        dialog = RetypeNode(code_view=self._code_view, node=node, node_type=node_type, variable=node.variable)
+        dialog = RetypeNode(self.workspace.instance, code_view=self._code_view, node=node,
+                            node_type=node_type, variable=node.variable)
         dialog.exec_()
 
         new_node_type = dialog.new_type
@@ -265,18 +292,7 @@ class QCCodeEdit(api.CodeEdit):
                 self._code_view.codegen.am_event(event="retype_variable", node=node, variable=node.variable)
 
     def comment(self, expr=False, node=None):
-        addr = (getattr(node, 'tags', None) or {}).get('ins_addr', None)
-        if addr is None:
-            if expr:
-                addr = self.get_src_to_inst()
-            else:
-                pos = self.textCursor().position()
-                while self.document().characterAt(pos) not in ('\n', '\u2029') and \
-                        pos < self.document().characterCount():  # qt WHAT are you doing
-                    pos += 1
-                node = self.document().get_stmt_node_at_position(pos)
-                addr = (getattr(node, 'tags', None) or {}).get('ins_addr', None)
-
+        addr = self.get_closest_insaddr(node, expr=expr)
         if addr is None:
             return
 
@@ -297,12 +313,12 @@ class QCCodeEdit(api.CodeEdit):
             exists = addr in cdict
             if text:
                 # callback
-                self.workspace.plugins.handle_comment_changed(addr, text, not exists, True)
+                self.workspace.plugins.handle_comment_changed(addr, "", text, not exists, True)
                 cdict[addr] = text
             else:
                 if exists:
                     # callback
-                    self.workspace.plugins.handle_comment_changed(addr, "", False, True)
+                    self.workspace.plugins.handle_comment_changed(addr, cdict[addr], "", False, True)
                     del cdict[addr]
 
             self._code_view.codegen.am_event()
@@ -320,6 +336,155 @@ class QCCodeEdit(api.CodeEdit):
             # decompile again
             self._code_view.decompile()
 
+    def collapse_expr(self):
+        if hasattr(self._selected_node, 'collapsed'):
+            self._selected_node.collapsed = True
+            self._code_view.codegen.am_event()
+
+    def expand_expr(self):
+        if hasattr(self._selected_node, 'collapsed'):
+            self._selected_node.collapsed = False
+            self._code_view.codegen.am_event()
+
+    def hex_constant(self):
+        if hasattr(self._selected_node, 'fmt_hex'):
+            self._selected_node.fmt_hex ^= True
+            self._code_view.codegen.am_event()
+
+    def neg_constant(self):
+        if hasattr(self._selected_node, 'fmt_neg'):
+            self._selected_node.fmt_neg ^= True
+            self._code_view.codegen.am_event()
+
+    def convert_to_ite_expr(self):
+        node = self._selected_node
+        if not isinstance(node, CExpression):
+            return
+        ailexpr = self._code_view.codegen.cnode2ailexpr.get(node, None)
+        if ailexpr is None:
+            return
+
+        # which statement?
+        addr = self.get_closest_insaddr(node)
+        if addr is None:
+            return
+
+        cache = self.workspace.instance.kb.structured_code[(self._code_view.function.addr, "pseudocode")]
+        if cache.ite_exprs is None:
+            cache.ite_exprs = set()
+        cache.ite_exprs.add((addr, ailexpr))
+        self._code_view.decompile(clear_prototype=False, regen_clinic=False)
+
+    def swap_binop_operands(self):
+        node = self._selected_node
+        if not isinstance(node, CBinaryOp):
+            return
+        ailexpr = self._code_view.codegen.cnode2ailexpr.get(node, None)
+        if ailexpr is None:
+            return
+        if not isinstance(ailexpr, BinaryOp):
+            return
+
+        op = ailexpr.op
+        if op in {'CmpEQ', 'CmpNE'}:
+            negated_op = op
+        else:
+            negated_op = BinaryOp.COMPARISON_NEGATION.get(op, None)
+        if negated_op is None:
+            return
+
+        # which statement?
+        addr = self.get_closest_insaddr(node)
+        if addr is None:
+            return
+
+        cache = self.workspace.instance.kb.structured_code[(self._code_view.function.addr, "pseudocode")]
+        if cache.binop_operators is None:
+            cache.binop_operators = { }
+        op_desc = OpDescriptor(ailexpr.vex_block_addr if hasattr(ailexpr, "vex_block_addr") else None,
+                               ailexpr.vex_stmt_idx if hasattr(ailexpr, "vex_stmt_idx") else None,
+                               addr,
+                               op,
+                               )
+        cache.binop_operators[op_desc] = negated_op
+
+        if negated_op != op:
+            existing_op_desc = OpDescriptor(
+                ailexpr.vex_block_addr if hasattr(ailexpr, "vex_block_addr") else None,
+                ailexpr.vex_stmt_idx if hasattr(ailexpr, "vex_stmt_idx") else None,
+                addr,
+                negated_op,
+            )
+            if existing_op_desc in cache.binop_operators:
+                del cache.binop_operators[existing_op_desc]
+        self._code_view.decompile(clear_prototype=False, regen_clinic=False)
+
+    def expr2armasm(self):
+
+        def _assemble(expr, expr_addr) -> str:
+            return converter.assemble(expr, self._code_view.function.addr, expr_addr)
+
+        node = self._selected_node
+        # figure out where we are
+        if not isinstance(node, (CVariable, CIndexedVariable, CVariableField, CStructField)):
+            return
+
+        doc: 'QCodeDocument' = self.document()
+        cursor = self.textCursor()
+        pos = cursor.position()
+        current_node = doc.get_stmt_node_at_position(pos)
+
+        if current_node is None:
+            return
+
+        ins_addr = current_node.tags.get("ins_addr", None)
+        if ins_addr is None:
+            return
+
+        # traverse the stored clinic graph to find the AIL block
+        cache = self.workspace.instance.kb.structured_code[(self._code_view.function.addr, "pseudocode")]
+        the_node = None
+        for node in cache.clinic.graph.nodes():
+            if node.addr <= ins_addr < node.addr + node.original_size:
+                the_node = node
+                break
+
+        if the_node is None:
+            return
+
+        converter = self.workspace.plugins.get_plugin_instance_by_name("AIL2ARM32")
+
+        # I'm lazy - I'll get the first Load if available
+        lst = [ ]
+        for stmt in the_node.statements:
+            if isinstance(stmt, Assignment):
+                if isinstance(stmt.src, Load):
+                    asm = _assemble(stmt.src, stmt.src.ins_addr)
+                    lst.append((str(stmt), str(stmt.src), asm))
+                elif isinstance(stmt.src, Convert) and isinstance(stmt.src.operand, Load):
+                    asm = _assemble(stmt.src, stmt.src.operand.ins_addr)
+                    lst.append((str(stmt), str(stmt.src), asm))
+            elif isinstance(stmt, Store):
+                if isinstance(stmt.data, Load):
+                    asm = _assemble(stmt.data, stmt.data.ins_addr)
+                    lst.append((str(stmt), str(stmt.data), asm))
+                elif isinstance(stmt.data, Convert) and isinstance(stmt.data.operand, Load):
+                    asm = _assemble(stmt.data, stmt.data.operand.ins_addr)
+                    lst.append((str(stmt), str(stmt.data), asm))
+
+        # format text
+        text = f"The AIL block:\n{str(the_node)}\n\n"
+        for stmt, expr, asm in lst:
+            text += f"Statement: {stmt}\n"
+            text += f"Expression: {expr}\n"
+            text += f"Assembly:\n{asm}\n\n"
+
+        converter.display_output(text)
+
+    #
+    # Private methods
+    #
+
     @staticmethod
     def _separator():
         sep = QAction()
@@ -334,27 +499,59 @@ class QCCodeEdit(api.CodeEdit):
             self.action_select_all,
         ]
 
-        self.action_rename_node = QAction('Re&name variable', self)
+        self.action_rename_node = QAction('Rename variable', self)
         self.action_rename_node.triggered.connect(self.rename_node)
-        self.action_retype_node = QAction("Re&type variable", self)
+        self.action_rename_node.setShortcut(QKeySequence('N'))
+        self.action_retype_node = QAction("Retype variable", self)
         self.action_retype_node.triggered.connect(self.retype_node)
+        self.action_retype_node.setShortcut(QKeySequence('Y'))
         self.action_toggle_struct = QAction('Toggle &struct/array')
         self.action_toggle_struct.triggered.connect(self.toggle_struct)
+        self.action_collapse_expr = QAction('Collapse expression', self)
+        self.action_collapse_expr.triggered.connect(self.collapse_expr)
+        self.action_expand_expr = QAction('Expand expression', self)
+        self.action_expand_expr.triggered.connect(self.expand_expr)
+        self.action_hex = QAction('Toggle hex', self)
+        self.action_hex.triggered.connect(self.hex_constant)
+        self.action_hex.setShortcut(QKeySequence('H'))
+        self.action_neg = QAction('Toggle negative', self)
+        self.action_neg.triggered.connect(self.neg_constant)
+        self.action_neg.setShortcut(QKeySequence('_'))
+        self.action_to_ite_expr = QAction("Create a ternary expression")
+        self.action_to_ite_expr.triggered.connect(self.convert_to_ite_expr)
+        self.action_swap_binop_operands = QAction("Swap operands")
+        self.action_swap_binop_operands.triggered.connect(self.swap_binop_operands)
+
+        expr_actions = [
+            self.action_to_ite_expr,
+            self.action_swap_binop_operands,
+            self.action_collapse_expr,
+            self.action_expand_expr,
+        ]
+
+        self.action_asmgen = QAction("Expression -> ARM THUMB assembly...")
+        self.action_asmgen.triggered.connect(self.expr2armasm)
 
         self.variable_actions = [
             self.action_rename_node,
             self.action_retype_node,
             self.action_toggle_struct,
+            self.action_asmgen,
         ]
 
         self.function_name_actions = [
             self.action_rename_node,
         ]
 
-        self.constant_actions += base_actions
-        self.operator_actions += base_actions
-        self.variable_actions += base_actions
+        self.constant_actions = [
+            self.action_hex,
+            self.action_neg,
+        ]
+
+        self.constant_actions += base_actions + expr_actions
+        self.operator_actions += base_actions + expr_actions
+        self.variable_actions += base_actions + expr_actions
         self.function_name_actions += base_actions
-        self.call_actions += base_actions
+        self.call_actions += base_actions + expr_actions
         self.selected_actions += base_actions
         self.default_actions += base_actions

@@ -111,6 +111,24 @@ class VEXExprConverter(Converter):
             # is it a conversion?
             simop = vexop_to_simop(expr.op)
             if simop._conversion:
+                if simop._from_side == "HI":
+                    # returns the high-half of the argument
+                    inner = VEXExprConverter.convert(expr.args[0], manager)
+                    shifted = BinaryOp(manager.next_atom(),
+                                       "Shr",
+                                       [inner, Const(manager.next_atom(), None, simop._to_size, 8)],
+                                       False
+                                       )
+                    return Convert(manager.next_atom(),
+                               simop._from_size,
+                               simop._to_size,
+                               simop.is_signed,
+                               shifted,
+                               ins_addr=manager.ins_addr,
+                               vex_block_addr=manager.block_addr,
+                               vex_stmt_idx=manager.vex_stmt_idx,
+                               )
+
                 return Convert(manager.next_atom(),
                                simop._from_size,
                                simop._to_size,
@@ -276,7 +294,7 @@ class VEXStmtConverter(Converter):
         if stmt.jumpkind in {'Ijk_EmWarn', 'Ijk_NoDecode',
                               'Ijk_MapFail', 'Ijk_NoRedir',
                               'Ijk_SigTRAP', 'Ijk_SigSEGV',
-                              'Ijk_ClientReq'}:
+                              'Ijk_ClientReq', 'Ijk_SigFPE_IntDiv'}:
             raise SkipConversionNotice()
 
         return ConditionalJump(idx,
@@ -483,7 +501,8 @@ class VEXIRSBConverter(Converter):
             # TODO: is there a conditional call?
 
             ret_reg_offset = manager.arch.ret_offset
-            ret_expr = Register(manager.next_atom(), None, ret_reg_offset, manager.arch.bits)
+            ret_expr = Register(manager.next_atom(), None, ret_reg_offset, manager.arch.bits,
+                                reg_name=manager.arch.translate_register_name(ret_reg_offset, size=manager.arch.bits))
 
             statements.append(Call(manager.next_atom(),
                                    VEXExprConverter.convert(irsb.next, manager),

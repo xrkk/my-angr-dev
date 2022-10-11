@@ -5,24 +5,17 @@ from . import ExplorationTechnique
 l = logging.getLogger(name=__name__)
 
 class ManualMergepoint(ExplorationTechnique):
-    def __init__(self, address, wait_counter=10):
+    def __init__(self, address, wait_counter=10, prune=True):
         super(ManualMergepoint, self).__init__()
         self.address = address
         self.wait_counter_limit = wait_counter
+        self.prune = prune
         self.wait_counter = 0
         self.stash = 'merge_waiting_%#x_%x' % (self.address, id(self))
         self.filter_marker = 'skip_next_filter_%#x' % self.address
 
     def setup(self, simgr):
         simgr.stashes[self.stash] = []
-
-    def filter(self, simgr, state, **kwargs):
-        if self.filter_marker not in state.globals:
-            if state.addr == self.address:
-                self.wait_counter = 0
-                return self.stash
-
-        return simgr.filter(state, **kwargs)
 
     def mark_nofilter(self, simgr, stash):
         for state in simgr.stashes[stash]:
@@ -38,8 +31,20 @@ class ManualMergepoint(ExplorationTechnique):
             simgr = simgr.move(self.stash, stash)
 
         # perform all our analysis as a post-mortem on a given step
-        simgr = simgr.step(stash=stash, **kwargs)
+        stop_points = kwargs.pop('extra_stop_points', set())
+        stop_points.add(self.address)
+        simgr = simgr.step(stash=stash, extra_stop_points=stop_points, **kwargs)
         #self.mark_okfilter(simgr, stash)
+
+        # do filtering
+        new_stash = []
+        for state in simgr.stashes[stash]:
+            if self.filter_marker not in state.globals and state.addr == self.address:
+                self.wait_counter = 0
+                simgr.stashes[self.stash].append(state)
+            else:
+                new_stash.append(state)
+        simgr.stashes[stash][:] = new_stash
 
         # nothing to do if there's no states waiting
         if len(simgr.stashes[self.stash]) == 0:
@@ -68,7 +73,7 @@ class ManualMergepoint(ExplorationTechnique):
             simgr.move(self.stash, 'merge_tmp', lambda s: s.callstack == exemplar_callstack)
             l.debug("...%d with unique callstack #%d", len(simgr.merge_tmp), num_unique)
             if len(simgr.merge_tmp) > 1:
-                simgr = simgr.merge(stash='merge_tmp')
+                simgr = simgr.merge(stash='merge_tmp', prune=self.prune)
             simgr = simgr.move('merge_tmp', stash)
 
         return simgr

@@ -1,3 +1,4 @@
+import sys
 import time
 import logging
 from threading import Thread
@@ -9,11 +10,10 @@ from angr.block import Block
 from angr.knowledge_base import KnowledgeBase
 from angr.analyses.disassembly import Instruction
 
-from .jobs import CFGGenerationJob
 from .object_container import ObjectContainer
 from .log import LogRecord, LogDumpHandler
 from ..logic import GlobalInfo
-from ..logic.threads import gui_thread_schedule_async
+from ..logic.threads import gui_thread_schedule_async, gui_thread_schedule
 from ..logic.debugger import DebuggerListManager, DebuggerManager
 from ..logic.debugger.simgr import SimulationDebugger
 from ..data.trace import Trace
@@ -21,7 +21,6 @@ from ..data.breakpoint import BreakpointManager
 
 if TYPE_CHECKING:
     from ..ui.workspace import Workspace
-
 
 class Instance:
     """
@@ -35,7 +34,8 @@ class Instance:
     def __init__(self):
         # pylint:disable=import-outside-toplevel)
         # delayed import
-        from ..ui.views.interaction_view import PlainTextProtocol, BackslashTextProtocol, ProtocolInteractor, SavedInteraction
+        from ..ui.views.interaction_view import PlainTextProtocol, BackslashTextProtocol, ProtocolInteractor,\
+            SavedInteraction
 
         self._live = False
         self.workspace: Optional['Workspace'] = None
@@ -43,6 +43,7 @@ class Instance:
         self.jobs = []
         self._jobs_queue = Queue()
         self.current_job = None
+        self.worker_thread = None
 
         self.extra_containers = {}
         self._container_defaults = {}
@@ -165,7 +166,7 @@ class Instance:
             self._container_defaults[name] = (default_val_func, ty)
             self.extra_containers[name] = ObjectContainer(default_val_func(), description)
 
-    def initialize(self, initialized=False, cfg_args=None, variable_recovery_args=None, **kwargs):  # pylint:disable=unused-argument
+    def initialize(self, initialized=False, **kwargs):  # pylint:disable=unused-argument
         if self.project.am_none:
             return
 
@@ -173,32 +174,12 @@ class Instance:
             if self.pseudocode_variable_kb is None:
                 self.initialize_pseudocode_variable_kb()
 
-            if cfg_args is None:
-                cfg_args = {}
-            # save cfg_args
-            self.cfg_args = cfg_args
+            gui_thread_schedule_async(self.workspace.run_analysis)
 
-            if variable_recovery_args is None:
-                variable_recovery_args = {}
-            self.variable_recovery_args = variable_recovery_args
-
-            # generate CFG
-            cfg_job = self.generate_cfg()
-
-            # start daemon
-            self._start_daemon_thread(self._refresh_cfg, 'Progressively Refreshing CFG', args=(cfg_job,))
         self.workspace.plugins.handle_project_initialization()
 
     def initialize_pseudocode_variable_kb(self):
         self.pseudocode_variable_kb = KnowledgeBase(self.project.am_obj, name="pseudocode_variable_kb")
-
-    def generate_cfg(self):
-        cfg_job = CFGGenerationJob(
-            on_finish=self.workspace.on_cfg_generated,
-            **self.cfg_args
-        )
-        self.add_job(cfg_job)
-        return cfg_job
 
     def add_job(self, job):
         self.jobs.append(job)
@@ -258,52 +239,43 @@ class Instance:
         t = Thread(target=target, name=name, args=args if args else tuple())
         t.daemon = True
         t.start()
+        return t
 
     def _start_worker(self):
-        self._start_daemon_thread(self._worker, 'angr-management Worker Thread')
+        self.worker_thread = self._start_daemon_thread(self._worker, 'angr-management Worker Thread')
 
     def _worker(self):
+
         while True:
             if self._jobs_queue.empty():
-                gui_thread_schedule_async(self._set_status, args=("Ready.",))
+                gui_thread_schedule(GlobalInfo.main_window.progress_done, args=())
+
+            if self.workspace is not None and any(job.blocking for job in self.jobs):
+                gui_thread_schedule(self.workspace.main_window._progress_dialog.hide, args=())
 
             job = self._jobs_queue.get()
-            gui_thread_schedule_async(self._set_status, args=("Working...",))
+            gui_thread_schedule_async(GlobalInfo.main_window.progress, args=("Working...", 0.0))
+
+            if any(job.blocking for job in self.jobs):
+                if self.workspace.main_window.isVisible():
+                    gui_thread_schedule(self.workspace.main_window._progress_dialog.show, args=())
 
             try:
                 self.current_job = job
                 result = job.run(self)
                 self.current_job = None
-            except Exception as e: # pylint: disable=broad-except
+            except (Exception, KeyboardInterrupt) as e: # pylint: disable=broad-except
+                sys.last_traceback = e.__traceback__
                 self.current_job = None
                 self.workspace.log('Exception while running job "%s":' % job.name)
                 self.workspace.log(e)
+                self.workspace.log("Type %debug to debug it")
             else:
                 gui_thread_schedule_async(job.finish, args=(self, result))
 
     # pylint:disable=no-self-use
     def _set_status(self, status_text):
         GlobalInfo.main_window.status = status_text
-
-    def _refresh_cfg(self, cfg_job):
-        # reload once and then refresh in a loop
-        reloaded = False
-        while True:
-            if not self.cfg.am_none:
-                if self.workspace is not None:
-                    if reloaded:
-                        gui_thread_schedule_async(self.workspace.refresh,
-                                                  kwargs={'categories': ['disassembly', 'functions'],}
-                                                  )
-                    else:
-                        gui_thread_schedule_async(self.workspace.reload,
-                                                  kwargs={'categories': ['disassembly', 'functions'],}
-                                                  )
-                        reloaded = True
-
-            time.sleep(0.3)
-            if cfg_job not in self.jobs:
-                break
 
     def _reset_containers(self, **kwargs):
         # pylint:disable=consider-using-dict-items

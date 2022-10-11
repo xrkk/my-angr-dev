@@ -73,13 +73,13 @@ class Assignment(Statement):
 
     def replace(self, old_expr, new_expr):
 
-        if self.dst.likes(old_expr):
+        if self.dst == old_expr:
             r_dst = True
             replaced_dst = new_expr
         else:
             r_dst, replaced_dst = self.dst.replace(old_expr, new_expr)
 
-        if self.src.likes(old_expr):
+        if self.src == old_expr:
             r_src = True
             replaced_src = new_expr
         else:
@@ -120,8 +120,8 @@ class Store(Statement):
 
     def likes(self, other):
         return type(other) is Store and \
-               self.eq(self.addr, other.addr) and \
-               self.eq(self.data, other.data) and \
+               self.addr.likes(other.addr) and \
+               self.data.likes(other.data) and \
                self.size == other.size and \
                self.guard == other.guard and \
                self.endness == other.endness
@@ -292,7 +292,7 @@ class Call(Expression, Statement):
 
     def __init__(self, idx, target, calling_convention: Optional['SimCC']=None, prototype=None, args=None,
                  ret_expr=None, **kwargs):
-        super().__init__(idx, target.depth + 1,**kwargs)
+        super().__init__(idx, target.depth + 1 if isinstance(target, Expression) else 1,**kwargs)
 
         self.target = target
         self.calling_convention = calling_convention
@@ -329,9 +329,15 @@ class Call(Expression, Statement):
             s = ("%s: %s" % (cc, self.args)) if self.prototype is None else "%s: %s" % (self.calling_convention,
                                                                                         self.args)
 
-        return "Call(%s, %s)" % (
+        if self.ret_expr is None:
+            ret_s = "no-ret-value"
+        else:
+            ret_s = f"{self.ret_expr}"
+
+        return "Call(%s, %s, ret: %s)" % (
             self.target,
-            s
+            s,
+            ret_s
         )
 
     @property
@@ -351,7 +357,11 @@ class Call(Expression, Statement):
         return "call"
 
     def replace(self, old_expr, new_expr):
-        r0, replaced_target = self.target.replace(old_expr, new_expr)
+        if isinstance(self.target, Expression):
+            r0, replaced_target = self.target.replace(old_expr, new_expr)
+        else:
+            r0 = False
+            replaced_target = self.target
 
         r = r0
 

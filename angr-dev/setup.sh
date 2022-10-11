@@ -12,8 +12,6 @@ function usage
 	echo "    -C		don't do the actual installation (quit after cloning)"
 	echo "    -c		clone repositories concurrently in the background"
 	echo "    -s            Use shallow clones (pull just the latest commit from each branch)."
-	echo "    -w		use pre-built packages where available"
-	echo "    -v		verbose (don't redirect installation logging)"
 	echo "    -e ENV	create or reuse a cpython environment ENV"
 	echo "    -E ENV	re-create a cpython environment ENV"
 	echo "    -p ENV	create or reuse a pypy environment ENV"
@@ -51,9 +49,9 @@ DEBS=${DEBS-python3-pip python3-dev python3-setuptools build-essential libxml2-d
 HOMEBREW_DEBS=${HOMEBREW_DEBS-python3 libxml2 libxslt libffi cmake libtool glib binutils nasm patchelf}
 ARCHDEBS=${ARCHDEBS-python-pip libxml2 libxslt git libffi cmake readline libtool debootstrap glib2 pixman qt5-base binutils nasm lib32-glibc lib32-gcc-libs lib32-zlib lib32-ncurses}
 ARCHCOMDEBS=${ARCHCOMDEBS}
-RPMS=${RPMS-gcc gcc-c++ make python3-pip python3-devel python3-setuptools libxml2-devel libxslt-devel git libffi-devel cmake readline-devel libtool debootstrap debian-keyring glib2-devel pixman-devel qt5-qtdeclarative-devel binutils-x86_64-linux-gnu nasm openssl-devel python2 glibc.i686 libgcc.i686 libstdc++.i686 ncurses-compat-libs.i686 zlib.i686 java-1.8.0-openjdk-devel}
-OPENSUSE_RPMS=${OPENSUSE_RPMS-gcc gcc-c++ make python3-pip python3-devel python3-setuptools libxml2-devel libxslt-devel git libffi-devel cmake readline-devel libtool debootstrap glib2-devel libpixman-1-0-devel libQt5Core5 libqt5-qtdeclarative-devel binutils nasm libopenssl-devel python glibc-32bit libgcc_s1-32bit libstdc++6-32bit libncurses5-32bit libz1-32bit java-1_8_0-openjdk-devel} 
-REPOS=${REPOS-archinfo vex pyvex cle claripy ailment angr angrop angr-doc binaries pysoot angr-targets}
+RPMS=${RPMS-gcc gcc-c++ make python3-pip python3-devel python3-setuptools libxml2-devel libxslt-devel git libffi-devel cmake readline-devel libtool debootstrap debian-keyring glib2-devel pixman-devel qt5-qtdeclarative-devel binutils-x86_64-linux-gnu nasm openssl-devel python2.7 glibc.i686 libgcc.i686 libstdc++.i686 ncurses-compat-libs.i686 zlib.i686 java-1.8.0-openjdk-devel}
+OPENSUSE_RPMS=${OPENSUSE_RPMS-gcc gcc-c++ make python3-pip python3-devel python3-setuptools libxml2-devel libxslt-devel git libffi-devel cmake readline-devel libtool debootstrap glib2-devel libpixman-1-0-devel libQt5Core5 libqt5-qtdeclarative-devel binutils nasm libopenssl-devel python glibc-32bit libgcc_s1-32bit libstdc++6-32bit libncurses5-32bit libz1-32bit java-1_8_0-openjdk-devel}
+REPOS=${REPOS-archinfo pyvex cle claripy ailment angr angr-doc binaries}
 REPOS_CPYTHON=${REPOS_CPYTHON-angr-management}
 # archr is Linux only because of shellphish-qemu dependency
 if [ `uname` == "Linux" ]; then REPOS="${REPOS} archr"; fi
@@ -71,8 +69,6 @@ USE_PYPY=
 RMVENV=0
 INSTALL=1
 CONCURRENT_CLONE=0
-WHEELS=0
-VERBOSE=0
 BRANCH=
 UNATTENDED=0
 
@@ -82,9 +78,6 @@ do
 	case $opt in
 		i)
 			INSTALL_REQS=1
-			;;
-		v)
-			VERBOSE=1
 			;;
 		e)
 			ANGR_VENV=$OPTARG
@@ -116,9 +109,6 @@ do
 		c)
 			CONCURRENT_CLONE=1
 			;;
-		w)
-			WHEELS=1
-			;;
 		D)
 			REPOS=""
 			;;
@@ -140,55 +130,29 @@ done
 # Hacky way to prevent http username/password prompts (ssh should not be affected)
 export GIT_ASKPASS=true
 
-if [ $WHEELS -eq 1 ]
-then
-	REPOS="$REPOS wheels"
-fi
-
 EXTRA_REPOS=${@:$OPTIND:$OPTIND+100}
 REPOS="$REPOS $EXTRA_REPOS"
 
-if [ $VERBOSE -eq 1 ]
-then
-	OUTFILE=/dev/stdout
-	ERRFILE=/dev/stderr
-else
-	OUTFILE=/tmp/setup-$$
-	ERRFILE=/tmp/setup-$$
-	touch $OUTFILE
-fi
+function debug
+{
+	echo -e "$(tput setaf 6 2>/dev/null)[-] $(date +%H:%M:%S) $@$(tput sgr0 2>/dev/null)"
+}
 
 function info
 {
 	echo -e "$(tput setaf 4 2>/dev/null)[+] $(date +%H:%M:%S) $@$(tput sgr0 2>/dev/null)"
-	if [ $VERBOSE -eq 0 ]; then echo "[+] $@"; fi >> $OUTFILE
 }
 
 function warning
 {
 	echo -e "$(tput setaf 3 2>/dev/null)[!] $(date +%H:%M:%S) $@$(tput sgr0 2>/dev/null)"
-	if [ $VERBOSE -eq 0 ]; then echo "[!] $@"; fi >> $OUTFILE
-}
-
-function debug
-{
-	echo -e "$(tput setaf 6 2>/dev/null)[-] $(date +%H:%M:%S) $@$(tput sgr0 2>/dev/null)"
-	if [ $VERBOSE -eq 0 ]; then echo "[-] $@"; fi >> $OUTFILE
 }
 
 function error
 {
-	echo -e "$(tput setaf 1 2>/dev/null)[!!] $(date +%H:%M:%S) $@$(tput sgr0 2>/dev/null)" >&2
-	if [ $VERBOSE -eq 0 ]
-	then
-		echo "[!!] $@" >> $ERRFILE
-		cat $OUTFILE
-		[ $OUTFILE == $ERRFILE ] || cat $ERRFILE
-	fi
+	echo -e "$(tput setaf 1 2>/dev/null)[!!] $(date +%H:%M:%S) $@$(tput sgr0 2>/dev/null)"
 	exit 1
 }
-
-trap 'error "An error occurred on line $LINENO. Saved output:"' ERR
 
 if [ "$INSTALL_REQS" -eq 1 ]
 then
@@ -203,11 +167,11 @@ then
 		if ! (dpkg --print-foreign-architectures | grep -q i386)
 		then
 			info "Adding i386 architectures..."
-			$SUDO dpkg --add-architecture i386 >>$OUTFILE 2>>$ERRFILE
-			$SUDO apt-get update >>$OUTFILE 2>>$ERRFILE
+			$SUDO dpkg --add-architecture i386
+			$SUDO apt-get update
 		fi
 		info "Installing dependencies..."
-		$SUDO apt-get install -y $DEBS >>$OUTFILE 2>>$ERRFILE
+		$SUDO apt-get install -y $DEBS
 	elif [ -e /etc/pacman.conf ]
 	then
 		if ! grep --quiet "^\[multilib\]" /etc/pacman.conf;
@@ -215,14 +179,14 @@ then
 			info "Adding i386 architectures..."
 			$SUDO sed 's/^\(#\[multilib\]\)/\[multilib\]/' </etc/pacman.conf >/tmp/pacman.conf
 			$SUDO sed '/^\[multilib\]/{n;s/^#//}' </tmp/pacman.conf >/etc/pacman.conf
-			$SUDO pacman -Syu >>$OUTFILE 2>>$ERRFILE
+			$SUDO pacman -Syu
 		fi
 		info "Installing dependencies..."
-		$SUDO pacman -S --noconfirm --needed $ARCHDEBS >>$OUTFILE 2>>$ERRFILE
+		$SUDO pacman -S --noconfirm --needed $ARCHDEBS
 	elif [ -e /etc/fedora-release ]
 	then
 		info "Installing dependencies..."
-		$SUDO dnf install -y $RPMS #>>$OUTFILE 2>>$ERRFILE
+		$SUDO dnf install -y $RPMS
 	elif [ -e /etc/zypp ]
 	then
 		info "Installing dependencies..."
@@ -233,7 +197,7 @@ then
 		then
 			error "Your system doesn't have homebrew installed, I don't know how to install the dependencies.\nPlease install homebrew: https://brew.sh/\nOr install the equivalent of these homebrew packages: $HOMEBREW_DEBS."
 		fi
-		brew install $HOMEBREW_DEBS >>$OUTFILE 2>>$ERRFILE
+		brew install $HOMEBREW_DEBS
 	elif [ -e /etc/NIXOS ]
 	then
 		info "Doing nothing about dependencies installation for NixOS, as they are provided via shell.nix..."
@@ -270,7 +234,7 @@ elif [ $IS_MACOS -eq 1 ]
 then
 	[ $(brew ls --versions $HOMEBREW_DEBS | wc -l) -ne $(echo $HOMEBREW_DEBS | wc -w) ] && error "Please install the following packages from homebrew: $HOMEBREW_DEBS"
 else
-	warning -e "WARNING: make sure you have dependencies installed.\nThe debian equivalents are: $DEBS.\nPress enter to continue." && ([ $UNATTENDED == 0 ] || read a)
+	warning "WARNING: make sure you have dependencies installed.\nThe debian equivalents are: $DEBS."
 fi
 
 if [ -n "$ANGR_VENV" ]
@@ -301,7 +265,7 @@ then
 		set +e
 		source ~/.local/bin/virtualenvwrapper.sh
 		set -e
-		venvwrapepr_loc=~/.local/bin/virtualenvwrapper.sh
+		venvwrapper_loc=~/.local/bin/virtualenvwrapper.sh
 	fi
 	if [[ $venvwrapper_loc == "~/.local/bin/virtualenvwrapper.sh" && ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
 		info "\$HOME/.local/bin is not in your path, adding temporarily."
@@ -330,16 +294,17 @@ then
 	elif [ "$USE_PYPY" -eq 1 ]
 	then
 		info "Creating pypy virtualenv $ANGR_VENV..."
-		./pypy_venv.sh $ANGR_VENV >>$OUTFILE 2>>$ERRFILE
+		./pypy_venv.sh $ANGR_VENV
 	else
 		info "Creating cpython virtualenv $ANGR_VENV..."
-		mkvirtualenv --python=$(which python3) $ANGR_VENV >>$OUTFILE 2>>$ERRFILE
+		mkvirtualenv --python=$(which python3) $ANGR_VENV
 	fi
 
 	set -e
 	workon $ANGR_VENV || error "Unable to activate the virtual environment."
 
 	# older versions of pip will fail to process the --find-links arg silently
+	# setuptools<64.0.1 is needed for editable installs for now, see angr/angr#3487
 	pip3 install -U 'pip>=20.0.2'
 fi
 
@@ -347,12 +312,15 @@ fi
 implementation=$(python -c "import sys; print(sys.implementation.name)")
 if [ "$implementation" == "cpython" ]; then REPOS="${REPOS} $REPOS_CPYTHON"; fi
 
+# Install build dependencies until build isolation can be enabled
+pip install -U pip "setuptools==64.0.1" wheel cffi unicorn==1.0.2rc4
+
 function try_remote
 {
 	URL=$1
 	debug "Trying to clone from $URL"
 	rm -f $CLONE_LOG
-	git clone $GIT_OPTIONS $URL >> $CLONE_LOG 2>> $CLONE_LOG
+	git clone --recursive $GIT_OPTIONS $URL >> $CLONE_LOG 2>> $CLONE_LOG
 	r=$?
 
 	if grep -q -E "(ssh_exchange_identification: read: Connection reset by peer|ssh_exchange_identification: Connection closed by remote host)" $CLONE_LOG
@@ -397,37 +365,12 @@ function clone_repo
 	return 0
 }
 
-function install_wheels
-{
-	#LATEST_Z3=$(ls -tr wheels/angr_only_z3_custom-*)
-	#echo "Installing $LATEST_Z3..." >> $OUTFILE 2>> $ERRFILE
-	#pip3 install $LATEST_Z3 >> $OUTFILE 2>> $ERRFILE
-
-	#LATEST_VEX=$(ls -tr wheels/vex-*)
-	#debug "Extracting $LATEST_VEX..." >> $OUTFILE 2>> $ERRFILE
-	#tar xvzf $LATEST_VEX >> $OUTFILE 2>> $ERRFILE
-	#touch vex/*/*.o vex/libvex.a
-
-	#LATEST_QEMU=$(ls -tr wheels/shellphish_qemu-*)
-	#echo "Installing $LATEST_QEMU" >> $OUTFILE 2>> $ERRFILE
-	#pip3 install $LATEST_QEMU >> $OUTFILE 2>> $ERRFILE
-
-	#LATEST_AFL=$(ls -tr wheels/shellphish_afl-*)
-	#echo "Installing $LATEST_AFL" >> $OUTFILE 2>> $ERRFILE
-	#pip3 install $LATEST_AFL >> $OUTFILE 2>> $ERRFILE
-
-	LATEST_KEYSTONE=$(ls -tr wheels/keystone_engine-*)
-	echo "Installing $LATEST_KEYSTONE" >> $OUTFILE 2>> $ERRFILE
-	pip3 install $LATEST_KEYSTONE >> $OUTFILE 2>> $ERRFILE
-}
-
 function pip_install
 {
         debug "pip-installing: $@."
-        if ! pip3 install $PIP_OPTIONS `[ $VERBOSE -eq 1 ] && echo -v` $@ >>$OUTFILE 2>>$ERRFILE
+        if ! pip3 install $PIP_OPTIONS $@
         then
-            	error "pip failure ($@). Check $OUTFILE for details, or read it here:"
-            	exit 1
+            	error "pip failure ($@)."
         fi
 }
 
@@ -437,7 +380,7 @@ then
 	for r in $REPOS
 	do
 		clone_repo $r || exit 1
-		[ -e "$NAME/setup.py" ] && TO_INSTALL="$TO_INSTALL $NAME"
+		[ -e "$NAME/setup.py" -o -e "$NAME/pyproject.toml" ] && TO_INSTALL="$TO_INSTALL $NAME"
 	done
 else
 	declare -A CLONE_PROCS
@@ -449,13 +392,10 @@ else
 
 	for r in $REPOS
 	do
-		#echo "WAITING FOR: $r (PID ${CLONE_PROCS[$r]})"
 		if wait ${CLONE_PROCS[$r]}
 		then
-			#echo "... SUCCESS"
-			[ -e "$r/setup.py" ] && TO_INSTALL="$TO_INSTALL $r"
+			[ -e "$r/setup.py" -o -e "$r/pyproject.toml" ] && TO_INSTALL="$TO_INSTALL $r"
 		else
-			#echo "... FAIL"
 			exit 1
 		fi
 	done
@@ -464,7 +404,7 @@ fi
 if [ -n "$BRANCH" ]
 then
 	info "Checking out branch $BRANCH."
-	./git_all.sh checkout $BRANCH >> $OUTFILE 2>> $ERRFILE
+	./git_all.sh checkout $BRANCH
 fi
 
 if [ $INSTALL -eq 1 ]
@@ -484,18 +424,7 @@ then
 		fi
 	fi
 
-	if [ $VERBOSE -eq 1 ]
-	then
-		info "Installing python packages!"
-	else
-		info "Installing python packages (logging to $OUTFILE)!"
-	fi
-
-	if [ $WHEELS -eq 1 ]
-	then
-		install_wheels
-		PIP_OPTIONS="$PIP_OPTIONS --find-links=$PWD/wheels"
-	fi
+	info "Installing python packages!"
 
 	# the angr environment on macos hides the python2 from us, so we'll used the installed version in /usr/bin/python
 	if [ $IS_MACOS -eq 1 ]
@@ -520,18 +449,12 @@ then
 	for PACKAGE in $TO_INSTALL; do
 		info "Installing $PACKAGE."
 		[ -n "${EXTRA_DEPS[$PACKAGE]}" ] && pip_install ${EXTRA_DEPS[$PACKAGE]}
-		pip_install -e $PACKAGE
+		pip_install --no-build-isolation -e $PACKAGE
 	done
 
-	info "Installing some other helpful stuff (logging to $OUTFILE)."
+	info "Installing some other helpful stuff"
 	# we need the pyelftools from upstream
-	if pip3 install -U ipython pylint ipdb nose nose-timer coverage flaky keystone-engine 'git+https://github.com/eliben/pyelftools#egg=pyelftools' >> $OUTFILE 2>> $ERRFILE
-	then
-		info "Success!"
-	else
-		error "Something failed to install. Check $OUTFILE for details, or read it here:"
-		exit 1
-	fi
+	pip3 install -U ipython pylint ipdb nose nose-timer coverage flaky keystone-engine 'git+https://github.com/eliben/pyelftools#egg=pyelftools'
 
 	echo ''
 	info "All done! Execute \"workon $ANGR_VENV\" to use your new angr virtual"

@@ -1,9 +1,9 @@
+# pylint:disable=line-too-long
 import logging
 import math
 
 from ailment import Expr
 
-from ... import AnalysesHub
 from .engine_base import SimplifierAILEngine, SimplifierAILState
 from .optimization_pass import OptimizationPass, OptimizationPassStage
 
@@ -11,12 +11,16 @@ _l = logging.getLogger(name=__name__)
 
 
 class DivSimplifierAILEngine(SimplifierAILEngine):
+    """
+    An AIL pass for the div simplifier
+    """
 
     def _check_divisor(self, a, b, ndigits=6): #pylint: disable=no-self-use
         divisor_1 = 1 + (a//b)
         divisor_2 = int(round(a/float(b), ndigits))
         return divisor_1 if divisor_1 == divisor_2 else None
 
+    # pylint: disable=too-many-boolean-expressions
     def _ail_handle_Convert(self, expr):
         if expr.from_bits == 128 and expr.to_bits == 64:
             operand_expr = self._expr(expr.operand)
@@ -170,7 +174,6 @@ class DivSimplifierAILEngine(SimplifierAILEngine):
             new_const = Expr.Const(expr.idx, None, divisor, 64)
             return Expr.BinaryOp(expr.idx, 'DivMod', [X, new_const], expr.signed, **expr.tags)
 
-
         if isinstance(operand_1, Expr.Const):
             if isinstance(operand_0, Expr.Register):
                 new_operand = Expr.Const(operand_1.idx, None, 2**operand_1.value, operand_1.bits)
@@ -246,12 +249,80 @@ class DivSimplifierAILEngine(SimplifierAILEngine):
             return Expr.BinaryOp(expr.idx, 'Div', [operand_0, operand_1], expr.signed, **expr.tags)
         return expr
 
+    def _ail_handle_Add(self, expr):
+
+        if len(expr.operands) != 2:
+            return super()._ail_handle_Add(expr)
+
+        op0 = self._expr(expr.operands[0])
+        op1 = self._expr(expr.operands[1])
+
+        matched, new_expr = self._match_signed_division_add_operands(op0, op1)
+        if matched:
+            return new_expr
+        matched, new_expr = self._match_signed_division_add_operands(op1, op0)  # pylint:disable=arguments-out-of-order
+        if matched:
+            return new_expr
+
+        return super()._ail_handle_Add(expr)
+
+    def _match_signed_division_add_operands(self, op0, op1):
+        # From: Add((Conv(64->32, ((Load(addr=stack_base+4, size=4, endness=Iend_LE) Mulls 0x55555556<32>) >> 0x20<8>)) >> 0x1f<8>),
+        #            Conv(64->32, ((Load(addr=stack_base+4, size=4, endness=Iend_LE) Mulls 0x55555556<32>) >> 0x20<8>)))
+        # To: Load(addr=stack_base+4, size=4, endness=Iend_LE) /s 3
+
+        # op0
+        if not (isinstance(op0, Expr.BinaryOp) and op0.op == "Shr"
+                and isinstance(op0.operands[1], Expr.Const) and op0.operands[1].value == 0x1f):
+            return False, None
+        if not (isinstance(op0.operands[0], Expr.Convert)
+                and op0.operands[0].from_bits == 64
+                and op0.operands[0].to_bits == 32):
+            return False, None
+
+        op0_inner = op0.operands[0].operand
+        if not (isinstance(op0_inner, Expr.BinaryOp) and op0_inner.op == "Shr"
+                and isinstance(op0_inner.operands[1], Expr.Const) and op0_inner.operands[1].value == 32):
+            return False, None
+
+        # op1
+        if not op1 == op0.operands[0]:
+            return False, None
+
+        # extract
+        inner = op0_inner.operands[0]
+        if isinstance(inner, Expr.BinaryOp) and inner.op == "Mull" and inner.signed:
+            operand_0, operand_1 = inner.operands
+
+            if isinstance(operand_1, Expr.Const) and not isinstance(operand_0, Expr.Const):
+                # swap them
+                operand_0, operand_1 = operand_1, operand_0
+
+            if isinstance(operand_0, Expr.Const) and not isinstance(operand_1, Expr.Const) and operand_0.bits == 32:
+                bits = operand_0.bits
+                C = operand_0.value
+                X = operand_1
+                V = bits
+                ndigits = 5 if V == 32 else 6
+                divisor = self._check_divisor(pow(2, V), C, ndigits)
+                if divisor is not None and X:
+                    new_const = Expr.Const(None, None, divisor, V)
+                    new_expr = Expr.BinaryOp(inner.idx, 'Div', [X, new_const], inner.signed, **inner.tags)
+                    return True, new_expr
+
+        return False, None
+
 
 class DivSimplifier(OptimizationPass):
+    """
+    Simplifies various division optimizations back to "div".
+    """
 
-    ARCHES = ["X86", "AMD64"]
-    PLATFORMS = ["linux", "windows"]
+    ARCHES = ["X86", "AMD64", "ARMCortexM", "ARMHF", "ARMEL", ]
+    PLATFORMS = None  #everything
     STAGE = OptimizationPassStage.AFTER_GLOBAL_SIMPLIFICATION
+    NAME = "Simplify arithmetic division"
+    DESCRIPTION = __doc__.strip()
 
     def __init__(self, func, **kwargs):
 
@@ -277,5 +348,3 @@ class DivSimplifier(OptimizationPass):
                 _l.debug("new block: %s", new_block.statements)
 
             self._update_block(block, new_block)
-
-AnalysesHub.register_default("DivSimplifier", DivSimplifier)

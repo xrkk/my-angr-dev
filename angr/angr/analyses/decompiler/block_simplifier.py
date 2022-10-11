@@ -2,13 +2,15 @@
 import logging
 from typing import Optional, Union, Type, Iterable, Tuple, Set, TYPE_CHECKING
 
-from ailment.statement import Statement, Assignment, Call
-from ailment.expression import Expression, Tmp, Register, Load
+from ailment.statement import Statement, Assignment, Call, Store, Jump
+from ailment.expression import Expression, Tmp, Load, Const
 
 from ...engines.light.data import SpOffset
 from ...knowledge_plugins.key_definitions.constants import OP_AFTER
 from ...knowledge_plugins.key_definitions import atoms
 from ...analyses.reaching_definitions.external_codeloc import ExternalCodeLocation
+from ...analyses.propagator import PropagatorAnalysis
+from ...analyses.reaching_definitions import ReachingDefinitionsAnalysis
 from ...errors import SimMemoryMissingError
 from .. import Analysis, register_analysis
 from .peephole_optimizations import STMT_OPTS, EXPR_OPTS, PeepholeOptimizationStmtBase, PeepholeOptimizationExprBase
@@ -27,9 +29,13 @@ class BlockSimplifier(Analysis):
     """
     Simplify an AIL block.
     """
-    def __init__(self, block: Optional['Block'], func_addr: int, remove_dead_memdefs=False, stack_pointer_tracker=None,
-                 peephole_optimizations: Optional[Iterable[Union[Type[PeepholeOptimizationStmtBase],Type[PeepholeOptimizationExprBase]]]]=None,
+    def __init__(self, block: Optional['Block'], func_addr: Optional[int] = None,
+                 remove_dead_memdefs=False, stack_pointer_tracker=None,
+                 peephole_optimizations: Optional[Iterable[Union[Type[PeepholeOptimizationStmtBase],
+                                                                 Type[PeepholeOptimizationExprBase]]]]=None,
                  stack_arg_offsets: Optional[Set[Tuple[int, int]]] = None,
+                 cached_reaching_definitions=None,
+                 cached_propagator=None,
                  ):
         """
         :param block:   The AIL block to simplify. Setting it to None to skip calling self._analyze(), which is useful
@@ -54,6 +60,10 @@ class BlockSimplifier(Analysis):
 
         self.result_block = None
 
+        # cached Propagator and ReachingDefinitions results. Clear them if the block is updated
+        self._propagator = cached_propagator
+        self._reaching_definitions = cached_reaching_definitions
+
         if self.block is not None:
             self._analyze()
 
@@ -63,8 +73,12 @@ class BlockSimplifier(Analysis):
         ctr = 0
         max_ctr = 30
 
-        block = self._eliminate_self_assignments(block)
-        block = self._eliminate_dead_assignments(block)
+        new_block = self._eliminate_self_assignments(block)
+        if self._count_nonconstant_statements(new_block) >= 2 and self._has_propagatable_assignments(new_block):
+            new_block = self._eliminate_dead_assignments(new_block)
+        if new_block != block:
+            self._clear_cache()
+            block = new_block
 
         while True:
             ctr += 1
@@ -74,6 +88,7 @@ class BlockSimplifier(Analysis):
             # print(str(new_block))
             if new_block == block:
                 break
+            self._clear_cache()
             block = new_block
             if ctr >= max_ctr:
                 _l.error("Simplification does not reach a fixed point after %d iterations. "
@@ -82,22 +97,59 @@ class BlockSimplifier(Analysis):
 
         self.result_block = block
 
+    def _compute_propagation(self, block):
+        if self._propagator is None:
+            self._propagator = self.project.analyses[PropagatorAnalysis].prep()(
+                block=block, func_addr=self.func_addr, stack_pointer_tracker=self._stack_pointer_tracker,
+            )
+        return self._propagator
+
+    def _compute_reaching_definitions(self, block):
+        if self._reaching_definitions is None:
+            self._reaching_definitions = self.project.analyses[ReachingDefinitionsAnalysis].prep()(
+                subject=block, track_tmps=True, observation_points=[('node', block.addr, OP_AFTER)]
+            )
+        return self._reaching_definitions
+
+    def _clear_cache(self):
+        self._reaching_definitions = None
+        self._propagator = None
+
+    @staticmethod
+    def _has_propagatable_assignments(block) -> bool:
+        return any(isinstance(stmt, (Assignment, Store)) for stmt in block.statements)
+
+    @staticmethod
+    def _count_nonconstant_statements(block) -> int:
+        return sum(1 for stmt in block.statements if not (isinstance(stmt, Jump) and isinstance(stmt.target, Const)))
+
     def _simplify_block_once(self, block):
+        nonconstant_stmts = self._count_nonconstant_statements(block)
+        has_propagatable_assignments = self._has_propagatable_assignments(block)
 
         # propagator
-        propagator = self.project.analyses.Propagator(block=block, stack_pointer_tracker=self._stack_pointer_tracker)
-        replacements = list(propagator._states.values())[0]._replacements
-        if replacements:
-            _, new_block = self._replace_and_build(block, replacements)
-            new_block = self._eliminate_self_assignments(new_block)
+        if nonconstant_stmts >= 2 and has_propagatable_assignments:
+            propagator = self._compute_propagation(block)
+            replacements = list(propagator._states.values())[0]._replacements
+            if replacements:
+                _, new_block = self._replace_and_build(block, replacements)
+                new_block = self._eliminate_self_assignments(new_block)
+                self._clear_cache()
+            else:
+                new_block = block
         else:
+            # Skipped calling Propagator
             new_block = block
-        new_block = self._eliminate_dead_assignments(new_block)
+
+        if nonconstant_stmts >= 2 and has_propagatable_assignments:
+            new_block = self._eliminate_dead_assignments(new_block)
+
         new_block = self._peephole_optimize(new_block)
         return new_block
 
     @staticmethod
-    def _replace_and_build(block, replacements) -> Tuple[bool,'Block']:
+    def _replace_and_build(block, replacements, replace_assignment_dsts: bool=False,
+                           gp: Optional[int]=None) -> Tuple[bool,'Block']:
 
         new_statements = block.statements[::]
         replaced = False
@@ -105,8 +157,10 @@ class BlockSimplifier(Analysis):
         for codeloc, repls in replacements.items():
             for old, new in repls.items():
                 stmt = new_statements[codeloc.stmt_idx]
-                if isinstance(old, Load) and not isinstance(stmt, Call):
-                    # skip memory-based replacement for non-Call statements
+                if isinstance(old, Load) \
+                        and not isinstance(stmt, Call) \
+                        and not (gp is not None and isinstance(new, Const) and new.value == gp):
+                    # skip memory-based replacement for non-Call and non-gp-loading statements
                     continue
                 if stmt == old:
                     # replace this statement
@@ -118,10 +172,14 @@ class BlockSimplifier(Analysis):
                         # special case: do not replace the ret_expr of a call statement to another call statement
                         r = False
                         new_stmt = None
-                    elif isinstance(stmt, Assignment):
+                    elif isinstance(stmt, Assignment) and not replace_assignment_dsts:
                         # special case: do not replace the dst
                         new_stmt = None
-                        r, new_src = stmt.src.replace(old, new)
+                        if stmt.src == old:
+                            r = True
+                            new_src = new.copy()
+                        else:
+                            r, new_src = stmt.src.replace(old, new)
                         if r:
                             new_stmt = Assignment(stmt.idx, stmt.dst, new_src, **stmt.tags)
                     else:
@@ -158,12 +216,7 @@ class BlockSimplifier(Analysis):
         if not block.statements:
             return block
 
-        rd = self.project.analyses.ReachingDefinitions(subject=block,
-                                                       track_tmps=True,
-                                                       observation_points=[('node', block.addr, OP_AFTER)]
-                                                       )
-
-        used_tmp_indices = set(rd.one_result.tmp_uses.keys())
+        rd = self._compute_reaching_definitions(block)
         live_defs: 'LiveDefinitions' = rd.one_result
 
         # Find dead assignments
@@ -209,18 +262,26 @@ class BlockSimplifier(Analysis):
                     else:
                         continue
                     if vs is not None:
-                        for values in vs.values.values():
+                        for values in vs.values():
                             for value in values:
                                 defs_.update(live_defs.extract_defs(value))
 
                     if d not in defs_:
                         dead_defs_stmt_idx.add(d.codeloc.stmt_idx)
 
+        used_tmps = set()
+        # micro optimization: if all statements that use a tmp are going to be removed, we remove this tmp as well
+        for tmp, used_locs in rd.one_result.tmp_uses.items():
+            used_at = set(loc.stmt_idx for loc in used_locs)
+            if used_at.issubset(dead_defs_stmt_idx):
+                continue
+            used_tmps.add(tmp)
+
         # Remove dead assignments
         for idx, stmt in enumerate(block.statements):
             if type(stmt) is Assignment:
                 if type(stmt.dst) is Tmp:
-                    if stmt.dst.tmp_idx not in used_tmp_indices:
+                    if stmt.dst.tmp_idx not in used_tmps:
                         continue
 
                 # is it a dead virgin?

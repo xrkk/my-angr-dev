@@ -1,6 +1,8 @@
+from typing import Optional
 import logging
 import time
 import datetime
+import ctypes
 
 from ...logic import GlobalInfo
 from ...logic.threads import gui_thread_schedule_async
@@ -17,11 +19,13 @@ except ImportError:
 l = logging.getLogger(__name__)
 
 class Job:
-    def __init__(self, name, on_finish=None):
+    def __init__(self, name, on_finish=None, blocking=False):
         self.name = name
         self.progress_percentage = 0.
+        self.last_text: Optional[str] = None
         self.start_at: float = 0.
         self.last_gui_updated_at: float = 0.
+        self.blocking = blocking
 
         # callbacks
         self._on_finish = on_finish
@@ -52,23 +56,29 @@ class Job:
             gui_thread_schedule_async(self._on_finish)
 
     def keyboard_interrupt(self):
-        """Called from the GUI thread when the user presses Ctrl+C"""
-        return
+        """Called from the GUI thread when the user presses Ctrl+C or presses a cancel button"""
+        # lol. lmao even.
+        if GlobalInfo.main_window.workspace.instance.current_job == self:
+            tid = GlobalInfo.main_window.workspace.instance.worker_thread.ident
+            res = ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(tid), ctypes.py_object(KeyboardInterrupt))
+            if res != 1:
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(tid), 0)
+                l.error("Failed to interrupt thread")
 
     def _progress_callback(self, percentage, text=None):
         delta = percentage - self.progress_percentage
 
-        if delta > 0.02 and time.time() - self.last_gui_updated_at > 0.2:
+        if (delta > 0.02 or self.last_text != text) and time.time() - self.last_gui_updated_at >= 0.1:
             self.last_gui_updated_at = time.time()
             self.progress_percentage = percentage
             gui_thread_schedule_async(self._set_progress, args=(text,))
 
     def _set_progress(self, text=None):
         if text:
-            GlobalInfo.main_window.status = f"Working... {self.name}: {text} - {self.time_elapsed}"
+            status = f"{self.name}: {text} - {self.time_elapsed}"
         else:
-            GlobalInfo.main_window.status = f"Working... {self.name} - {self.time_elapsed}"
-        GlobalInfo.main_window.progress = self.progress_percentage
+            status = f"{self.name} - {self.time_elapsed}"
+        GlobalInfo.main_window.progress(status, self.progress_percentage)
 
     def _finish_progress(self):
-        GlobalInfo.main_window.progress_done()
+        pass

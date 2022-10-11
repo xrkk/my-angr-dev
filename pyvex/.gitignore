@@ -14,8 +14,8 @@ libpyvex.so
 *.exp
 *.o
 *.a
+*.dylib
 pyvex/lib
 pyvex/include
-vex
 vex-master
 vex-master.tar.gz

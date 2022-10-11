@@ -16,3 +16,26 @@
 安装本地: `pip install -e archinfo`
 
 
+# 2022.10.11
+
+https://github.com/angr/ailment
+https://github.com/angr/angr
+https://github.com/angr/angr-dev
+https://github.com/angr/angr-doc
+https://github.com/angr/angr-management
+https://github.com/angr/archinfo
+https://github.com/angr/binaries
+https://github.com/angr/claripy
+https://github.com/angr/cle
+https://github.com/angr/pyvex
+https://github.com/angr/vex
+
+
+https://github.com/angr/archr
+https://github.com/angr/angr-targets
+https://github.com/angr/angr-platforms
+https://github.com/angr/pysoot
+https://github.com/angr/heaphopper
+https://github.com/angr/pypcode
+https://github.com/angr/rex
+

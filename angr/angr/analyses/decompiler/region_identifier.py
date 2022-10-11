@@ -1,13 +1,16 @@
 from itertools import count
+from collections import defaultdict
 import logging
+from typing import List, Optional
 
 import networkx
 
 import ailment
-from claripy.utils.orderedset import OrderedSet
+from ailment import Block
 
 from ...utils.graph import dfs_back_edges, subgraph_between_nodes, dominates, shallow_reverse
 from .. import Analysis, register_analysis
+from ..cfg.cfg_utils import CFGUtils
 from .utils import replace_last_statement
 from .structurer_nodes import MultiNode, ConditionNode
 from .graph_region import GraphRegion
@@ -24,14 +27,18 @@ class RegionIdentifier(Analysis):
     """
     Identifies regions within a function.
     """
-    def __init__(self, func, cond_proc=None, graph=None):
+    def __init__(self, func, cond_proc=None, graph=None, largest_successor_tree_outside_loop=True):
         self.function = func
-        self.cond_proc = cond_proc if cond_proc is not None else ConditionProcessor()
+        self.cond_proc = cond_proc if cond_proc is not None else ConditionProcessor(
+            self.project.arch if self.project is not None else None  # it's only None in test cases
+        )
         self._graph = graph if graph is not None else self.function.graph
 
         self.region = None
         self._start_node = None
-        self._loop_headers = None
+        self._loop_headers: Optional[List] = None
+        self.regions_by_block_addrs = []
+        self._largest_successor_tree_outside_loop = largest_successor_tree_outside_loop
 
         self._analyze()
 
@@ -71,6 +78,45 @@ class RegionIdentifier(Analysis):
 
         self.region = self._make_regions(graph)
 
+        # make regions into block address lists
+        self.regions_by_block_addrs = self._make_regions_by_block_addrs()
+
+    def _make_regions_by_block_addrs(self) -> List[List[int]]:
+        """
+        Creates a list of addr lists representing each region without recursion. A single region is defined
+        as a set of only blocks, no Graphs containing nested regions. The list contains the address of each
+        block in the region, including the heads of each recursive region.
+
+        @return: List of addr lists
+        """
+
+        work_list = [self.region]
+        block_only_regions = []
+        seen_regions = set()
+        while work_list:
+            children_regions = []
+            for region in work_list:
+                children_blocks = []
+                for node in region.graph.nodes:
+                    if isinstance(node, Block):
+                        children_blocks.append(node.addr)
+                    elif isinstance(node, MultiNode):
+                        children_blocks += [n.addr for n in node.nodes]
+                    elif isinstance(node, GraphRegion):
+                        if node not in seen_regions:
+                            children_regions.append(node)
+                            children_blocks.append(node.head.addr)
+                            seen_regions.add(node)
+                    else:
+                        continue
+
+                if children_blocks:
+                    block_only_regions.append(children_blocks)
+
+            work_list = children_regions
+
+        return block_only_regions
+
     def _get_start_node(self, graph: networkx.DiGraph):
         try:
             return next(n for n in graph.nodes() if graph.in_degree(n) == 0)
@@ -79,8 +125,8 @@ class RegionIdentifier(Analysis):
 
         try:
             return next(n for n in graph.nodes() if n.addr == self.function.addr)
-        except StopIteration:
-            raise RuntimeError("Cannot find the start node from the graph!")
+        except StopIteration as ex:
+            raise RuntimeError("Cannot find the start node from the graph!") from ex
 
     def _test_reducibility(self):
 
@@ -126,8 +172,10 @@ class RegionIdentifier(Analysis):
             else:
                 break
 
-    def _find_loop_headers(self, graph: networkx.DiGraph):
-        return OrderedSet(sorted((t for _,t in dfs_back_edges(graph, self._start_node)), key=lambda x: x.addr))
+    def _find_loop_headers(self, graph: networkx.DiGraph) -> List:
+
+        heads = { t for _,t in dfs_back_edges(graph, self._start_node) }
+        return CFGUtils.quasi_topological_sort_nodes(graph, heads)
 
     def _find_initial_loop_nodes(self, graph: networkx.DiGraph, head):
         # TODO optimize
@@ -137,23 +185,58 @@ class RegionIdentifier(Analysis):
         return nodes
 
     def _refine_loop(self, graph: networkx.DiGraph, head, initial_loop_nodes, initial_exit_nodes):
+        if len(initial_exit_nodes) <= 1:
+            return initial_loop_nodes, initial_exit_nodes
+
         refined_loop_nodes = initial_loop_nodes.copy()
         refined_exit_nodes = initial_exit_nodes.copy()
 
         idom = networkx.immediate_dominators(graph, self._start_node)
 
         new_exit_nodes = refined_exit_nodes
+        # a graph with only initial exit nodes and new loop nodes that are reachable from at least one initial exit
+        # node.
+        subgraph = networkx.DiGraph()
+
         while len(refined_exit_nodes) > 1 and new_exit_nodes:
             new_exit_nodes = set()
-            for n in list(refined_exit_nodes):
+            for n in list(sorted(refined_exit_nodes,
+                                 key=lambda nn: (nn.addr, nn.idx if isinstance(nn, ailment.Block) else None))):
                 if all(pred in refined_loop_nodes for pred in graph.predecessors(n)) and dominates(idom, head, n):
                     refined_loop_nodes.add(n)
                     refined_exit_nodes.remove(n)
-                    for u in (set(graph.successors(n)) - refined_loop_nodes):
-                        new_exit_nodes.add(u)
+                    to_add = set(graph.successors(n)) - refined_loop_nodes
+                    new_exit_nodes |= to_add
+                    for succ in to_add:
+                        subgraph.add_edge(n, succ)
             refined_exit_nodes |= new_exit_nodes
 
         refined_loop_nodes = refined_loop_nodes - refined_exit_nodes
+
+        if self._largest_successor_tree_outside_loop and not refined_exit_nodes:
+            # figure out the new successor tree with the highest number of nodes
+            initial_exit_to_newnodes = defaultdict(set)
+            newnode_to_initial_exits = defaultdict(set)
+            for initial_exit in initial_exit_nodes:
+                if initial_exit in subgraph:
+                    for _, succs in networkx.bfs_successors(subgraph, initial_exit):
+                        initial_exit_to_newnodes[initial_exit] |= set(succs)
+                        for succ in succs:
+                            newnode_to_initial_exits[succ].add(initial_exit)
+
+            for newnode, exits in newnode_to_initial_exits.items():
+                for exit_ in exits:
+                    initial_exit_to_newnodes[exit_].add(newnode)
+            if initial_exit_to_newnodes:
+                tree_sizes = dict((exit_, len(initial_exit_to_newnodes[exit_])) for exit_ in initial_exit_to_newnodes)
+                max_tree_size = max(tree_sizes.values())
+                if list(tree_sizes.values()).count(max_tree_size) == 1:
+                    tree_size_to_exit = dict((v, k) for k, v in tree_sizes.items())
+                    max_size_exit = tree_size_to_exit[max_tree_size]
+                    if all(len(newnode_to_initial_exits[nn]) == 1 for nn in initial_exit_to_newnodes[max_size_exit]):
+                        refined_loop_nodes = refined_loop_nodes - \
+                                             initial_exit_to_newnodes[max_size_exit] - {max_size_exit}
+                        refined_exit_nodes.add(max_size_exit)
 
         return refined_loop_nodes, refined_exit_nodes
 
@@ -204,11 +287,16 @@ class RegionIdentifier(Analysis):
             self._start_node = self._get_start_node(graph)
 
             # Start from loops
-            for node in self._loop_headers:
+            for node in list(reversed(self._loop_headers)):
                 if node in structured_loop_headers:
                     continue
                 region = self._make_cyclic_region(node, graph)
-                if region is not None:
+                if region is None:
+                    # failed to struct the loop region - remove the header node from loop headers
+                    l.debug("Failed to structure a loop region starting at %#x. Remove it from loop headers.",
+                            node.addr)
+                    self._loop_headers.remove(node)
+                else:
                     l.debug("Structured a loop region %r.", region)
                     new_regions.append(region)
                     structured_loop_headers.add(node)
@@ -257,7 +345,7 @@ class RegionIdentifier(Analysis):
         initial_loop_nodes = self._find_initial_loop_nodes(graph, head)
         l.debug("Initial loop nodes %s", self._dbg_block_list(initial_loop_nodes))
 
-        # Make sure there is no other loop contained in the current loop
+        # Make sure no other loops are contained in the current loop
         if {n for n in initial_loop_nodes if n.addr != head.addr}.intersection(self._loop_headers):
             return None
 
@@ -354,7 +442,8 @@ class RegionIdentifier(Analysis):
                 last_stmts = self.cond_proc.get_last_statements(src)
                 for last_stmt in last_stmts:
                     if isinstance(last_stmt, ailment.Stmt.ConditionalJump):
-                        if last_stmt.true_target.value == succ.addr:
+                        if isinstance(last_stmt.true_target, ailment.Expr.Const) \
+                                and last_stmt.true_target.value == succ.addr:
                             new_last_stmt = ailment.Stmt.ConditionalJump(
                                 last_stmt.idx,
                                 last_stmt.condition,
@@ -362,7 +451,8 @@ class RegionIdentifier(Analysis):
                                 last_stmt.false_target,
                                 ins_addr=last_stmt.ins_addr,
                             )
-                        elif last_stmt.false_target.value == succ.addr:
+                        elif isinstance(last_stmt.false_target, ailment.Expr.Const) \
+                                and last_stmt.false_target.value == succ.addr:
                             new_last_stmt = ailment.Stmt.ConditionalJump(
                                 last_stmt.idx,
                                 last_stmt.condition,
@@ -373,12 +463,19 @@ class RegionIdentifier(Analysis):
                         else:
                             # none of the two branches is jumping out of the loop
                             continue
+                    elif isinstance(last_stmt, ailment.Stmt.Jump):
+                        if isinstance(last_stmt.target, ailment.Expr.Const):
+                            new_last_stmt = ailment.Stmt.Jump(
+                                last_stmt.idx,
+                                ailment.Expr.Const(None, None, condnode_addr, self.project.arch.bits),
+                                ins_addr=last_stmt.ins_addr,
+                            )
+                        else:
+                            # an indirect jump - might be a jump table. ignore it
+                            continue
                     else:
-                        new_last_stmt = ailment.Stmt.Jump(
-                            last_stmt.idx,
-                            ailment.Expr.Const(None, None, condnode_addr, self.project.arch.bits),
-                            ins_addr=last_stmt.ins_addr,
-                        )
+                        l.error("Unexpected last_stmt type %s. Ignore.", type(last_stmt))
+                        continue
                     replace_last_statement(src, last_stmt, new_last_stmt)
                     replaced_any_stmt = True
                 if not replaced_any_stmt:

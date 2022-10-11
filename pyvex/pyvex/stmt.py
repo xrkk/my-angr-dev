@@ -4,6 +4,7 @@ from typing import Iterator, Optional
 from . import VEXObject
 from archinfo import RegisterOffset, TmpVar
 from .enums import get_enum_from_int, get_int_from_enum
+from .expr import Const
 
 l = logging.getLogger('pyvex.stmt')
 
@@ -23,7 +24,7 @@ class IRStmt(VEXObject):
         print(self.__str__())
 
     @property
-    def expressions(self) -> Iterator['IRExpr']:
+    def child_expressions(self) -> Iterator['IRExpr']:
         for k in self.__slots__:
             v = getattr(self, k)
             if isinstance(v, IRExpr):
@@ -32,6 +33,11 @@ class IRStmt(VEXObject):
                 # return all the child expressions
                 for child in v.child_expressions:
                     yield child
+
+    # ???
+    @property
+    def expressions(self):
+        return self.child_expressions
 
     @property
     def constants(self):
@@ -51,28 +57,27 @@ class IRStmt(VEXObject):
     def typecheck(self, tyenv): # pylint: disable=unused-argument,no-self-use
         return True
 
-    def replace_expression(self, expression, replacement):
+    def replace_expression(self, replacements):
         """
         Replace child expressions in-place.
 
-        :param IRExpr expression:         The expression to look for.
-        :param IRExpr replacement:  The expression to replace with.
+        :param Dict[IRExpr, IRExpr] replacements:  A mapping from expression-to-find to expression-to-replace-with
         :return:                    None
         """
 
         for k in self.__slots__:
             v = getattr(self, k)
-            if v is expression:
-                setattr(self, k, replacement)
+            if isinstance(v, IRExpr) and v in replacements:
+                setattr(self, k, replacements.get(v))
             elif isinstance(v, IRExpr):
-                v.replace_expression(expression, replacement)
+                v.replace_expression(replacements)
             elif type(v) is tuple:
                 # Rebuild the tuple
                 _lst = [ ]
                 replaced = False
                 for expr_ in v:
-                    if expr_ is expression:
-                        _lst.append(replacement)
+                    if isinstance(expr_, IRExpr) and expr_ in replacements:
+                        _lst.append(replacements.get(expr_))
                         replaced = True
                     else:
                         _lst.append(expr_)
@@ -531,7 +536,7 @@ class Exit(IRStmt):
 
     @property
     def child_expressions(self):
-        return [self.guard, self.dst] + self.guard.child_expressions
+        return [self.guard] + self.guard.child_expressions + [Const(self.dst)]
 
     @staticmethod
     def _from_c(c_stmt):

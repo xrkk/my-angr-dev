@@ -1,9 +1,10 @@
 # pylint:disable=unused-private-member
 import logging
-from typing import Optional, Tuple, Callable, Iterator, Generator, List, Any, Union, TYPE_CHECKING
+from typing import Optional, Tuple, Callable, Iterator, Generator, List, Any, Union, TYPE_CHECKING, Type
 from PySide2.QtGui import QColor, QPainter
 from PySide2.QtGui import QIcon
 from PySide2.QtWidgets import QGraphicsSceneMouseEvent
+
 from angr.sim_manager import SimulationManager
 
 from ..ui.widgets.qblock import QBlock
@@ -13,6 +14,7 @@ from ..ui.widgets.qinst_annotation import QInstructionAnnotation
 _l = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from angr.analyses.decompiler.optimization_passes.optimization_pass import OptimizationPass
     from angrmanagement.ui.workspace import Workspace
     from angrmanagement.config.config_entry import ConfigurationEntry
     from ..ui.views import disassembly_view, code_view
@@ -172,55 +174,50 @@ class BasePlugin:
     # Decompiler Callbacks
     #
 
-    def handle_variable_rename(self, func, offset: int, old_name: str, new_name: str, type_: str, size: int):
-        """
-        A handler that is called *right before* function stack variable is renamed. Note: this does not directly
-        allow you to intercept the call and change the results of the change. This handler is only intended to be
-        used to observe the actuall changing and act accordingly after.
+    OPTIMIZATION_PASSES: List[Tuple[Type['OptimizationPass'], bool]] = []
 
-        @param func:        angr Function the variable is changed in
-        @param offset:      the offset of the stack variable
-        @param old_name:    name before change
-        @param new_name:    name after change
-        @param type_:       type after change
-        @param size:        size after change
-        @return:
-        """
+    def handle_stack_var_renamed(self, func, offset, old_name, new_name):
         return False
 
-    def handle_function_rename(self, func, old_name: str, new_name: str):
-        """
-        A handler that is called *right before* a functions name is renamed. See the Note in handle_variable_rename
-        about how this should only be for observance.
-
-        @param func:        angr Function that is being renamed
-        @param old_name:    name before change
-        @param new_name:    name after change
-        @return:
-        """
+    def handle_stack_var_retyped(self, func, offset, old_type, new_type):
         return False
 
-    def handle_comment_changed(self, addr: int, cmt: str, new: bool, decomp: bool):
-        """
-        A handler that is called for a variety of reasons related to changing and making a comment. All are called
-        right before the operation happens:
-        1. A comment is made for the first time
-        2. A comment is changed
-
-        `new` bool is true when it is being created for the first time.
-
-        In additon to those two cases, each comment can either be changed in the decompilation view or the
-        dissassembly view, specified by the `decomp` boolean. If true, the comment is changed in the decompilation
-        view.
-
-        @param addr:        Address where the comment it
-        @param cmt:         The comment to be placed at the addr
-        @param new:         T if a new comment
-        @param decomp:      T if comment in decompilation view
-        @return:
-        """
-
+    def handle_func_arg_renamed(self, func, offset, old_name, new_name):
         return False
+
+    def handle_func_arg_retyped(self, func, offset, old_type, new_type):
+        return False
+
+    def handle_global_var_renamed(self, address, old_name, new_name):
+        return False
+
+    def handle_global_var_retyped(self, address, old_type, new_type):
+        return False
+
+    def handle_other_var_renamed(self, var, old_name, new_name):
+        return False
+
+    def handle_other_var_retyped(self, var, old_type, new_type):
+        return False
+
+    def handle_function_renamed(self, func, old_name, new_name):
+        return False
+
+    def handle_function_retyped(self, func, old_type, new_type):
+        return False
+
+    def handle_comment_changed(self, address, old_cmt, new_cmt, created: bool, decomp: bool):
+        return False
+
+    def handle_struct_changed(self, old_struct, new_struct):
+        return False
+
+    def decompile_callback(self, func):
+        """
+        A callback that is called *right after* the decompiler is run on a function. You can access the current codegen
+        with ``self.workspace.instance.kb.structured_code[(func.addr, 'pseudocode')]``
+        :param func:        angr Function that was just decompiled
+        """
 
     def handle_project_save(self, file_name: str):
         """
@@ -232,5 +229,5 @@ class BasePlugin:
 
     def handle_project_initialization(self):
         """
-        A handler to set up the project name for logging.
+        A handler to perform any initialization when a new project is loaded
         """

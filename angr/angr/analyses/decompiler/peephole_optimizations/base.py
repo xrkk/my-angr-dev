@@ -1,16 +1,25 @@
-import archinfo
+from typing import Optional
+
 from ailment.expression import BinaryOp, UnaryOp
+from angr.project import Project
+from angr.knowledge_base import KnowledgeBase
 
 
 class PeepholeOptimizationStmtBase:
+    """
+    The base class for all peephole optimizations that are applied on AIL statements.
+    """
 
     __slots__ = ('project', 'kb', 'func_addr', )
+    project: Project
+    kb: KnowledgeBase
+    func_addr: Optional[int]
 
-    name = "Peephole Optimization - Statement"
-    description = "Peephole Optimization - Statement"
+    NAME = "Peephole Optimization - Statement"
+    DESCRIPTION = "Peephole Optimization - Statement"
     stmt_classes = None
 
-    def __init__(self, project, kb, func_addr):
+    def __init__(self, project: Project, kb: KnowledgeBase, func_addr: Optional[int] = None):
         self.project = project
         self.kb = kb
         self.func_addr = func_addr
@@ -20,14 +29,20 @@ class PeepholeOptimizationStmtBase:
 
 
 class PeepholeOptimizationExprBase:
+    """
+    The base class for all peephole optimizations that are applied on AIL expressions.
+    """
 
     __slots__ = ('project', 'kb', 'func_addr', )
+    project: Project
+    kb: KnowledgeBase
+    func_addr: Optional[int]
 
-    name = "Peephole Optimization - Expression"
-    description = "Peephole Optimization - Expression"
+    NAME = "Peephole Optimization - Expression"
+    DESCRIPTION = "Peephole Optimization - Expression"
     expr_classes = None
 
-    def __init__(self, project, kb, func_addr):
+    def __init__(self, project: Project, kb: KnowledgeBase, func_addr: Optional[int] = None):
         self.project = project
         self.kb = kb
         self.func_addr = func_addr
@@ -48,27 +63,4 @@ class PeepholeOptimizationExprBase:
                 return True
         if isinstance(ail_expr, UnaryOp) and ail_expr.op == 'Not':
             return True
-        return False
-
-    def _is_pc(self, pc, addr) -> bool:
-        if archinfo.arch_arm.is_arm_arch(self.project.arch):
-            if pc & 1 == 1:
-                # thumb mode
-                pc = pc - 1
-                return addr == pc + 4
-            else:
-                # arm mode
-                return addr == pc + 8
-        return pc == addr
-
-    def _is_in_readonly_section(self, addr: int) -> bool:
-        sec = self.project.loader.find_section_containing(addr)
-        if sec is not None:
-            return not sec.is_writable
-        return False
-
-    def _is_in_readonly_segment(self, addr: int) -> bool:
-        seg = self.project.loader.find_segment_containing(addr)
-        if seg is not None:
-            return not seg.is_writable
         return False

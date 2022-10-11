@@ -1,10 +1,11 @@
-from typing import Optional, Iterable, Set, Generator, Tuple, TYPE_CHECKING
+from typing import Optional, Iterable, Set, Generator, Tuple, Any, TYPE_CHECKING
 import logging
 
 import archinfo
 import claripy
 
 from ...storage.memory_mixins.paged_memory.pages.multi_values import MultiValues
+from ...storage.memory_mixins import MultiValuedMemory
 from ...knowledge_plugins.key_definitions import LiveDefinitions
 from ...knowledge_plugins.key_definitions.atoms import Atom, GuardUse, Register, MemoryLocation, FunctionCall, \
     ConstantSrc
@@ -132,7 +133,7 @@ class ReachingDefinitionsState:
         else:
             raise ValueError("Unsupported architecture word size %d" % self.arch.bits)
 
-    def annotate_with_def(self, symvar: claripy.ast.Base, definition: Definition):
+    def annotate_with_def(self, symvar: claripy.ast.Base, definition: Definition) -> claripy.ast.Base:
         """
 
         :param symvar:
@@ -161,11 +162,11 @@ class ReachingDefinitionsState:
         return self.live_definitions.register_uses
 
     @property
-    def register_definitions(self):
+    def register_definitions(self) -> MultiValuedMemory:
         return self.live_definitions.register_definitions
 
     @property
-    def stack_definitions(self):
+    def stack_definitions(self) -> MultiValuedMemory:
         return self.live_definitions.stack_definitions
 
     @property
@@ -173,7 +174,7 @@ class ReachingDefinitionsState:
         return self.live_definitions.stack_uses
 
     @property
-    def heap_definitions(self):
+    def heap_definitions(self) -> MultiValuedMemory:
         return self.live_definitions.heap_definitions
 
     @property
@@ -185,7 +186,7 @@ class ReachingDefinitionsState:
         return self.live_definitions.memory_uses
 
     @property
-    def memory_definitions(self):
+    def memory_definitions(self) -> MultiValuedMemory:
         return self.live_definitions.memory_definitions
 
     @property
@@ -345,12 +346,7 @@ class ReachingDefinitionsState:
                                                            endness=endness, annotated=annotated)
 
         if mv is not None:
-            defs = set()
-            values = set()
-            for vs in mv.values.values():
-                for v in vs:
-                    values.add(v)
-                    defs |= set(self.extract_defs(v))
+            defs = set(LiveDefinitions.extract_defs_from_mv(mv))
             self.all_definitions |= defs
 
             if self.dep_graph is not None:
@@ -361,6 +357,11 @@ class ReachingDefinitionsState:
 
                 sp_offset = self.arch.sp_offset
                 bp_offset = self.arch.bp_offset
+
+                values = set()
+                for vs in mv.values():
+                    for v in vs:
+                        values.add(v)
 
                 for used in self.codeloc_uses:
                     # sp is always used as a stack pointer, and we do not track dependencies against stack pointers.
@@ -405,17 +406,72 @@ class ReachingDefinitionsState:
 
         return mv
 
-    def add_use(self, atom: Atom, code_loc) -> None:
+    def add_use(self, atom: Atom, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
         self._cycle(code_loc)
         self.codeloc_uses.update(self.get_definitions(atom))
 
-        self.live_definitions.add_use(atom, code_loc)
+        self.live_definitions.add_use(atom, code_loc, expr=expr)
 
-    def add_use_by_def(self, definition: Definition, code_loc: CodeLocation) -> None:
+    def add_use_by_def(self, definition: Definition, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
         self._cycle(code_loc)
         self.codeloc_uses.add(definition)
 
-        self.live_definitions.add_use_by_def(definition, code_loc)
+        self.live_definitions.add_use_by_def(definition, code_loc, expr=expr)
+
+    def add_tmp_use(self, tmp: int, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
+        defs = self.live_definitions.get_tmp_definitions(tmp)
+        self.add_tmp_use_by_defs(defs, code_loc, expr=expr)
+
+    def add_tmp_use_by_defs(self, defs: Iterable[Definition], code_loc: CodeLocation, expr: Optional[Any]=None) -> None:  # pylint:disable=unused-argument
+        self._cycle(code_loc)
+        for definition in defs:
+            self.codeloc_uses.add(definition)
+            # if track_tmps is False, definitions may not be Tmp definitions
+            self.live_definitions.add_use_by_def(definition, code_loc)
+
+    def add_register_use(self, reg_offset: int, size: int, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
+        defs = self.live_definitions.get_register_definitions(reg_offset, size)
+        self.add_register_use_by_defs(defs, code_loc, expr=expr)
+
+    def add_register_use_by_defs(self, defs: Iterable[Definition], code_loc: CodeLocation,
+                                 expr: Optional[Any]=None) -> None:
+        self._cycle(code_loc)
+        for definition in defs:
+            self.codeloc_uses.add(definition)
+            self.live_definitions.add_register_use_by_def(definition, code_loc, expr=expr)
+
+    def add_stack_use(self, stack_offset: int, size: int, endness, code_loc: CodeLocation,
+                      expr: Optional[Any]=None) -> None:
+        defs = self.live_definitions.get_stack_definitions(stack_offset, size, endness)
+        self.add_stack_use_by_defs(defs, code_loc, expr=expr)
+
+    def add_stack_use_by_defs(self, defs: Iterable[Definition], code_loc: CodeLocation, expr: Optional[Any]=None):
+        self._cycle(code_loc)
+        for definition in defs:
+            self.codeloc_uses.add(definition)
+            self.live_definitions.add_stack_use_by_def(definition, code_loc, expr=expr)
+
+    def add_heap_use(self, heap_offset: int, size: int, endness, code_loc: CodeLocation,
+                     expr: Optional[Any]=None) -> None:
+        defs = self.live_definitions.get_heap_definitions(heap_offset, size, endness)
+        self.add_heap_use_by_defs(defs, code_loc, expr=expr)
+
+    def add_heap_use_by_defs(self, defs: Iterable[Definition], code_loc: CodeLocation, expr: Optional[Any]=None):
+        self._cycle(code_loc)
+        for definition in defs:
+            self.codeloc_uses.add(definition)
+            self.live_definitions.add_heap_use_by_def(definition, code_loc, expr=expr)
+
+    def add_memory_use_by_def(self, definition: Definition, code_loc: CodeLocation, expr: Optional[Any]=None):
+        self._cycle(code_loc)
+        self.codeloc_uses.add(definition)
+        self.live_definitions.add_memory_use_by_def(definition, code_loc, expr=expr)
+
+    def add_memory_use_by_defs(self, defs: Iterable[Definition], code_loc: CodeLocation, expr: Optional[Any]=None):
+        self._cycle(code_loc)
+        for definition in defs:
+            self.codeloc_uses.add(definition)
+            self.live_definitions.add_memory_use_by_def(definition, code_loc, expr=expr)
 
     def get_definitions(self, atom: Atom) -> Iterable[Definition]:
         yield from self.live_definitions.get_definitions(atom)

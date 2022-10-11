@@ -1,12 +1,12 @@
 import weakref
-from typing import Optional, Iterable, Dict, Set, Generator, Tuple, Union, TYPE_CHECKING
+from typing import Optional, Iterable, Dict, Set, Generator, Tuple, Union, Any, TYPE_CHECKING
 import logging
+
+from collections import defaultdict
 
 import claripy
 from claripy.annotation import Annotation
 import archinfo
-
-from collections import defaultdict
 
 from ...errors import SimMemoryMissingError, SimMemoryError
 from ...storage.memory_mixins import MultiValuedMemory
@@ -57,6 +57,9 @@ class DefinitionAnnotation(Annotation):
         else:
             raise ValueError("DefinitionAnnotation can only check equality with other DefinitionAnnotation")
 
+    def __repr__(self):
+        return f"<{self.__class__.__name__}({repr(self.definition)})"
+
 
 # pylint: disable=W1116
 class LiveDefinitions:
@@ -78,6 +81,12 @@ class LiveDefinitions:
                  stack_definitions=None,
                  memory_definitions=None,
                  heap_definitions=None,
+                 tmps=None,
+                 register_uses=None,
+                 stack_uses=None,
+                 heap_uses=None,
+                 memory_uses=None,
+                 tmp_uses=None,
                  ):
 
         self.project = None
@@ -105,7 +114,7 @@ class LiveDefinitions:
                                                   skip_missing_values_during_merging=False,
                                                   page_kwargs={'mo_cmp': self._mo_cmp}) \
             if heap_definitions is None else heap_definitions
-        self.tmps: Dict[int, Set[Definition]] = {}
+        self.tmps: Dict[int, Set[Definition]] = {} if tmps is None else tmps
 
         # set state
         self.register_definitions.set_state(self)
@@ -113,12 +122,13 @@ class LiveDefinitions:
         self.memory_definitions.set_state(self)
         self.heap_definitions.set_state(self)
 
-        self.register_uses = Uses()
-        self.stack_uses = Uses()
-        self.heap_uses = Uses()
-        self.memory_uses = Uses()
-        self.uses_by_codeloc: Dict[CodeLocation,Set[Definition]] = defaultdict(set)
-        self.tmp_uses: Dict[int,Set[CodeLocation]] = defaultdict(set)
+        self.register_uses = Uses() if register_uses is None else register_uses
+        self.stack_uses = Uses() if stack_uses is None else stack_uses
+        self.heap_uses = Uses() if heap_uses is None else heap_uses
+        self.memory_uses = Uses() if memory_uses is None else memory_uses
+        self.tmp_uses: Dict[int,Set[CodeLocation]] = defaultdict(set) if tmp_uses is None else tmp_uses
+
+        self.uses_by_codeloc: Dict[CodeLocation, Set[Definition]] = defaultdict(set)
 
     def __repr__(self):
         ctnt = "LiveDefs"
@@ -132,14 +142,13 @@ class LiveDefinitions:
                              stack_definitions=self.stack_definitions.copy(),
                              heap_definitions=self.heap_definitions.copy(),
                              memory_definitions=self.memory_definitions.copy(),
+                             tmps=self.tmps.copy(),
+                             register_uses=self.register_uses.copy(),
+                             stack_uses=self.stack_uses.copy(),
+                             heap_uses=self.heap_uses.copy(),
+                             memory_uses=self.memory_uses.copy(),
+                             tmp_uses=self.tmp_uses.copy(),
                              )
-
-        rd.tmps = self.tmps.copy()
-        rd.register_uses = self.register_uses.copy()
-        rd.stack_uses = self.stack_uses.copy()
-        rd.heap_uses = self.heap_uses.copy()
-        rd.memory_uses = self.memory_uses.copy()
-        rd.tmp_uses = self.tmp_uses.copy()
 
         return rd
 
@@ -212,17 +221,27 @@ class LiveDefinitions:
         return "stack_base" in addr.variables
 
     @staticmethod
-    def get_stack_offset(addr: claripy.ast.Base) -> Optional[int]:
+    def get_stack_offset(addr: claripy.ast.Base, had_stack_base=False) -> Optional[int]:
+        if had_stack_base and addr.op == "BVV":
+            return addr._model_concrete.value
+        if "TOP" in addr.variables:
+            return None
         if "stack_base" in addr.variables:
             if addr.op == "BVS":
                 return 0
             elif addr.op == "__add__":
-                if len(addr.args) == 2 and addr.args[1].op == "BVV":
-                    return addr.args[1]._model_concrete.value
-                if len(addr.args) == 1:
+                if len(addr.args) == 2:
+                    off0 = LiveDefinitions.get_stack_offset(addr.args[0], had_stack_base=True)
+                    off1 = LiveDefinitions.get_stack_offset(addr.args[1], had_stack_base=True)
+                    if off0 is not None and off1 is not None:
+                        return off0 + off1
+                elif len(addr.args) == 1:
                     return 0
-            elif addr.op == "__sub__" and len(addr.args) == 2 and addr.args[1].op == "BVV":
-                return -addr.args[1]._model_concrete.value
+            elif addr.op == "__sub__" and len(addr.args) == 2:
+                off0 = LiveDefinitions.get_stack_offset(addr.args[0], had_stack_base=True)
+                off1 = LiveDefinitions.get_stack_offset(addr.args[1], had_stack_base=True)
+                if off0 is not None and off1 is not None:
+                    return off0 - off1
         return None
 
     @staticmethod
@@ -239,17 +258,21 @@ class LiveDefinitions:
         for anno in symvar.annotations:
             if isinstance(anno, DefinitionAnnotation):
                 annotations_to_remove.append(anno)
-        if annotations_to_remove:
-            symvar = symvar.remove_annotations(annotations_to_remove)
 
         # annotate with the new definition annotation
-        return symvar.annotate(DefinitionAnnotation(definition))
+        return symvar.annotate(DefinitionAnnotation(definition), remove_annotations=annotations_to_remove)
 
     @staticmethod
     def extract_defs(symvar: claripy.ast.Base) -> Generator[Definition,None,None]:
         for anno in symvar.annotations:
             if isinstance(anno, DefinitionAnnotation):
                 yield anno.definition
+
+    @staticmethod
+    def extract_defs_from_mv(mv: MultiValues) -> Generator[Definition,None,None]:
+        for vs in mv.values():
+            for v in vs:
+                yield from LiveDefinitions.extract_defs(v)
 
     def get_sp(self) -> int:
         """
@@ -260,10 +283,9 @@ class LiveDefinitions:
         if sp_v is None:
             # multiple values of sp exists. still return a value if there is only one value (maybe with different
             # definitions)
-            values = list(filter(self.get_stack_offset, next(iter(sp_values.values.values()))))
-            if len(set(map(self.get_stack_offset, values))) == 1:
-                return self.get_stack_address(next(iter(values)))
-            assert False
+            values = [v for v in next(iter(sp_values.values())) if self.get_stack_offset(v) is not None]
+            assert len({self.get_stack_offset(v) for v in values}) == 1
+            return self.get_stack_address(values[0])
 
         return self.get_stack_address(sp_v)
 
@@ -355,7 +377,7 @@ class LiveDefinitions:
         else:
             definition: Definition = Definition(atom, code_loc, dummy=dummy, tags=tags)
             d = MultiValues()
-            for offset, vs in data.values.items():
+            for offset, vs in data.items():
                 for v in vs:
                     d.add_value(offset, self.annotate_with_def(v, definition))
 
@@ -401,39 +423,39 @@ class LiveDefinitions:
 
         return d
 
-    def add_use(self, atom: Atom, code_loc: CodeLocation) -> None:
+    def add_use(self, atom: Atom, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
         if isinstance(atom, Register):
-            self._add_register_use(atom, code_loc)
+            self.add_register_use(atom.reg_offset, atom.size, code_loc, expr=expr)
         elif isinstance(atom, MemoryLocation):
             if isinstance(atom.addr, SpOffset):
-                self._add_stack_use(atom, code_loc)
+                self.add_stack_use(atom, code_loc, expr=expr)
             elif isinstance(atom.addr, HeapAddress):
-                self._add_heap_use(atom, code_loc)
+                self.add_heap_use(atom, code_loc, expr=expr)
             elif isinstance(atom.addr, int):
-                self._add_memory_use(atom, code_loc)
+                self.add_memory_use(atom, code_loc, expr=expr)
             else:
                 # ignore RegisterOffset
                 pass
         elif isinstance(atom, Tmp):
-            self._add_tmp_use(atom, code_loc)
+            self.add_tmp_use(atom, code_loc)
         else:
             raise TypeError("Unsupported atom type %s." % type(atom))
 
-    def add_use_by_def(self, definition: Definition, code_loc: CodeLocation) -> None:
+    def add_use_by_def(self, definition: Definition, code_loc: CodeLocation, expr: Any=None) -> None:
         if isinstance(definition.atom, Register):
-            self._add_register_use_by_def(definition, code_loc)
+            self.add_register_use_by_def(definition, code_loc, expr=expr)
         elif isinstance(definition.atom, MemoryLocation):
             if isinstance(definition.atom.addr, SpOffset):
-                self._add_stack_use_by_def(definition, code_loc)
+                self.add_stack_use_by_def(definition, code_loc, expr=expr)
             elif isinstance(definition.atom.addr, HeapAddress):
-                self._add_heap_use_by_def(definition, code_loc)
+                self.add_heap_use_by_def(definition, code_loc, expr=expr)
             elif isinstance(definition.atom.addr, int):
-                self._add_memory_use_by_def(definition, code_loc)
+                self.add_memory_use_by_def(definition, code_loc, expr=expr)
             else:
                 # ignore RegisterOffset
                 pass
         elif type(definition.atom) is Tmp:
-            self._add_tmp_use_by_def(definition, code_loc)
+            self.add_tmp_use_by_def(definition, code_loc)
         elif type(definition.atom) is FunctionCall:
             # ignore function calls
             pass
@@ -445,49 +467,56 @@ class LiveDefinitions:
 
     def get_definitions(self, atom: Atom) -> Iterable[Definition]:
         if isinstance(atom, Register):
-            try:
-                values: MultiValues = self.register_definitions.load(atom.reg_offset, size=atom.size)
-            except SimMemoryMissingError:
-                return
-            for vs in values.values.values():
-                for v in vs:
-                    yield from self.extract_defs(v)
+            yield from self.get_register_definitions(atom.reg_offset, atom.size)
         elif isinstance(atom, MemoryLocation):
             if isinstance(atom.addr, SpOffset):
-                stack_addr = self.stack_offset_to_stack_addr(atom.addr.offset)
-                try:
-                    mv: MultiValues = self.stack_definitions.load(stack_addr, size=atom.size, endness=atom.endness)
-                except SimMemoryMissingError:
-                    return
-                for vs in mv.values.values():
-                    for v in vs:
-                        yield from self.extract_defs(v)
+                yield from self.get_stack_definitions(atom.addr.offset, atom.size, atom.endness)
             elif isinstance(atom.addr, HeapAddress):
-                try:
-                    mv: MultiValues = self.heap_definitions.load(atom.addr.value, size=atom.size, endness=atom.endness)
-                except SimMemoryMissingError:
-                    return
-                for vs in mv.values.values():
-                    for v in vs:
-                        yield from self.extract_defs(v)
+                yield from self.get_heap_definitions(atom.addr.value, size=atom.size, endness=atom.endness)
             elif isinstance(atom.addr, int):
-                try:
-                    values = self.memory_definitions.load(atom.addr, size=atom.size, endness=atom.endness)
-                except SimMemoryMissingError:
-                    return
-                for vs in values.values.values():
-                    for v in vs:
-                        yield from self.extract_defs(v)
+                yield from self.get_memory_definitions(atom.addr, atom.size, atom.endness)
             else:
                 return
         elif isinstance(atom, Tmp):
-            if atom.tmp_idx in self.tmps:
-                for tmp in self.tmps[atom.tmp_idx]:
-                    yield tmp
-            else:
-                return
+            yield from self.get_tmp_definitions(atom.tmp_idx)
         else:
             raise TypeError()
+
+    def get_tmp_definitions(self, tmp_idx: int) -> Iterable[Definition]:
+        if tmp_idx in self.tmps:
+            for tmp in self.tmps[tmp_idx]:
+                yield tmp
+        else:
+            return
+
+    def get_register_definitions(self, reg_offset: int, size: int) -> Iterable[Definition]:
+        try:
+            values: MultiValues = self.register_definitions.load(reg_offset, size=size)
+        except SimMemoryMissingError:
+            return
+        yield from LiveDefinitions.extract_defs_from_mv(values)
+
+    def get_stack_definitions(self, stack_offset: int, size: int, endness) -> Iterable[Definition]:
+        stack_addr = self.stack_offset_to_stack_addr(stack_offset)
+        try:
+            mv: MultiValues = self.stack_definitions.load(stack_addr, size=size, endness=endness)
+        except SimMemoryMissingError:
+            return
+        yield from LiveDefinitions.extract_defs_from_mv(mv)
+
+    def get_heap_definitions(self, heap_addr: int, size: int, endness) -> Iterable[Definition]:
+        try:
+            mv: MultiValues = self.heap_definitions.load(heap_addr, size=size, endness=endness)
+        except SimMemoryMissingError:
+            return
+        yield from LiveDefinitions.extract_defs_from_mv(mv)
+
+    def get_memory_definitions(self, addr: int, size: int, endness) -> Iterable[Definition]:
+        try:
+            values = self.memory_definitions.load(addr, size=size, endness=endness)
+        except SimMemoryMissingError:
+            return
+        yield from LiveDefinitions.extract_defs_from_mv(values)
 
     def get_definitions_from_atoms(self, atoms: Iterable[Atom]) -> Iterable[Definition]:
         result = set()
@@ -526,39 +555,36 @@ class LiveDefinitions:
                 return None
         else:
             return None
-    #
-    # Private methods
-    #
 
-    def _add_register_use(self, atom: Register, code_loc: CodeLocation) -> None:
+    def add_register_use(self, reg_offset: int, size: int, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
         # get all current definitions
         try:
-            values: MultiValues = self.register_definitions.load(atom.reg_offset, size=atom.size)
+            mvs: MultiValues = self.register_definitions.load(reg_offset, size=size)
         except SimMemoryMissingError:
             return
 
-        for vs in values.values.values():
+        for vs in mvs.values():
             for v in vs:
                 for def_ in self.extract_defs(v):
-                    self._add_register_use_by_def(def_, code_loc)
+                    self.add_register_use_by_def(def_, code_loc, expr=expr)
 
-    def _add_register_use_by_def(self, def_: Definition, code_loc: CodeLocation) -> None:
-        self.register_uses.add_use(def_, code_loc)
+    def add_register_use_by_def(self, def_: Definition, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
+        self.register_uses.add_use(def_, code_loc, expr=expr)
         self.uses_by_codeloc[code_loc].add(def_)
 
-    def _add_stack_use(self, atom: MemoryLocation, code_loc: CodeLocation) -> None:
+    def add_stack_use(self, atom: MemoryLocation, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
 
         if not isinstance(atom.addr, SpOffset):
             raise TypeError("Atom %r is not a stack location atom." % atom)
 
         for current_def in self.get_definitions(atom):
-            self._add_stack_use_by_def(current_def, code_loc)
+            self.add_stack_use_by_def(current_def, code_loc, expr=expr)
 
-    def _add_stack_use_by_def(self, def_: Definition, code_loc: CodeLocation) -> None:
-        self.stack_uses.add_use(def_, code_loc)
+    def add_stack_use_by_def(self, def_: Definition, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
+        self.stack_uses.add_use(def_, code_loc, expr=expr)
         self.uses_by_codeloc[code_loc].add(def_)
 
-    def _add_heap_use(self, atom: MemoryLocation, code_loc: CodeLocation) -> None:
+    def add_heap_use(self, atom: MemoryLocation, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
 
         if not isinstance(atom.addr, HeapAddress):
             raise TypeError("Atom %r is not a heap location atom." % atom)
@@ -566,31 +592,31 @@ class LiveDefinitions:
         current_defs = self.heap_definitions.get_objects_by_offset(atom.addr.value)
 
         for current_def in current_defs:
-            self._add_heap_use_by_def(current_def, code_loc)
+            self.add_heap_use_by_def(current_def, code_loc, expr=expr)
 
-    def _add_heap_use_by_def(self, def_: Definition, code_loc: CodeLocation) -> None:
-        self.heap_uses.add_use(def_, code_loc)
+    def add_heap_use_by_def(self, def_: Definition, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
+        self.heap_uses.add_use(def_, code_loc, expr=expr)
         self.uses_by_codeloc[code_loc].add(def_)
 
-    def _add_memory_use(self, atom: MemoryLocation, code_loc: CodeLocation) -> None:
+    def add_memory_use(self, atom: MemoryLocation, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
 
         # get all current definitions
         current_defs: Iterable[Definition] = self.get_definitions(atom)
 
         for current_def in current_defs:
-            self._add_memory_use_by_def(current_def, code_loc)
+            self.add_memory_use_by_def(current_def, code_loc, expr=expr)
 
-    def _add_memory_use_by_def(self, def_: Definition, code_loc: CodeLocation) -> None:
-        self.memory_uses.add_use(def_, code_loc)
+    def add_memory_use_by_def(self, def_: Definition, code_loc: CodeLocation, expr: Optional[Any]=None) -> None:
+        self.memory_uses.add_use(def_, code_loc, expr=expr)
         self.uses_by_codeloc[code_loc].add(def_)
 
-    def _add_tmp_use(self, atom: Tmp, code_loc: CodeLocation) -> None:
+    def add_tmp_use(self, atom: Tmp, code_loc: CodeLocation) -> None:
 
         if self.track_tmps:
             if atom.tmp_idx in self.tmps:
                 defs = self.tmps[atom.tmp_idx]
                 for def_ in defs:
-                    self._add_tmp_use_by_def(def_, code_loc)
+                    self.add_tmp_use_by_def(def_, code_loc)
         else:
             if atom.tmp_idx in self.tmps:
                 defs = self.tmps[atom.tmp_idx]
@@ -598,7 +624,7 @@ class LiveDefinitions:
                     assert not type(d.atom) is Tmp
                     self.add_use_by_def(d, code_loc)
 
-    def _add_tmp_use_by_def(self, def_: Definition, code_loc: CodeLocation) -> None:
+    def add_tmp_use_by_def(self, def_: Definition, code_loc: CodeLocation) -> None:
 
         if not isinstance(def_.atom, Tmp):
             raise TypeError("Atom %r is not a Tmp atom." % def_.atom)

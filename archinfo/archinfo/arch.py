@@ -220,6 +220,12 @@ class Arch:
             self.reg_blacklist = []
             self.reg_blacklist_offsets = []
 
+            # Artificial registers offsets
+            self.artificial_registers_offsets = []
+            for reg_name in self.artificial_registers:
+                reg = self.get_register_by_name(reg_name)
+                self.artificial_registers_offsets.extend(range(reg.vex_offset, reg.vex_offset + reg.size))
+
             # Register offsets
             try:
                 self.ip_offset = self.registers['ip'][0]
@@ -269,12 +275,6 @@ class Arch:
                 if hasattr(self.uc_const, reg_name):
                     self.uc_regs[r] = getattr(self.uc_const, reg_name)
 
-            # Artificial registers offsets
-            self.artificial_registers_offsets = []
-            for reg_name in self.artificial_registers:
-                reg = self.get_register_by_name(reg_name)
-                self.artificial_registers_offsets.extend(range(reg.vex_offset, reg.vex_offset + reg.size))
-
             # VEX register offset to unicorn register ID map
             self.vex_to_unicorn_map = {}
             pc_reg_name = self.get_register_by_name("pc")
@@ -322,6 +322,9 @@ class Arch:
     def __getstate__(self):
         self._cs = None
         self._ks = None
+        if self.vex_archinfo is not None:
+            # clear hwcacheinfo-caches because it may contain cffi.CData
+            self.vex_archinfo['hwcache_info']['caches'] = None
         return self.__dict__
 
     def __setstate__(self, data):
@@ -394,7 +397,7 @@ class Arch:
 
         return fmt_end + fmt_size
 
-    def _get_register_dict(self) ->  Dict[RegisterName, Tuple[RegisterOffset, int]]:
+    def _get_register_dict(self) -> Dict[RegisterName, Tuple[RegisterOffset, int]]:
         res = {}
         for r in self.register_list:
             if r.vex_offset is None:

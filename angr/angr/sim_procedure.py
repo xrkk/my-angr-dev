@@ -43,6 +43,8 @@ class SimProcedure:
     The following class variables should be set if necessary when implementing a new SimProcedure:
 
     :cvar NO_RET:           Set this to true if control flow will never return from this function
+    :cvar DYNAMIC_RET:      Set this to true if whether the control flow returns from this function or not depends on
+                            the context (e.g., libc's error() call). Must implement dynamic_returns() method.
     :cvar ADDS_EXITS:       Set this to true if you do any control flow other than returning
     :cvar IS_FUNCTION:      Does this procedure simulate a function? True by default
     :cvar ARGS_MISMATCH:    Does this procedure have a different list of arguments than what is provided in the
@@ -252,6 +254,9 @@ class SimProcedure:
         state._inspect(
             'simprocedure',
             BP_AFTER,
+            simprocedure_name=inst.display_name,
+            simprocedure_addr=self.addr,
+            simprocedure=inst,
             simprocedure_result=r
         )
         r = state._inspect_getattr('simprocedure_result', r)
@@ -283,6 +288,7 @@ class SimProcedure:
     #
 
     NO_RET = False
+    DYNAMIC_RET = False
     ADDS_EXITS = False
     IS_FUNCTION = True
     ARGS_MISMATCH = False
@@ -295,7 +301,7 @@ class SimProcedure:
         """
         raise SimProcedureError("%s does not implement a run() method" % self.__class__.__name__)
 
-    def static_exits(self, blocks):  # pylint: disable=unused-argument
+    def static_exits(self, blocks, **kwargs):  # pylint: disable=unused-argument
         """
         Get new exits by performing static analysis and heuristics. This is a fast and best-effort approach to get new
         exits for scenarios where states are not available (e.g. when building a fast CFG).
@@ -310,6 +316,19 @@ class SimProcedure:
 
         # This SimProcedure does not add any new exit
         return []
+
+    def dynamic_returns(self, blocks, **kwargs) -> bool:  # pylint:disable=unused-argument
+        """
+        Determines if a call to this function returns or not by performing static analysis and heuristics.
+
+        :param blocks:  Blocks that are executed before reaching this SimProcedure.
+        :return:        True if the call returns, False otherwise.
+        """
+
+        if self.DYNAMIC_RET:
+            raise SimProcedureError(f"dynamic_returns() is not implemented for {self}")
+
+        return True
 
     #
     # misc properties
@@ -419,7 +438,7 @@ class SimProcedure:
         self.successors.add_successor(self.state, ret_addr, self.state.solver.true, 'Ijk_Ret')
 
 
-    def call(self, addr, args, continue_at, cc=None, prototype=None):
+    def call(self, addr, args, continue_at, cc=None, prototype=None, jumpkind='Ijk_Call'):
         """
         Add an exit representing calling another function via pointer.
 
@@ -458,7 +477,7 @@ class SimProcedure:
             call_state.regs.t9 = addr
 
         self._exit_action(call_state, addr)
-        self.successors.add_successor(call_state, addr, call_state.solver.true, 'Ijk_Call')
+        self.successors.add_successor(call_state, addr, call_state.solver.true, jumpkind)
 
         if o.DO_RET_EMULATION in self.state.options:
             # we need to set up the call because the continuation will try to tear it down
@@ -468,13 +487,13 @@ class SimProcedure:
             guard = ret_state.solver.true if o.TRUE_RET_EMULATION_GUARD in ret_state.options else ret_state.solver.false
             self.successors.add_successor(ret_state, ret_addr, guard, 'Ijk_FakeRet')
 
-    def jump(self, addr):
+    def jump(self, addr, jumpkind='Ijk_Boring'):
         """
         Add an exit representing jumping to an address.
         """
         self.inhibit_autoret = True
         self._exit_action(self.state, addr)
-        self.successors.add_successor(self.state, addr, self.state.solver.true, 'Ijk_Boring')
+        self.successors.add_successor(self.state, addr, self.state.solver.true, jumpkind)
 
     def exit(self, exit_code):
         """

@@ -4,12 +4,13 @@ import logging
 import pickle
 import sys
 import time
+from functools import partial
 from typing import Optional, TYPE_CHECKING
 
-from PySide2.QtWidgets import QMainWindow, QTabWidget, QFileDialog, QProgressBar
+from PySide2.QtWidgets import QMainWindow, QTabWidget, QFileDialog, QProgressBar, QProgressDialog
 from PySide2.QtWidgets import QMessageBox, QShortcut, QTabBar
-from PySide2.QtGui import QResizeEvent, QIcon, QDesktopServices, QKeySequence
-from PySide2.QtCore import Qt, QSize, QEvent, QTimer, QUrl
+from PySide2.QtGui import QIcon, QDesktopServices, QKeySequence
+from PySide2.QtCore import Qt, QSize, QEvent, QUrl
 
 import angr
 import angr.flirt
@@ -31,9 +32,9 @@ from ..daemon.client import ClientService
 from ..logic import GlobalInfo
 from ..data.instance import Instance
 from ..data.library_docs import LibraryDocs
-from ..data.jobs.loading import LoadTargetJob, LoadBinaryJob
+from ..data.jobs.loading import LoadTargetJob, LoadBinaryJob, LoadAngrDBJob
 from ..data.jobs import DependencyAnalysisJob
-from ..config import IMG_LOCATION, Conf
+from ..config import IMG_LOCATION, Conf, save_config
 from ..utils.io import isurl, download_url
 from ..utils.env import is_pyinstaller, app_root
 from ..errors import InvalidURLError, UnexpectedStatusCodeError
@@ -69,6 +70,7 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(icon_location))
 
         GlobalInfo.main_window = self
+        self.shown_at_start = show
 
         # initialization
         self.setMinimumSize(QSize(400, 400))
@@ -80,15 +82,12 @@ class MainWindow(QMainWindow):
 
         self.toolbar_manager: ToolbarManager = ToolbarManager(self)
         self._progressbar = None  # type: QProgressBar
-        self._load_binary_dialog = None
-
-        self._status = ""
-        self._progress = None
+        self._progress_dialog = None # type: QProgressDialog
 
         self.defaultWindowFlags = None
 
         # menus
-        self._file_menu = None
+        self._file_menu = None  # FileMenu
         self._analyze_menu = None
         self._view_menu = None
         self._help_menu = None
@@ -131,25 +130,6 @@ class MainWindow(QMainWindow):
     @caption.setter
     def caption(self, v):
         self.setWindowTitle(v)
-
-    @property
-    def status(self):
-        return self._status
-
-    @status.setter
-    def status(self, v):
-        self._status = v
-        self.statusBar().showMessage(v)
-
-    @property
-    def progress(self):
-        return self._progress
-
-    @progress.setter
-    def progress(self, v):
-        self._progress = v
-        self._progressbar.show()
-        self._progressbar.setValue(v)
 
     #
     # Dialogs
@@ -202,7 +182,6 @@ class MainWindow(QMainWindow):
     #
 
     def _init_statusbar(self):
-
         self._progressbar = QProgressBar()
 
         self._progressbar.setMinimum(0)
@@ -210,6 +189,21 @@ class MainWindow(QMainWindow):
         self._progressbar.hide()
 
         self.statusBar().addPermanentWidget(self._progressbar)
+
+        self._progress_dialog = QProgressDialog("Waiting...", "Cancel", 0, 100, self)
+        self._progress_dialog.setAutoClose(False)
+        self._progress_dialog.setWindowFlags(self._progress_dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self._progress_dialog.setModal(True)
+        self._progress_dialog.setMinimumDuration(2**31 - 1)
+        def on_cancel():
+            if self.workspace is None:
+                return
+            for job in self.workspace.instance.jobs:
+                if job.blocking:
+                    job.keyboard_interrupt()
+                    break
+        self._progress_dialog.canceled.connect(on_cancel)
+        self._progress_dialog.close()
 
     def _init_toolbars(self):
         for cls in (FileToolbar, DebugToolbar):
@@ -225,6 +219,9 @@ class MainWindow(QMainWindow):
         self._view_menu = ViewMenu(self)
         self._help_menu = HelpMenu(self)
         self._plugin_menu = PluginMenu(self)
+
+        for path in Conf.recent_files:
+            self._file_menu.add_recent(path)
 
         # TODO: Eventually fix menu bars to have native support on MacOS
         # if on a Mac, don't use the native menu bar (bug mitigation from QT)
@@ -405,15 +402,6 @@ class MainWindow(QMainWindow):
     # Event
     #
 
-    def resizeEvent(self, event: QResizeEvent):
-        """
-
-        :param event:
-        :return:
-        """
-
-        self._recalculate_view_sizes(event.oldSize())
-
     def closeEvent(self, event):
 
         # Ask if the user wants to save things
@@ -528,6 +516,7 @@ class MainWindow(QMainWindow):
                             'block_addrs': None,
                         }
                         self.workspace.view_data_dependency_graph(analysis_params)
+                    self._recent_file(file_path)
                 except pickle.PickleError:
                     QMessageBox.critical(self,
                                          "Unable to load trace file",
@@ -552,6 +541,7 @@ class MainWindow(QMainWindow):
                 if file_path.endswith(".adb"):
                     self._load_database(file_path)
                 else:
+                    self._recent_file(file_path)
                     self.workspace.instance.add_job(LoadBinaryJob(file_path))
             else:
                 QMessageBox.critical(self,
@@ -636,8 +626,6 @@ class MainWindow(QMainWindow):
         self.workspace.load_trace_from_path(file_path)
 
     def preferences(self):
-
-        # Open Preferences dialog
         pref = Preferences(self.workspace, parent=self)
         pref.exec_()
 
@@ -656,6 +644,10 @@ class MainWindow(QMainWindow):
         dep_analysis_job = DependencyAnalysisJob(func_addr=func_addr, func_arg_idx=func_arg_idx)
         self.workspace.instance.add_job(dep_analysis_job)
 
+    def run_analysis(self):
+        if self.workspace:
+            self.workspace.run_analysis()
+
     def decompile_current_function(self):
         if self.workspace is not None:
             self.workspace.decompile_current_function()
@@ -671,9 +663,17 @@ class MainWindow(QMainWindow):
     # Other public methods
     #
 
+    def progress(self, status, progress):
+        self.statusBar().showMessage(f'Working... {status}')
+        self._progress_dialog.setLabelText(status)
+        self._progressbar.show()
+        self._progressbar.setValue(progress)
+        self._progress_dialog.setValue(progress)
+
     def progress_done(self):
-        self._progress = None
         self._progressbar.hide()
+        self.statusBar().showMessage("Ready.")
+        self._progress_dialog.hide()
 
     def bring_to_front(self):
         self.setWindowState((self.windowState() & ~Qt.WindowMinimized) | Qt.WindowActive)
@@ -684,42 +684,46 @@ class MainWindow(QMainWindow):
     # Private methods
     #
 
-    def _load_database(self, file_path):
+    def _recent_file(self, file_path):
+        file_path = os.path.abspath(file_path)
+        self._file_menu.add_recent(file_path)
+        Conf.recent_file(file_path)
+        save_config()
+
+    def _load_database(self, file_path: str):
 
         if AngrDB is None:
             QMessageBox.critical(None, 'Error',
                                  'AngrDB is not enabled. Maybe you do not have SQLAlchemy installed?')
             return
 
-        angrdb = AngrDB()
+
         other_kbs = {}
         extra_info = {}
-        try:
-            proj = angrdb.load(file_path, kb_names=["global", "pseudocode_variable_kb"], other_kbs=other_kbs,
-                               extra_info=extra_info)
-        except angr.errors.AngrIncompatibleDBError as ex:
-            QMessageBox.critical(None, 'Error',
-                                 "Failed to load the angr database because of compatibility issues.\n"
-                                 f"Details: {ex}")
+
+        job = LoadAngrDBJob(file_path, ["global", "pseudocode_variable_kb"], other_kbs=other_kbs, extra_info=extra_info)
+        job._on_finish = partial(self._on_load_database_finished, job)
+        self.workspace.instance.add_job(job)
+
+    def _on_load_database_finished(self, job: LoadAngrDBJob):
+        proj = job.project
+
+        if proj is None:
             return
-        except angr.errors.AngrDBError as ex:
-            QMessageBox.critical(None, 'Error',
-                                 'Failed to load the angr database.\n'
-                                 f'Details: {ex}')
-            _l.critical("Failed to load the angr database.", exc_info=True)
-            return
+
+        self._recent_file(job.file_path)
 
         cfg = proj.kb.cfgs['CFGFast']
         cfb = proj.analyses.CFB()  # it will load functions from kb
 
-        self.workspace.instance.database_path = file_path
+        self.workspace.instance.database_path = job.file_path
 
         self.workspace.instance._reset_containers()
         self.workspace.instance.project = proj
         self.workspace.instance.cfg = cfg
         self.workspace.instance.cfb = cfb
-        if "pseudocode_variable_kb" in other_kbs:
-            self.workspace.instance.pseudocode_variable_kb = other_kbs["pseudocode_variable_kb"]
+        if "pseudocode_variable_kb" in job.other_kbs:
+            self.workspace.instance.pseudocode_variable_kb = job.other_kbs["pseudocode_variable_kb"]
         else:
             self.workspace.instance.initialize_pseudocode_variable_kb()
         self.workspace.instance.project.am_event(initialized=True)
@@ -727,7 +731,7 @@ class MainWindow(QMainWindow):
         # trigger callbacks
         self.workspace.reload()
         self.workspace.on_cfg_generated()
-        self.workspace.plugins.angrdb_load_entries(extra_info)
+        self.workspace.plugins.angrdb_load_entries(job.extra_info)
 
     def _save_database(self, file_path):
         if self.workspace.instance is None or self.workspace.instance.project.am_none:
@@ -743,68 +747,11 @@ class MainWindow(QMainWindow):
         angrdb = AngrDB(project=self.workspace.instance.project)
         extra_info = self.workspace.plugins.angrdb_store_entries()
         angrdb.dump(file_path, kbs=[
-            self.workspace.instance.kb,
-            self.workspace.instance.pseudocode_variable_kb,
-        ],
-                    extra_info=extra_info,
-                    )
+                self.workspace.instance.kb,
+                self.workspace.instance.pseudocode_variable_kb,
+                ],
+            extra_info=extra_info,
+            )
 
         self.workspace.instance.database_path = file_path
         return True
-
-    def _recalculate_view_sizes(self, old_size):
-        adjustable_dockable_views = [dock for dock in self.workspace.view_manager.docks
-                                     if dock.widget().default_docking_position in ('left', 'bottom',)]
-
-        if not adjustable_dockable_views:
-            return
-
-        for dock in adjustable_dockable_views:
-            widget = dock.widget()
-
-            if old_size.width() < 0:
-                dock.old_size = widget.sizeHint()
-                continue
-
-            if old_size != self.size():
-                # calculate the width ratio
-
-                if widget.default_docking_position == 'left':
-                    # we want to adjust the width
-                    ratio = widget.old_width * 1.0 / old_size.width()
-                    new_width = int(self.width() * ratio)
-                    widget.width_hint = new_width
-                    widget.updateGeometry()
-                elif widget.default_docking_position == 'bottom':
-                    # we want to adjust the height
-                    ratio = widget.old_height * 1.0 / old_size.height()
-                    new_height = int(self.height() * ratio)
-                    widget.height_hint = new_height
-                    widget.updateGeometry()
-
-                dock.old_size = widget.size()
-
-    def _resize_dock_widget(self, dock_widget, new_width, new_height):
-
-        original_size = dock_widget.size()
-        original_min = dock_widget.minimumSize()
-        original_max = dock_widget.maximumSize()
-
-        dock_widget.resize(new_width, new_height)
-
-        if new_width != original_size.width():
-            if original_size.width() > new_width:
-                dock_widget.setMaximumWidth(new_width)
-            else:
-                dock_widget.setMinimumWidth(new_width)
-
-        if new_height != original_size.height():
-            if original_size.height() > new_height:
-                dock_widget.setMaximumHeight(new_height)
-            else:
-                dock_widget.setMinimumHeight(new_height)
-
-        dock_widget.original_min = original_min
-        dock_widget.original_max = original_max
-
-        QTimer.singleShot(1, dock_widget.restore_original_size)

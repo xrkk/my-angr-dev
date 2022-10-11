@@ -11,9 +11,9 @@ if TYPE_CHECKING:
 
 class SimVariable(Serializable):
 
-    __slots__ = ['ident', 'name', 'region', 'category', 'renamed', 'candidate_names']
+    __slots__ = ['ident', 'name', 'region', 'category', 'renamed', 'candidate_names', 'size', ]
 
-    def __init__(self, ident=None, name=None, region: Optional[int]=None, category=None):
+    def __init__(self, ident=None, name=None, region: Optional[int]=None, category=None, size: Optional[int]=None):
         """
         :param ident: A unique identifier provided by user or the program. Usually a string.
         :param str name: Name of this variable.
@@ -24,6 +24,7 @@ class SimVariable(Serializable):
         self.category: Optional[str] = category
         self.renamed = False
         self.candidate_names = None
+        self.size = size
 
     def copy(self):
         raise NotImplementedError()
@@ -40,7 +41,8 @@ class SimVariable(Serializable):
             obj.base.category = self.category
         if self.region is not None:
             obj.base.region = self.region
-        obj.base.name = self.name
+        if self.name is not None:
+            obj.base.name = self.name
         obj.base.renamed = self.renamed
 
     def _from_base(self, obj):
@@ -77,8 +79,8 @@ class SimConstantVariable(SimVariable):
 
     __slots__ = ['value', '_hash']
 
-    def __init__(self, ident=None, value=None, region=None):
-        super().__init__(ident=ident, region=region)
+    def __init__(self, ident=None, value=None, region=None, size=None):
+        super().__init__(ident=ident, region=region, size=size)
         self.value = value
         self._hash = None
 
@@ -106,7 +108,7 @@ class SimConstantVariable(SimVariable):
         return self._hash
 
     def copy(self) -> 'SimConstantVariable':
-        r = SimConstantVariable(ident=self.ident, value=self.value, region=self.region)
+        r = SimConstantVariable(ident=self.ident, value=self.value, region=self.region, size=self.size)
         r._hash = self._hash
         return r
 
@@ -115,8 +117,8 @@ class SimTemporaryVariable(SimVariable):
 
     __slots__ = ['tmp_id', '_hash']
 
-    def __init__(self, tmp_id):
-        SimVariable.__init__(self)
+    def __init__(self, tmp_id, size=None):
+        SimVariable.__init__(self, size=size)
 
         self.tmp_id = tmp_id
         self._hash = None
@@ -140,7 +142,7 @@ class SimTemporaryVariable(SimVariable):
         return False
 
     def copy(self) -> 'SimTemporaryVariable':
-        r = SimTemporaryVariable(self.tmp_id)
+        r = SimTemporaryVariable(self.tmp_id, size=self.size)
         r._hash = self._hash
         return r
 
@@ -163,14 +165,13 @@ class SimTemporaryVariable(SimVariable):
 
 class SimRegisterVariable(SimVariable):
 
-    __slots__ = ['reg', 'size', '_hash']
+    __slots__ = ['reg', '_hash']
 
     def __init__(self, reg_offset, size, ident=None, name=None, region=None, category=None):
-        SimVariable.__init__(self, ident=ident, name=name, region=region, category=category)
+        SimVariable.__init__(self, ident=ident, name=name, region=region, category=category, size=size)
 
         self.reg: int = reg_offset
-        self.size: int = size
-        self._hash: int = None
+        self._hash: Optional[int] = None
 
     @property
     def bits(self):
@@ -230,10 +231,10 @@ class SimRegisterVariable(SimVariable):
 
 class SimMemoryVariable(SimVariable):
 
-    __slots__ = ['addr', 'size', '_hash']
+    __slots__ = ['addr', '_hash']
 
     def __init__(self, addr, size, ident=None, name=None, region=None, category=None):
-        SimVariable.__init__(self, ident=ident, name=name, region=region, category=category)
+        SimVariable.__init__(self, ident=ident, name=name, region=region, category=category, size=size)
 
         self.addr = addr
 

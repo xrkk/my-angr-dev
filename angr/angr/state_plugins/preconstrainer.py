@@ -60,16 +60,22 @@ class SimStatePreconstrainer(SimStatePlugin):
                       "claripy replacement backend.", variable)
             l.warning("Please use a leaf AST as the preconstraining variable instead.")
 
-        constraint = variable == value
+        # Add the constraint with a simplification avoidance tag.  If
+        # this is not added, claripy may simplify new constraints if
+        # they are redundant with respect to the preconstraints.  This
+        # is problematic when the preconstraints are removed.
+        constraint = (variable == value).annotate(claripy.SimplificationAvoidanceAnnotation())
         l.debug("Preconstraint: %s", constraint)
 
         # add the constraint for reconstraining later
+        if next(iter(variable.variables)) in self.variable_map:
+            l.warning("%s is already preconstrained. Are you misusing preconstrainer?", next(iter(variable.variables)))
         self.variable_map[next(iter(variable.variables))] = constraint
         self.preconstraints.append(constraint)
         if o.REPLACEMENT_SOLVER in self.state.options:
             self.state.solver._solver.add_replacement(variable, value, invalidate_cache=False)
         else:
-            self.state.add_constraints(*self.preconstraints)
+            self.state.add_constraints(constraint)
         if not self.state.satisfiable():
             l.warning("State went unsat while adding preconstraints")
 
@@ -139,7 +145,7 @@ class SimStatePreconstrainer(SimStatePlugin):
         if o.REPLACEMENT_SOLVER in self.state.options:
             new_constraints = self.state.solver.constraints
         else:
-            new_constraints = list(filter(lambda x: x.cache_key not in precon_cache_keys, self.state.solver.constraints))
+            new_constraints = [x for x in self.state.solver.constraints if x.cache_key not in precon_cache_keys]
 
 
         if self.state.has_plugin("zen_plugin"):
@@ -169,7 +175,9 @@ class SimStatePreconstrainer(SimStatePlugin):
 
         for solver in subsolvers:
             solver.timeout = 1000 * 10  # 10 seconds
-            if not solver.satisfiable():
+            try:
+                solver.satisfiable()
+            except claripy.errors.ClaripySolverInterruptError:
                 for var in solver.variables:
                     if var in self.variable_map:
                         self.state.add_constraints(self.variable_map[var])

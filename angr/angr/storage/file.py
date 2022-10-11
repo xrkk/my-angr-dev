@@ -403,6 +403,7 @@ class SimPackets(SimFileBase):
 
         self.write_mode = write_mode
         self.content = content
+        self.sanitized = 0
 
         if self.content is None:
             self.content = []
@@ -420,13 +421,16 @@ class SimPackets(SimFileBase):
     def set_state(self, state):
         super().set_state(state)
         # sanitize the lengths in self.content now that we know the wordsize
-        for i, (data, length) in enumerate(self.content):
+        # getattr because we want to support old pickles without this attribute (TODO remove this)
+        for i in range(getattr(self, 'sanitized', 0), len(self.content)):
+            data, length = self.content[i]
             if type(length) is int:
                 self.content[i] = (data, claripy.BVV(length, state.arch.bits))
             elif len(length) < state.arch.bits:
                 self.content[i] = (data, length.zero_extend(state.arch.bits - len(length)))
             elif len(length) != state.arch.bits:
                 raise TypeError('Bad bitvector size for length in SimPackets.content')
+        self.sanitized = len(self.content)
 
     @property
     def size(self):
@@ -537,6 +541,8 @@ class SimPackets(SimFileBase):
             size = self.state.solver.BVV(size, self.state.arch.bits)
 
         # sanity check on packet number and determine if data is already present
+        if pos is None:
+            pos = len(self.content)
         if pos < 0:
             raise SimFileError("SimPacket.write(%d): Negative packet number?" % pos)
         elif pos > len(self.content):
@@ -556,7 +562,9 @@ class SimPackets(SimFileBase):
 
     @SimStatePlugin.memo
     def copy(self, memo): # pylint: disable=unused-argument
-        return type(self)(name=self.name, write_mode=self.write_mode, content=self.content, ident=self.ident, concrete=self.concrete)
+        o = type(self)(name=self.name, write_mode=self.write_mode, content=self.content, ident=self.ident, concrete=self.concrete)
+        o.sanitized = getattr(self, "sanitized", 0)
+        return o
 
     def merge(self, others, merge_conditions, common_ancestor=None): # pylint: disable=unused-argument
         for o in others:
@@ -646,6 +654,11 @@ class SimFileDescriptorBase(SimStatePlugin):
         """
         data, realsize = self.read_data(size, **kwargs)
         if not self.state.solver.is_true(realsize == 0):
+            do_concrete_update = kwargs.pop("do_concrete_update", False)
+            if do_concrete_update:
+                concrete_data = claripy.BVV(self.state.solver.eval(data), data.size())
+                self.state.memory.store(pos, concrete_data, action=None, inspect=False)
+
             self.state.memory.store(pos, data, size=realsize)
         return realsize
 
@@ -762,7 +775,7 @@ class SimFileDescriptorBase(SimStatePlugin):
 
     def concretize(self, **kwargs):
         """
-        Return a concretizeation of the data in the underlying file. Has different return types to represent differnt
+        Return a concretizeation of the data in the underlying file. Has different return types to represent different
         data structures on a per-class basis.
 
         Any arguments passed to this will be passed onto state.solver.eval.

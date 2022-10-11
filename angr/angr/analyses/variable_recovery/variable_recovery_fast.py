@@ -1,19 +1,23 @@
+# pylint:disable=wrong-import-position,wrong-import-order
 from typing import Optional, List, Tuple
 import logging
 from collections import defaultdict
+
+import networkx
 
 import claripy
 import pyvex
 import ailment
 
+import angr.errors
 from ...storage.memory_mixins.paged_memory.pages.multi_values import MultiValues
 from ...block import Block
 from ...errors import AngrVariableRecoveryError, SimEngineError
 from ...knowledge_plugins import Function
-from ...sim_variable import SimStackVariable, SimRegisterVariable, SimVariable
+from ...sim_variable import SimStackVariable, SimRegisterVariable, SimVariable, SimMemoryVariable
 from ...engines.vex.claripy.irop import vexop_to_simop
 from ..forward_analysis import ForwardAnalysis, FunctionGraphVisitor
-from ..typehoon.typevars import Equivalence, TypeVariable, Subtype
+from ..typehoon.typevars import Equivalence, TypeVariable
 from .variable_recovery_base import VariableRecoveryBase, VariableRecoveryStateBase
 from .engine_vex import SimEngineVRVEX
 from .engine_ail import SimEngineVRAIL
@@ -141,7 +145,7 @@ class VariableRecoveryFastState(VariableRecoveryStateBase):
             else:
                 typevar = TypeVariable()
                 for orig_typevar in all_typevars:
-                    merged_typeconstraints.add(Subtype(orig_typevar, typevar))
+                    merged_typeconstraints.add(Equivalence(orig_typevar, typevar))
             stack_offset_typevars[offset] = typevar
 
         # clean up
@@ -189,17 +193,29 @@ class VariableRecoveryFast(ForwardAnalysis, VariableRecoveryBase):  #pylint:disa
     Recover "variables" from a function by keeping track of stack pointer offsets and pattern matching VEX statements.
 
     If calling conventions are recovered prior to running VariableRecoveryFast, variables can be recognized more
-    accurately. However, it is not a requirement.
+    accurately. However, it is not a requirement. In this case, the function graph you pass must contain information
+    indicating the call-out sites inside the analyzed function. These graph edges must be annotated with either
+    ``"type": "call"`` or ``"outside": True``.
     """
 
-    def __init__(self, func, func_graph=None, max_iterations=2, low_priority=False, track_sp=True,
-                 func_args: Optional[List[SimVariable]]=None, store_live_variables=False):
-        """
-
-        :param knowledge.Function func:  The function to analyze.
-        :param int max_iterations:
-        :param clinic:
-        """
+    def __init__(
+            self,
+            func: Function,
+            func_graph: Optional[networkx.DiGraph]=None,
+            max_iterations: int=2,
+            low_priority=False,
+            track_sp=True,
+            func_args: Optional[List[SimVariable]]=None,
+            store_live_variables=False
+    ):
+        func_graph_with_calls = func_graph or func.transition_graph
+        call_info = defaultdict(list)
+        for node_from, node_to, data in func_graph_with_calls.edges(data=True):
+            if data.get('type', None) == 'call' or data.get('outside', False):
+                try:
+                    call_info[node_from.addr].append(self.kb.functions.get_by_addr(node_to.addr))
+                except KeyError:
+                    pass
 
         function_graph_visitor = FunctionGraphVisitor(func, graph=func_graph)
 
@@ -216,13 +232,13 @@ class VariableRecoveryFast(ForwardAnalysis, VariableRecoveryBase):  #pylint:disa
         self._track_sp = track_sp and self.project.arch.sp_offset is not None
         self._func_args = func_args
 
-        self._ail_engine = SimEngineVRAIL(self.project, self.kb)
-        self._vex_engine = SimEngineVRVEX(self.project, self.kb)
+        self._ail_engine = SimEngineVRAIL(self.project, self.kb, call_info=call_info)
+        self._vex_engine = SimEngineVRVEX(self.project, self.kb, call_info=call_info)
 
         self._node_iterations = defaultdict(int)
 
         self._node_to_cc = { }
-        self.var_to_typevar = { }
+        self.var_to_typevars = defaultdict(set)
         self.type_constraints = None
 
         self._analyze()
@@ -249,7 +265,7 @@ class VariableRecoveryFast(ForwardAnalysis, VariableRecoveryBase):  #pylint:disa
             for func_node in function_nodes:
                 for callsite_node in self.function.transition_graph.predecessors(func_node):
                     if func_node.calling_convention is None:
-                        l.warning("Unknown calling convention for %r.", func_node)
+                        # l.warning("Unknown calling convention for %r.", func_node)
                         self._node_to_cc[callsite_node.addr] = None
                     else:
                         self._node_to_cc[callsite_node.addr] = func_node.calling_convention
@@ -283,6 +299,16 @@ class VariableRecoveryFast(ForwardAnalysis, VariableRecoveryBase):  #pylint:disa
             state.stack_region.store(state.stack_addr_from_offset(ret_addr_offset),
                                      ret_addr,
                                      endness=self.project.arch.memory_endness)
+            internal_manager.add_variable('stack', ret_addr_offset, ret_addr_var)
+
+        if self.project.arch.name.startswith("MIPS"):
+            t9_offset, t9_size = self.project.arch.registers["t9"]
+            try:
+                t9_val = state.register_region.load(t9_offset, t9_size)
+                if state.is_top(t9_val):
+                    state.register_region.store(t9_offset, claripy.BVV(node.addr, t9_size*8))
+            except angr.errors.SimMemoryMissingError:
+                state.register_region.store(t9_offset, claripy.BVV(node.addr, t9_size * 8))
 
         if self._func_args:
             for arg in self._func_args:
@@ -345,7 +371,8 @@ class VariableRecoveryFast(ForwardAnalysis, VariableRecoveryBase):  #pylint:disa
 
         self._node_iterations[node.addr] += 1
         self.type_constraints |= state.type_constraints
-        self.var_to_typevar.update(state.typevars._typevars)
+        for var, typevar in state.typevars._typevars.items():
+            self.var_to_typevars[var].add(typevar)
 
         state.downsize()
         self._outstates[node.addr] = state
@@ -366,6 +393,13 @@ class VariableRecoveryFast(ForwardAnalysis, VariableRecoveryBase):  #pylint:disa
                     state.downsize_region(state.register_region),
                     state.downsize_region(state.stack_region),
                 )
+
+        # unify type variables for global variables
+        for var, typevars in self.var_to_typevars.items():
+            if len(typevars) > 1 and isinstance(var, SimMemoryVariable) and not isinstance(var, SimStackVariable):
+                sorted_typevars = list(sorted(typevars, key=lambda x: str(x)))  # pylint:disable=unnecessary-lambda
+                for tv in sorted_typevars[1:]:
+                    self.type_constraints.add(Equivalence(sorted_typevars[0], tv))
 
     #
     # Private methods
@@ -448,7 +482,7 @@ class VariableRecoveryFast(ForwardAnalysis, VariableRecoveryBase):  #pylint:disa
             sp_v = sp.one_value()
             if sp_v is None:
                 l.warning("Unexpected stack pointer value at the end of the function. Pick the first one.")
-                sp_v = next(iter(next(iter(sp.values.values()))))
+                sp_v = next(iter(next(iter(sp.values()))))
 
             adjusted = False
 

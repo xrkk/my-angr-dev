@@ -17,6 +17,7 @@ from ...knowledge_plugins.functions.function_manager import FunctionManager
 from ...knowledge_plugins.functions.function import Function
 from ...knowledge_plugins.cfg import IndirectJump, CFGNode, CFGENode, CFGModel  # pylint:disable=unused-import
 from ...misc.ux import deprecated
+from ...procedures.stubs.UnresolvableJumpTarget import UnresolvableJumpTarget
 from ...utils.constants import DEFAULT_STATEMENT
 from ...procedures.procedure_dict import SIM_PROCEDURES
 from ...errors import SimTranslationError, SimMemoryError, SimIRSBError, SimEngineError, AngrUnsupportedSyscallError, \
@@ -41,7 +42,7 @@ class CFGBase(Analysis):
     def __init__(self, sort, context_sensitivity_level, normalize=False, binary=None, force_segment=False,
                  base_state=None, resolve_indirect_jumps=True, indirect_jump_resolvers=None,
                  indirect_jump_target_limit=100000, detect_tail_calls=False, low_priority=False,
-                 sp_tracking_track_memory=True, model=None,
+                 skip_unmapped_addrs=True, sp_tracking_track_memory=True, model=None,
                  ):
         """
         :param str sort:                            'fast' or 'emulated'.
@@ -57,6 +58,9 @@ class CFGBase(Analysis):
                                                     If this list is None or empty, default indirect jump resolvers
                                                     specific to this architecture and binary types will be loaded.
         :param int indirect_jump_target_limit:      Maximum indirect jump targets to be recovered.
+        :param skip_unmapped_addrs:                 Ignore all branches into unmapped regions. True by default. You may
+                                                    want to set it to False if you are analyzing manually patched
+                                                    binaries or malware samples.
         :param bool detect_tail_calls:              Aggressive tail-call optimization detection. This option is only
                                                     respected in make_functions().
         :param bool sp_tracking_track_memory:       Whether or not to track memory writes if tracking the stack pointer.
@@ -81,6 +85,7 @@ class CFGBase(Analysis):
         self._base_state = base_state
         self._detect_tail_calls = detect_tail_calls
         self._low_priority = low_priority
+        self._skip_unmapped_addrs = skip_unmapped_addrs
 
         # Initialization
         self._edge_map = None
@@ -480,6 +485,12 @@ class CFGBase(Analysis):
                             while itstate != 0:
                                 it_counter += 1
                                 itstate >>= 8
+                    elif val.tag == 'Iex_Const':
+                        it_counter = 0
+                        itstate = val.con.value
+                        while itstate != 0:
+                            it_counter += 1
+                            itstate >>= 8
 
         if it_counter != 0:
             l.debug('Basic block ends before calculated IT block (%#x)', irsb.addr)
@@ -667,10 +678,41 @@ class CFGBase(Analysis):
             # test if addr_b also does not belong to any section
             dst_section = obj.find_section_containing(addr_b)
             if dst_section is None:
-                return True
+                return self._addrs_belong_to_same_segment(addr_a, addr_b)
             return False
 
         return src_section.contains_addr(addr_b)
+
+    def _addrs_belong_to_same_segment(self, addr_a, addr_b):
+        """
+        Test if two addresses belong to the same segment.
+
+        :param int addr_a:  The first address to test.
+        :param int addr_b:  The second address to test.
+        :return:            True if the two addresses belong to the same segment or both of them do not belong to any
+                            section, False otherwise.
+        :rtype:             bool
+        """
+
+        obj = self.project.loader.find_object_containing(addr_a, membership_check=False)
+
+        if obj is None:
+            # test if addr_b also does not belong to any object
+            obj_b = self.project.loader.find_object_containing(addr_b, membership_check=False)
+            if obj_b is None:
+                return True
+            return False
+
+        src_segment = obj.find_segment_containing(addr_a)
+        if src_segment is None:
+            # test if addr_b also does not belong to any section
+            dst_segment = obj.find_segment_containing(addr_b)
+            if dst_segment is None:
+                return True
+            return False
+
+        return src_segment.contains_addr(addr_b)
+
 
     def _object_has_executable_sections(self, obj):
         """
@@ -839,7 +881,12 @@ class CFGBase(Analysis):
 
             # determine where it jumps/returns to
             goout_site_successors = goout_site.successors()
-            if not goout_site_successors:
+            # Filter out UnresolvableJumpTarget because those don't mean that we actually know where it jumps to
+            known_successors = list(
+                filter(lambda n: not (isinstance(n, HookNode) and n.sim_procedure == UnresolvableJumpTarget),
+                       goout_site_successors))
+
+            if not known_successors:
                 # not sure where it jumps to. bail out
                 bail_out = True
                 continue
@@ -1398,7 +1445,7 @@ class CFGBase(Analysis):
         missing_cfg_nodes = { node for node in missing_cfg_nodes if node.function_address is not None }
         if missing_cfg_nodes:
             l.debug('%d CFGNodes are missing in the first traversal.', len(missing_cfg_nodes))
-            secondary_function_nodes |=  missing_cfg_nodes
+            secondary_function_nodes |= missing_cfg_nodes
 
         min_stage_3_progress = 90.0
         max_stage_3_progress = 99.9
@@ -2067,7 +2114,7 @@ class CFGBase(Analysis):
             self.kb.functions._add_call_to(src_function.addr, src_snippet, dst_addr, fakeret_snippet,
                                            syscall=is_syscall, ins_addr=ins_addr, stmt_idx=stmt_idx)
 
-            if dst_function.returning:
+            if dst_function.returning and fakeret_node is not None:
                 returning_target = src.addr + src.size
                 if returning_target not in blockaddr_to_function:
                     if returning_target not in known_functions:
@@ -2107,11 +2154,12 @@ class CFGBase(Analysis):
             else:
                 dst_node = self._to_snippet(cfg_node=n)
 
-            # pre-check: if source and destination do not belong to the same section, it must be jumping to another
-            # function
-            belong_to_same_section = self._addrs_belong_to_same_section(src_addr, dst_addr)
-            if not belong_to_same_section:
-                _ = self._addr_to_function(dst_addr, blockaddr_to_function, known_functions)
+            if self._skip_unmapped_addrs:
+                # pre-check: if source and destination do not belong to the same section, it must be jumping to another
+                # function
+                belong_to_same_section = self._addrs_belong_to_same_section(src_addr, dst_addr)
+                if not belong_to_same_section:
+                    _ = self._addr_to_function(dst_addr, blockaddr_to_function, known_functions)
 
             if self._detect_tail_calls:
                 if self._is_tail_call_optimization(g, src_addr, dst_addr, src_function, all_edges, known_functions,
@@ -2191,11 +2239,13 @@ class CFGBase(Analysis):
             # We may have determined that this does not happen, since the time this path
             # was scheduled for exploration
             called_function = None
+            called_function_addr = None
             # Try to find the call that this fakeret goes with
             for _, d, e in all_edges:
                 if e['jumpkind'] == 'Ijk_Call':
                     if d.addr in blockaddr_to_function:
                         called_function = blockaddr_to_function[d.addr]
+                        called_function_addr = d.addr
                         break
             # We may have since figured out that the called function doesn't ret.
             # It's important to assume that all unresolved targets do return
@@ -2205,9 +2255,9 @@ class CFGBase(Analysis):
 
             to_outside = not target_function is src_function
 
-            # FIXME: Not sure we should confirm this fakeret or not.
-            self.kb.functions._add_fakeret_to(src_function.addr, src_node, dst_node, confirmed=True,
-                                              to_outside=to_outside, to_function_addr=target_function.addr
+            confirmed = called_function is None or called_function.returning is True
+            self.kb.functions._add_fakeret_to(src_function.addr, src_node, dst_node, confirmed=confirmed,
+                                              to_outside=to_outside, to_function_addr=called_function_addr
                                               )
 
         else:

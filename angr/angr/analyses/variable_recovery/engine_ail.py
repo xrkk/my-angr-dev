@@ -25,10 +25,11 @@ class SimEngineVRAIL(
 ):
     state: 'VariableRecoveryFastState'
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, call_info=None, **kwargs):
         super().__init__(*args, **kwargs)
 
         self._reference_spoffset: bool = False
+        self.call_info = call_info or {}
 
     # Statement handlers
 
@@ -77,12 +78,14 @@ class SimEngineVRAIL(
 
         ret_expr = None
         ret_reg_offset = None
+        ret_expr_bits = self.state.arch.bits
         ret_val = None  # stores the value that this method should return to its caller when this is a call expression.
         if not is_expr:
             # this is a call statement. we need to update the return value register later
             ret_expr: Optional[ailment.Expr.Register] = stmt.ret_expr
             if ret_expr is not None:
                 ret_reg_offset = ret_expr.reg_offset
+                ret_expr_bits = ret_expr.bits
             else:
                 if stmt.calling_convention is not None:
                     if stmt.prototype is None:
@@ -100,7 +103,8 @@ class SimEngineVRAIL(
                     ret_reg_offset = self.project.arch.registers[ret_expr.reg_name][0]
         else:
             # this is a call expression. we just return the value at the end of this method
-            pass
+            if stmt.ret_expr is not None:
+                ret_expr_bits = stmt.ret_expr.bits
 
         # discover the prototype
         prototype: Optional[SimTypeFunction] = None
@@ -114,21 +118,28 @@ class SimEngineVRAIL(
 
         # dump the type of the return value
         if prototype is not None:
-            ret_ty = TypeLifter(self.arch.bits).lift(prototype.returnty)
+            ret_ty = typevars.TypeVariable()  # TypeLifter(self.arch.bits).lift(prototype.returnty)
         else:
             ret_ty = typevars.TypeVariable()
         if isinstance(ret_ty, typeconsts.BottomType):
             ret_ty = typevars.TypeVariable()
 
+        # TODO: Expose it as an option
+        return_value_use_full_width_reg = True
+
         if is_expr:
             # call expression mode
-            ret_val = RichR(self.state.top(self.state.arch.bits), typevar=ret_ty)
+            ret_val = RichR(self.state.top(ret_expr_bits), typevar=ret_ty)
         else:
             if ret_expr is not None:
                 # update the return value register
+                if return_value_use_full_width_reg:
+                    expr_bits = self.state.arch.bits
+                else:
+                    expr_bits = ret_expr_bits
                 self._assign_to_register(
                     ret_reg_offset,
-                    RichR(self.state.top(self.state.arch.bits), typevar=ret_ty),
+                    RichR(self.state.top(expr_bits), typevar=ret_ty),
                     self.state.arch.bytes,
                     dst=ret_expr,
                 )
@@ -184,11 +195,17 @@ class SimEngineVRAIL(
         addr_r = self._expr(expr.addr)
         size = expr.size
 
-        return self._load(addr_r, size, expr=expr)
+        r = self._load(addr_r, size, expr=expr)
+        return r
 
     def _ail_handle_Const(self, expr):
+        if self.project.loader.find_segment_containing(expr.value) is not None:
+            r = self._load_from_global(expr.value, 1, expr=expr)
+            ty = r.typevar
+        else:
+            ty = typeconsts.int_type(expr.size * self.state.arch.byte_width)
         v = claripy.BVV(expr.value, expr.size * self.state.arch.byte_width)
-        r = RichR(v, typevar=typeconsts.int_type(expr.size * self.state.arch.byte_width))
+        r = RichR(v, typevar=ty)
         self._reference(r, self._codeloc())
         return r
 
@@ -208,9 +225,11 @@ class SimEngineVRAIL(
         if r.typevar is not None:
             if isinstance(r.typevar, typevars.DerivedTypeVariable) and isinstance(r.typevar.label, typevars.ConvertTo):
                 # there is already a conversion - overwrite it
-                typevar = typevars.DerivedTypeVariable(r.typevar.type_var, typevars.ConvertTo(expr.to_bits))
+                if not isinstance(r.typevar.type_var, typeconsts.TypeConstant):
+                    typevar = typevars.DerivedTypeVariable(r.typevar.type_var, typevars.ConvertTo(expr.to_bits))
             else:
-                typevar = typevars.DerivedTypeVariable(r.typevar, typevars.ConvertTo(expr.to_bits))
+                if not isinstance(r.typevar, typeconsts.TypeConstant):
+                    typevar = typevars.DerivedTypeVariable(r.typevar, typevars.ConvertTo(expr.to_bits))
 
         return RichR(self.state.top(expr.to_bits), typevar=typevar)
 
@@ -274,14 +293,20 @@ class SimEngineVRAIL(
         r1 = self._expr(arg1)
 
         type_constraints = set()
-        if r0.typevar is not None and r1.data.concrete:
-            # addition with constants. create a derived type variable
-            typevar = typevars.DerivedTypeVariable(r0.typevar, typevars.AddN(r1.data._model_concrete.value))
+        if r0.typevar is not None:
+            r0_typevar = r0.typevar
         else:
             # create a new type variable and add constraints accordingly
+            r0_typevar = typevars.TypeVariable()
+
+        if r1.data.concrete:
+            # addition with constants. create a derived type variable
+            typevar = typevars.DerivedTypeVariable(r0_typevar, typevars.AddN(r1.data._model_concrete.value))
+        elif r1.typevar is not None:
             typevar = typevars.TypeVariable()
-            if r0.typevar is not None and r1.typevar is not None:
-                type_constraints.add(typevars.Add(r0.typevar, r1.typevar, typevar))
+            type_constraints.add(typevars.Add(r0_typevar, r1.typevar, typevar))
+        else:
+            typevar = None
 
         sum_ = None
         if r0.data is not None and r1.data is not None:

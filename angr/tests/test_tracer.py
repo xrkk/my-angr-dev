@@ -2,18 +2,19 @@ import os
 import sys
 import logging
 
-import angr
-
 from common import bin_location, do_trace, load_cgc_pov, slow_test, skip_if_not_linux
+
+import angr
 
 
 def tracer_cgc(filename, test_name, stdin, copy_states=False, follow_unsat=False, read_strategies=None,
-               write_strategies=None):
+               write_strategies=None, add_options=None, remove_options=None, syscall_data=None):
     p = angr.Project(filename)
     p.simos.syscall_library.update(angr.SIM_LIBRARIES["cgcabi_tracer"])
 
     trace, magic, crash_mode, crash_addr = do_trace(p, test_name, stdin)
-    s = p.factory.entry_state(mode="tracing", stdin=angr.SimFileStream, flag_page=magic)
+    s = p.factory.entry_state(mode="tracing", stdin=angr.SimFileStream, flag_page=magic, add_options=add_options,
+                              remove_options=remove_options)
     if read_strategies is not None:
         s.memory.read_strategies = read_strategies
     if write_strategies is not None:
@@ -21,7 +22,7 @@ def tracer_cgc(filename, test_name, stdin, copy_states=False, follow_unsat=False
     s.preconstrainer.preconstrain_file(stdin, s.posix.stdin, True)
 
     simgr = p.factory.simulation_manager(
-        s, hierarchy=False, save_unconstrained=crash_mode
+        s, hierarchy=None, save_unconstrained=crash_mode
     )
     t = angr.exploration_techniques.Tracer(
         trace,
@@ -29,7 +30,11 @@ def tracer_cgc(filename, test_name, stdin, copy_states=False, follow_unsat=False
         keep_predecessors=1,
         copy_states=copy_states,
         follow_unsat=follow_unsat,
+        syscall_data=syscall_data,
     )
+    if add_options is not None and angr.options.UNICORN_HANDLE_CGC_RECEIVE_SYSCALL in add_options:
+        t.set_fd_data({0: stdin})
+
     simgr.use_technique(t)
     simgr.use_technique(angr.exploration_techniques.Oppologist())
 
@@ -43,12 +48,16 @@ def trace_cgc_with_pov_file(
         output_initial_bytes: bytes,
         copy_states=False,
         read_strategies=None,
-        write_strategies=None
+        write_strategies=None,
+        add_options=None,
+        remove_options=None,
+        syscall_data=None
 ):
     assert os.path.isfile(pov_file)
     pov = load_cgc_pov(pov_file)
     trace_result = tracer_cgc(binary, test_name, b''.join(pov.writes), copy_states, read_strategies=read_strategies,
-                              write_strategies=write_strategies)
+                              write_strategies=write_strategies, add_options=add_options, remove_options=remove_options,
+                              syscall_data=syscall_data)
     simgr = trace_result[0]
     simgr.run()
     assert "traced" in simgr.stashes
@@ -79,7 +88,7 @@ def tracer_linux(filename, test_name, stdin, add_options=None, remove_options=No
     s.preconstrainer.preconstrain_file(stdin, s.posix.stdin, True)
 
     simgr = p.factory.simulation_manager(
-        s, hierarchy=False, save_unconstrained=crash_mode
+        s, hierarchy=None, save_unconstrained=crash_mode
     )
     t = angr.exploration_techniques.Tracer(trace, crash_addr=crash_addr)
     simgr.use_technique(t)
@@ -90,7 +99,8 @@ def tracer_linux(filename, test_name, stdin, add_options=None, remove_options=No
 
 def test_recursion():
     blob = bytes.fromhex(
-        "00aadd114000000000000000200000001d0000000005000000aadd2a1100001d0000000001e8030000aadd21118611b3b3b3b3b3e3b1b1b1adb1b1b1b1b1b1118611981d8611"
+        "00aadd114000000000000000200000001d0000000005000000aadd2a1100001d0000000001e8030000aadd21118611b3b3b3b3b3e3b1b"
+        "1b1adb1b1b1b1b1b1118611981d8611"
     )
     fname = os.path.join(
         os.path.dirname(__file__), "..", "..", "binaries", "tests", "cgc", "NRFIN_00075"
@@ -108,7 +118,8 @@ def broken_cache_stall():
     # test a valid palindrome
     b = os.path.join(bin_location, "tests", "cgc", "CROMU_00071")
     blob = bytes.fromhex(
-        "0c0c492a53acacacacacacacacacacacacac000100800a0b690e0aef6503697d660a0059e20afc0a0a332f7d66660a0059e20afc0a0a332f7fffffff16fb1616162516161616161616166a7dffffff7b0e0a0a6603697d660a0059e21c"
+        "0c0c492a53acacacacacacacacacacacacac000100800a0b690e0aef6503697d660a0059e20afc0a0a332f7d66660a0059e20afc0a0a3"
+        "32f7fffffff16fb1616162516161616161616166a7dffffff7b0e0a0a6603697d660a0059e21c"
     )
 
     simgr, tracer = tracer_cgc(b, "tracer_cache_stall", blob)
@@ -117,8 +128,8 @@ def broken_cache_stall():
     crash_path = tracer.predecessors[-1]
     crash_state = simgr.crashed[0]
 
-    assert crash_path != None
-    assert crash_state != None
+    assert crash_path is not None
+    assert crash_state is not None
 
     # load it again
     simgr, tracer = tracer_cgc(b, "tracer_cache_stall", blob)
@@ -127,14 +138,15 @@ def broken_cache_stall():
     crash_path = tracer.predecessors[-1]
     crash_state = simgr.one_crashed
 
-    assert crash_path != None
-    assert crash_state != None
+    assert crash_path is not None
+    assert crash_state is not None
 
 
 @skip_if_not_linux
 def test_manual_recursion():
     b = os.path.join(bin_location, "tests", "cgc", "CROMU_00071")
-    blob = open(os.path.join(bin_location, "tests_data", "crash2731"), "rb").read()
+    with open(os.path.join(bin_location, "tests_data", "crash2731"), "rb") as fh:
+        blob = fh.read()
 
     simgr, tracer = tracer_cgc(b, "tracer_manual_recursion", blob)
     simgr.run()
@@ -142,8 +154,90 @@ def test_manual_recursion():
     crash_path = tracer.predecessors[-1]
     crash_state = simgr.one_crashed
 
-    assert crash_path != None
-    assert crash_state != None
+    assert crash_path is not None
+    assert crash_state is not None
+
+
+def test_cgc_receive_unicorn_native_interface():
+    """
+    Test if unicorn native interface handles CGC receive syscall correctly. Receives with symbolic arguments also
+    tested.
+    """
+
+    binary = os.path.join(bin_location, "tests", "cgc", "KPRCA_00038")
+    pov_file = os.path.join(
+        bin_location, "tests_data", "cgc_povs", "KPRCA_00038_POV_00000.xml"
+    )
+    output_initial_bytes = b""
+    add_options = {angr.options.UNICORN_HANDLE_CGC_RECEIVE_SYSCALL, angr.options.UNICORN_HANDLE_SYMBOLIC_ADDRESSES,
+                   angr.options.UNICORN_HANDLE_SYMBOLIC_CONDITIONS, angr.options.UNICORN_HANDLE_SYMBOLIC_SYSCALLS}
+    trace_cgc_with_pov_file(
+        binary,
+        "tracer_cgc_receive_unicorn_native_interface",
+        pov_file,
+        output_initial_bytes,
+        add_options=add_options
+    )
+
+
+def test_cgc_receive_unicorn_native_interface_rx_bytes():
+    """
+    Test rx_bytes is correctly handled by unicorn native interface's CGC receive: update only if non-null
+    """
+
+    binary = os.path.join(bin_location, "tests", "cgc", "CROMU_00012")
+    pov_file = os.path.join(
+        bin_location, "tests_data", "cgc_povs", "CROMU_00012_POV_00000.xml"
+    )
+    output_initial_bytes = b""
+    add_options = {angr.options.UNICORN_HANDLE_CGC_RECEIVE_SYSCALL, angr.options.UNICORN_HANDLE_SYMBOLIC_ADDRESSES,
+                   angr.options.UNICORN_HANDLE_SYMBOLIC_CONDITIONS}
+    trace_cgc_with_pov_file(
+        binary,
+        "tracer_cgc_receive_unicorn_native_interface_rx_bytes",
+        pov_file,
+        output_initial_bytes,
+        add_options=add_options
+    )
+
+
+def test_cgc_random_syscall_handling_native_interface():
+    """
+    Test if random syscall is correctly handled in native interface. Random with symbolic arguments also tested.
+    """
+
+    binary = os.path.join(bin_location, "tests", "cgc", "KPRCA_00011")
+    pov_file = os.path.join(
+        bin_location, "tests_data", "cgc_povs", "KPRCA_00011_POV_00000.xml"
+    )
+    output_file = os.path.join(bin_location, "tests_data", "cgc_povs", "KPRCA_00011_stdout.txt")
+    add_options = {angr.options.UNICORN_HANDLE_CGC_RECEIVE_SYSCALL, angr.options.UNICORN_HANDLE_CGC_RANDOM_SYSCALL,
+                   angr.options.UNICORN_HANDLE_SYMBOLIC_ADDRESSES, angr.options.UNICORN_HANDLE_SYMBOLIC_CONDITIONS,
+                   angr.options.UNICORN_HANDLE_SYMBOLIC_SYSCALLS}
+
+    rand_syscall_data = {
+        'random': [
+            (65, 1), (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1),
+            (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1),
+            (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1),
+            (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1),
+            (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1),
+            (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1),
+            (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1), (16705, 2), (16705, 2), (65, 1),
+            (16705, 2), (16705, 2)
+        ]
+    }
+    with open(output_file, 'rb') as fh:
+        output_bytes = fh.read()
+
+    trace_cgc_with_pov_file(
+        binary,
+        "tracer_cgc_receive_unicorn_native_interface_rx_bytes",
+        pov_file,
+        output_bytes,
+        add_options=add_options,
+        syscall_data=rand_syscall_data
+    )
 
 
 def test_cgc_se1_palindrome_raw():
@@ -178,6 +272,71 @@ def test_cgc_se1_palindrome_raw():
     assert simgr.crashed
 
 
+def test_d_flag_and_write_write_conflict_in_unicorn():
+    """
+    Check if d flag is handled correctly in unicorn native interface and write-write conflicts do not occur when
+    re-executing symbolic instructions
+    """
+
+    binary = os.path.join(bin_location, "tests", "cgc", "CROMU_00008")
+    pov_file = os.path.join(
+        bin_location, "tests_data", "cgc_povs", "CROMU_00008_POV_00000.xml"
+    )
+    output_initial_bytes = (
+        b"> You logged in.\n> First name: Last name: User name: Birthdate (mm/dd/yy hh:mm:ss): "
+        b"Date is: 12/21/1983 5:43:21\nData added, record 0\n"
+        b"> Enter search express (firstname or fn, lastname or ln, username or un, birthdate or bd,"
+        b" operators ==, !=, >, <, AND and OR):\n"
+    )
+    add_options = {angr.options.UNICORN_HANDLE_CGC_RECEIVE_SYSCALL, angr.options.UNICORN_HANDLE_SYMBOLIC_ADDRESSES,
+                   angr.options.UNICORN_HANDLE_SYMBOLIC_CONDITIONS}
+    trace_cgc_with_pov_file(
+        binary,
+        "tracer_d_flag_and_write_write_conflict_in_unicorn",
+        pov_file,
+        output_initial_bytes,
+        add_options=add_options
+    )
+
+
+def test_empty_reexecute_block_remove_in_unicorn_native_interface():
+    """
+    Test if blocks with no symbolic instructions are removed from re-execution list in unicorn native interface.
+    Re-execute instruction list of a block can become empty when all of them are removed when performing memory writes.
+    See handle_write in unicorn native interface.
+    """
+
+    binary = os.path.join(bin_location, "tests", "cgc", "KPRCA_00052")
+    pov_file = os.path.join(
+        bin_location, "tests_data", "cgc_povs", "KPRCA_00052_POV_00000.xml"
+    )
+    output_initial_bytes = (
+        b"Enter system password: \nWelcome to the CGC Pizzeria order management system.\n1. Input Order\n"
+        b"2. Update Order\n3. View One Orders\n4. View All Orders\n5. Delete Order\n6. Clear All Orders\n7. Logout\n"
+        b"Choice: Enter Pickup Name: Choose what the kind of pizza\n1. Pizza Pie - The classic!\n"
+        b"2. Pizza Sub - All the fun, on a bun\n3. Pizza Bowl - Our own twist\nChoice: Select Size\n1. Small\n"
+        b"2. Medium\n3. Large\nChoice: Successfully added a new Pizza Pie!\nSelect an option:\n1. Add Toppings\n"
+        b"2. Remove Toppings\n3. Add Sauce\n4. Remove Sauce\n5. Finished With Pizza\nChoice: Successfully added pizza!"
+        b"\n1. Add another Pizza\n2. Quit\nChoice: 0. Cancel\n==================================================\n  "
+        b"Item #1. Classic Pizza Pie, Size: SMALL\n    Selected Toppings\n\tNone\n    Sauce on the side\n\tNone\n"
+        b"--------------------------------------\n\t\tCalories: 1000\n\t\tCarbs   : 222\n\nPizza length... = 1\n\t\t"
+        b"Estimated wait time: 36 minute(s)\n==================================================\nChoice: "
+        b"Removed Item #1\n1. Add another Pizza\n2. Quit\nChoice: Order successfully added!\n1. Input Order\n"
+        b"2. Update Order\n3. View One Orders\n4. View All Orders\n5. Delete Order\n6. Clear All Orders\n7. Logout\n"
+        b"Choice: 1 - pov: Ordered 0 pizza(s)\n==================================================\n"
+        b"--------------------------------------\n\t\tCalories: 0\n\t\tCarbs   : 0\n\n"
+    )
+    add_options = {angr.options.UNICORN_HANDLE_CGC_RECEIVE_SYSCALL, angr.options.UNICORN_HANDLE_SYMBOLIC_ADDRESSES,
+                   angr.options.UNICORN_HANDLE_SYMBOLIC_CONDITIONS}
+    trace_cgc_with_pov_file(
+        binary,
+        "tracer_empty_reexecute_block_remove_in_unicorn_native_interface",
+        pov_file,
+        output_initial_bytes,
+        add_options=add_options
+    )
+
+
 def test_symbolic_sized_receives():
     b = os.path.join(bin_location, "tests", "cgc", "CROMU_00070")
 
@@ -195,7 +354,13 @@ def test_symbolic_sized_receives():
 
 
 def test_allocation_base_continuity():
-    correct_out = b"prepare for a challenge\nb7fff000\nb7ffe000\nb7ffd000\nb7ffc000\nb7ffb000\nb7ffa000\nb7ff9000\nb7ff8000\nb7ff7000\nb7ff6000\nb7ff5000\nb7ff4000\nb7ff3000\nb7ff2000\nb7ff1000\nb7ff0000\nb7fef000\nb7fee000\nb7fed000\nb7fec000\ndeallocating b7ffa000\na: b7ffb000\nb: b7fff000\nc: b7ff5000\nd: b7feb000\ne: b7fe8000\ne: b7fa8000\na: b7ffe000\nb: b7ffd000\nc: b7ff7000\nd: b7ff6000\ne: b7ff3000\ne: b7f68000\nallocate: 3\na: b7fef000\n"
+    correct_out = (
+        b"prepare for a challenge\nb7fff000\nb7ffe000\nb7ffd000\nb7ffc000\nb7ffb000\nb7ffa000\nb7ff9000\nb7ff8000\n"
+        b"b7ff7000\nb7ff6000\nb7ff5000\nb7ff4000\nb7ff3000\nb7ff2000\nb7ff1000\nb7ff0000\nb7fef000\nb7fee000\n"
+        b"b7fed000\nb7fec000\ndeallocating b7ffa000\na: b7ffb000\nb: b7fff000\nc: b7ff5000\nd: b7feb000\ne: b7fe8000\n"
+        b"e: b7fa8000\na: b7ffe000\nb: b7ffd000\nc: b7ff7000\nd: b7ff6000\ne: b7ff3000\ne: b7f68000\nallocate: 3\n"
+        b"a: b7fef000\n"
+    )
 
     b = os.path.join(bin_location, "tests", "i386", "cgc_allocations")
 
@@ -292,6 +457,77 @@ def test_fdwait_fds():
     ]
     trace_cgc_with_pov_file(
         binary, "tracer_floating_point_memory_reads", pov_file, b"\n".join(output)
+    )
+
+
+def test_non_zero_offset_subregister_dependency_saving_unicorn_native_interface():
+    """
+    Test if concrete register dependencies of symbolic instructions are saved correctly in unicorn native interface for
+    re-executing
+    """
+
+    binary = os.path.join(bin_location, "tests", "cgc", "KPRCA_00028")
+    pov_file = os.path.join(
+        bin_location, "tests_data", "cgc_povs", "KPRCA_00028_POV_00000.xml"
+    )
+    output_initial_bytes = b'Welcome to the SLUR REPL. Type an expression to evaluate it.\n> '
+    add_options = {angr.options.UNICORN_HANDLE_CGC_RECEIVE_SYSCALL, angr.options.UNICORN_HANDLE_SYMBOLIC_ADDRESSES,
+                   angr.options.UNICORN_HANDLE_SYMBOLIC_CONDITIONS}
+    trace_cgc_with_pov_file(
+        binary,
+        "tracer_non_zero_offset_subregister_dependency_saving_unicorn_native_interface",
+        pov_file,
+        output_initial_bytes,
+        add_options=add_options
+    )
+
+
+def test_saving_dependencies_of_last_instruction_of_block_in_unicorn_native_interface():
+    """
+    Test if dependencies of last instruction in a basic block are saved in unicorn native interface
+    """
+
+    binary = os.path.join(bin_location, "tests", "cgc", "NRFIN_00026")
+    pov_file = os.path.join(
+        bin_location, "tests_data", "cgc_povs", "NRFIN_00026_POV_00000.xml"
+    )
+    output_initial_bytes = (
+        b"Starting dissection...\n\n\n====New Packet====\n\n\n===rofl===\n\n\n===rachiometersuprachoroid===\n301478991"
+        b"\nString display will be handled in v4.\n1\nString display will be handled in v4.\n0\n1\n"
+        b"LV type will be handled in v4.\n3582705152\nString display will be handled in v4.\n"
+        b"LV type will be handled in v4.\n190\n0\n===trolololo===\n"
+    )
+    add_options = {angr.options.UNICORN_HANDLE_CGC_RECEIVE_SYSCALL, angr.options.UNICORN_HANDLE_SYMBOLIC_ADDRESSES,
+                   angr.options.UNICORN_HANDLE_SYMBOLIC_CONDITIONS}
+    trace_cgc_with_pov_file(
+        binary,
+        "tracer_saving_dependencies_of_last_instruction_of_block_in_unicorn_native_interface",
+        pov_file,
+        output_initial_bytes,
+        add_options=add_options
+    )
+
+
+@slow_test
+def test_sseround_register_dependency_unicorn_native_interface():
+    """
+    Test if value of SSEROUND VEX register is saved correctly when it is a dependency of an instruction that needs to be
+    re-executed. Takes about 10 minutes.
+    """
+
+    binary = os.path.join(bin_location, "tests", "cgc", "NRFIN_00021")
+    pov_file = os.path.join(
+        bin_location, "tests_data", "cgc_povs", "NRFIN_00021_POV_00000.xml"
+    )
+    output_initial_bytes = b""
+    add_options = {angr.options.UNICORN_HANDLE_CGC_RECEIVE_SYSCALL, angr.options.UNICORN_HANDLE_SYMBOLIC_ADDRESSES,
+                   angr.options.UNICORN_HANDLE_SYMBOLIC_CONDITIONS}
+    trace_cgc_with_pov_file(
+        binary,
+        "tracer_sseround_register_dependency_unicorn_native_interface",
+        pov_file,
+        output_initial_bytes,
+        add_options=add_options
     )
 
 
@@ -425,6 +661,32 @@ def test_symbolic_memory_dependencies_liveness():
     )
 
 
+def test_symbolic_cgc_transmit_handling_in_native_interface():
+    """
+    Check if CGC transmit syscall with symbolic arguments is handled in native interface when tracing.
+    """
+
+    binary = os.path.join(bin_location, "tests", "cgc", "CROMU_00008")
+    pov_file = os.path.join(
+        bin_location, "tests_data", "cgc_povs", "CROMU_00008_POV_00000.xml"
+    )
+    output_initial_bytes = (
+        b"> You logged in.\n> First name: Last name: User name: Birthdate (mm/dd/yy hh:mm:ss): "
+        b"Date is: 12/21/1983 5:43:21\nData added, record 0\n"
+        b"> Enter search express (firstname or fn, lastname or ln, username or un, birthdate or bd,"
+        b" operators ==, !=, >, <, AND and OR):\n"
+    )
+    add_options = {angr.options.UNICORN_HANDLE_CGC_RECEIVE_SYSCALL, angr.options.UNICORN_HANDLE_SYMBOLIC_ADDRESSES,
+                   angr.options.UNICORN_HANDLE_SYMBOLIC_CONDITIONS, angr.options.UNICORN_HANDLE_SYMBOLIC_SYSCALLS}
+    trace_cgc_with_pov_file(
+        binary,
+        "tracer_symbolic_cgc_transmit_handling_in_native_interface",
+        pov_file,
+        output_initial_bytes,
+        add_options=add_options
+    )
+
+
 def test_user_controlled_code_execution():
     # Test user controlled code execution where instruction pointer is concrete and code is symbolic
     binary = os.path.join(bin_location, "tests", "cgc", "NRFIN_00034")
@@ -444,9 +706,7 @@ def run_all():
         print("#" * (len(name) + 8))
 
     functions = globals()
-    all_functions = dict(
-        filter((lambda kv: kv[0].startswith("test_")), functions.items())
-    )
+    all_functions = {fn_name: fn_obj for (fn_name, fn_obj) in functions.items() if fn_name.startswith("test_")}
     for f in sorted(all_functions.keys()):
         if hasattr(all_functions[f], "__call__"):
             print_test_name(f)

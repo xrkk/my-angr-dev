@@ -12,7 +12,8 @@ from claripy.utils.orderedset import OrderedSet
 from ...protos import variables_pb2
 from ...serializable import Serializable
 from ...sim_variable import SimVariable, SimStackVariable, SimMemoryVariable, SimRegisterVariable
-from ...sim_type import TypeRef, SimType, SimStruct, SimTypePointer
+from ...sim_type import TypeRef, SimType, SimStruct, SimTypePointer, SimTypeBottom, SimTypeChar, SimTypeShort, \
+    SimTypeInt, SimTypeLong
 from ...keyed_region import KeyedRegion
 from ..plugin import KnowledgeBasePlugin
 from ..types import TypesStore
@@ -80,6 +81,7 @@ class VariableManagerInternal(Serializable):
         self._variables_to_unified_variables: Dict[SimVariable, SimVariable] = { }
 
         self._phi_variables = { }
+        self._variables_to_phivars = defaultdict(set)
         self._phi_variables_by_block = defaultdict(set)
 
         self.types = TypesStore(self.manager._kb)
@@ -89,6 +91,19 @@ class VariableManagerInternal(Serializable):
     #
     # Serialization
     #
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+    def __getstate__(self):
+        d = dict(self.__dict__)
+        d['manager'] = None
+        d['types'].kb = None
+        return d
+
+    def set_manager(self, manager: 'VariableManager'):
+        self.manager = manager
+        self.types.kb = manager._kb
 
     @classmethod
     def _get_cmsg(cls):
@@ -105,12 +120,24 @@ class VariableManagerInternal(Serializable):
         memory_variables = [ ]
 
         for variable in self._variables:
+            vc = variable.serialize_to_cmessage()
             if isinstance(variable, SimRegisterVariable):
-                register_variables.append(variable.serialize_to_cmessage())
+                register_variables.append(vc)
             elif isinstance(variable, SimStackVariable):
-                stack_variables.append(variable.serialize_to_cmessage())
+                stack_variables.append(vc)
             elif isinstance(variable, SimMemoryVariable):
-                memory_variables.append(variable.serialize_to_cmessage())
+                memory_variables.append(vc)
+            else:
+                raise NotImplementedError()
+        for variable in self._phi_variables:
+            vc = variable.serialize_to_cmessage()
+            vc.base.is_phi = True
+            if isinstance(variable, SimRegisterVariable):
+                register_variables.append(vc)
+            elif isinstance(variable, SimStackVariable):
+                stack_variables.append(vc)
+            elif isinstance(variable, SimMemoryVariable):
+                memory_variables.append(vc)
             else:
                 raise NotImplementedError()
 
@@ -153,6 +180,19 @@ class VariableManagerInternal(Serializable):
             relations.append(relation)
         cmsg.var2unified.extend(relations)
 
+        # phi vars
+        phi_relations = []
+        for phi, vars_ in self._phi_variables.items():
+            for var in vars_:
+                if var not in self._variables and var not in self._phi_variables:
+                    l.error("Ignore variable %s because it is not in the registered list.", var.ident)
+                    continue
+                relation = variables_pb2.Phi2Var()
+                relation.phi_ident = phi.ident
+                relation.var_ident = var.ident
+                phi_relations.append(relation)
+        cmsg.phi2var.extend(phi_relations)
+
         # TODO: Types
 
         return cmsg
@@ -164,18 +204,20 @@ class VariableManagerInternal(Serializable):
         variable_by_ident = {}
 
         # variables
+        all_vars = []
+
         for regvar_pb2 in cmsg.regvars:
-            regvar = SimRegisterVariable.parse_from_cmessage(regvar_pb2)
-            variable_by_ident[regvar.ident] = regvar
-            model._variables.add(regvar)
+            all_vars.append((regvar_pb2.base.is_phi, SimRegisterVariable.parse_from_cmessage(regvar_pb2)))
         for stackvar_pb2 in cmsg.stackvars:
-            stackvar = SimStackVariable.parse_from_cmessage(stackvar_pb2)
-            variable_by_ident[stackvar.ident] = stackvar
-            model._variables.add(stackvar)
+            all_vars.append((stackvar_pb2.base.is_phi, SimStackVariable.parse_from_cmessage(stackvar_pb2)))
         for memvar_pb2 in cmsg.memvars:
-            memvar = SimMemoryVariable.parse_from_cmessage(memvar_pb2)
-            variable_by_ident[memvar.ident] = memvar
-            model._variables.add(memvar)
+            all_vars.append((memvar_pb2.base.is_phi, SimMemoryVariable.parse_from_cmessage(memvar_pb2)))
+        for is_phi, var in all_vars:
+            variable_by_ident[var.ident] = var
+            if is_phi:
+                model._phi_variables[var] = set()
+            else:
+                model._variables.add(var)
 
         # variable accesses
         for varaccess_pb2 in cmsg.accesses:
@@ -211,7 +253,34 @@ class VariableManagerInternal(Serializable):
             unified = unified_variable_by_ident[var2unified.unified_var_ident]
             model._variables_to_unified_variables[variable] = unified
 
+        for phi2var in cmsg.phi2var:
+            phi = variable_by_ident.get(phi2var.phi_ident, None)
+            if phi is None:
+                l.warning("Phi variable %s is not found in variable_by_ident.", phi2var.phi_ident)
+                continue
+            var = variable_by_ident.get(phi2var.var_ident, None)
+            if var is None:
+                l.warning("Variable %s is not found in variable_by_ident.", phi2var.var_ident)
+                continue
+            model._phi_variables[phi].add(var)
+            model._variables_to_phivars[var].add(phi)
+
         # TODO: Types
+
+        for var in model._variables:
+            if isinstance(var, SimStackVariable):
+                region = model._stack_region
+                offset = var.offset
+            elif isinstance(var, SimRegisterVariable):
+                region = model._register_region
+                offset = var.reg
+            elif isinstance(var, SimMemoryVariable):
+                region = model._global_region
+                offset = var.addr
+            else:
+                raise ValueError('Unsupported sort %s in parse_from_cmessage().' % type(var))
+
+            region.add_variable(offset, var)
 
         return model
 
@@ -256,6 +325,7 @@ class VariableManagerInternal(Serializable):
             # implicitly overwrite or add I guess
             pass
         region.add_variable(start, variable)
+        self._variables.add(variable)
 
     def set_variable(self, sort, start, variable: SimVariable):
         if sort == 'stack':
@@ -276,6 +346,7 @@ class VariableManagerInternal(Serializable):
             # implicitly overwrite or add I guess
             pass
         region.set_variable(start, variable)
+        self._variables.add(variable)
 
     def write_to(self, variable, offset, location, overwrite=False, atom=None):
         self._record_variable_access(VariableAccessSort.WRITE, variable, offset, location, overwrite=overwrite,
@@ -290,6 +361,7 @@ class VariableManagerInternal(Serializable):
                                      atom=atom)
 
     def _record_variable_access(self, sort: int, variable, offset, location, overwrite=False, atom=None):
+        # TODO can this line be removed, should we be only adding to _variables in add_variable?
         self._variables.add(variable)
         var_and_offset = variable, offset
         atom_hash = (hash(atom) & 0xffff_ffff) if atom is not None else None
@@ -322,32 +394,41 @@ class VariableManagerInternal(Serializable):
                 existing_phis.add(var)
             else:
                 non_phis.add(var)
-        if len(existing_phis) == 1:
-            existing_phi = next(iter(existing_phis))
-            if block_addr in self._phi_variables_by_block and existing_phi in self._phi_variables_by_block[block_addr]:
-                if not non_phis.issubset(self.get_phi_subvariables(existing_phi)):
-                    # Update the variables that this phi variable represents
-                    self._phi_variables[existing_phi] |= non_phis
-                return existing_phi
+            if var in self._variables_to_phivars:
+                for phivar in self._variables_to_phivars[var]:
+                    existing_phis.add(phivar)
+
+        if len(existing_phis) >= 1:
+            # iterate through existing phi variables to see if any of it is already used as the phi variable for this
+            # block. if so, we reuse it to avoid redundant variable allocations
+            for phi in existing_phis:
+                if block_addr in self._phi_variables_by_block and phi in self._phi_variables_by_block[block_addr]:
+                    if not non_phis.issubset(self.get_phi_subvariables(phi)):
+                        # Update the variables that this phi variable represents
+                        self._phi_variables[phi] |= non_phis
+                    return phi
 
         # allocate a new phi variable
         repre = next(iter(variables))
         repre_type = type(repre)
+        repre_size = max(var.size for var in variables)
         if repre_type is SimRegisterVariable:
             ident_sort = 'register'
-            a = SimRegisterVariable(repre.reg, repre.size, ident=self.next_variable_ident(ident_sort))
+            a = SimRegisterVariable(repre.reg, repre_size, ident=self.next_variable_ident(ident_sort))
         elif repre_type is SimMemoryVariable:
             ident_sort = 'global'
-            a = SimMemoryVariable(repre.addr, repre.size, ident=self.next_variable_ident(ident_sort))
+            a = SimMemoryVariable(repre.addr, repre_size, ident=self.next_variable_ident(ident_sort))
         elif repre_type is SimStackVariable:
             ident_sort = 'stack'
-            a = SimStackVariable(repre.offset, repre.size, ident=self.next_variable_ident(ident_sort))
+            a = SimStackVariable(repre.offset, repre_size, ident=self.next_variable_ident(ident_sort))
         else:
             raise TypeError('make_phi_node(): Unsupported variable type "%s".' % type(repre))
 
         # Keep a record of all phi variables
         self._phi_variables[a] = set(variables)
         self._phi_variables_by_block[block_addr].add(a)
+        for var in variables:
+            self._variables_to_phivars[var].add(a)
 
         return a
 
@@ -415,6 +496,11 @@ class VariableManagerInternal(Serializable):
 
     def find_variables_by_stack_offset(self, offset: int) -> Set[SimVariable]:
         return self._stack_region.get_variables_by_offset(offset)
+
+    def find_variables_by_register(self, reg: Union[str, int]) -> Set[SimVariable]:
+        if type(reg) is str:
+            reg = self.manager._kb._project.arch.registers.get(reg)[0]
+        return self._register_region.get_variables_by_offset(reg)
 
     def get_variable_accesses(self, variable: SimVariable, same_name: bool=False) -> List[VariableAccess]:
 
@@ -505,7 +591,7 @@ class VariableManagerInternal(Serializable):
         """
 
         if block_addr not in self._phi_variables_by_block:
-            return dict()
+            return { }
         variables = { }
         for phi in self._phi_variables_by_block[block_addr]:
             variables[phi] = self._phi_variables[phi]
@@ -580,6 +666,9 @@ class VariableManagerInternal(Serializable):
         :return:        None
         """
 
+        def _id_from_varident(ident: str) -> int:
+            return int(ident[ident.find("_") + 1:])
+
         if not self._unified_variables:
             return
 
@@ -589,7 +678,7 @@ class VariableManagerInternal(Serializable):
 
         for var in self._unified_variables:
             if isinstance(var, SimStackVariable):
-                if var.ident and var.ident.startswith('iarg_'):
+                if var.ident and var.ident.startswith('arg_'):
                     arg_vars.append(var)
                 else:
                     sorted_stack_variables.append(var)
@@ -617,7 +706,7 @@ class VariableManagerInternal(Serializable):
         var_ctr = count(0)
 
         sorted_stack_variables = sorted(sorted_stack_variables, key=lambda v: v.offset)
-        sorted_reg_variables = sorted(sorted_reg_variables, key=lambda v: v.reg)
+        sorted_reg_variables = sorted(sorted_reg_variables, key=lambda v: _id_from_varident(v.ident))
 
         for var in chain(sorted_stack_variables, sorted_reg_variables):
             idx = next(var_ctr)
@@ -632,7 +721,7 @@ class VariableManagerInternal(Serializable):
 
         # rename arguments but keeping the original order
         arg_ctr = count(0)
-        arg_vars = sorted(arg_vars, key=lambda v: int(v.ident[v.ident.index("_")+1:]) if v.ident else 0)
+        arg_vars = sorted(arg_vars, key=lambda v: _id_from_varident(v.ident))
         for var in arg_vars:
             idx = next(arg_ctr)
             if var.name is not None and not reset:
@@ -651,7 +740,20 @@ class VariableManagerInternal(Serializable):
         self.types[name] = ty
         return ty
 
-    def set_variable_type(self, var: SimVariable, ty: SimType, name: Optional[str]=None) -> None:
+    def set_variable_type(self, var: SimVariable, ty: SimType, name: Optional[str]=None,
+                          override_bot: bool=True, all_unified: bool=False, mark_manual: bool=False) -> None:
+        if isinstance(ty, SimTypeBottom) and override_bot:
+            # we fall back to assigning a default unsigned integer type for the variable
+            if var.size is not None:
+                size_to_type = {
+                    1: SimTypeChar,
+                    2: SimTypeShort,
+                    4: SimTypeInt,
+                    8: SimTypeLong,
+                }
+                if var.size in size_to_type:
+                    ty = size_to_type[var.size](signed=False, label=ty.label).with_arch(self.manager._kb._project.arch)
+
         if name:
             if name not in self.types:
                 self.types[name] = TypeRef(name, ty).with_arch(self.manager._kb._project.arch)
@@ -662,7 +764,18 @@ class VariableManagerInternal(Serializable):
             ty.pts_to = typeref
         elif isinstance(ty, SimStruct):
             ty = self._register_struct_type(ty, name=name)
+
         self.variable_to_types[var] = ty
+        if mark_manual:
+            self.variables_with_manual_types.add(var)
+        if all_unified:
+            unified = self._variables_to_unified_variables.get(var, None)
+            if unified is not None:
+                for other_var, other_unified in self._variables_to_unified_variables.items():
+                    if other_unified is unified and other_var is not var:
+                        self.variable_to_types[other_var] = ty
+                        if mark_manual:
+                            self.variables_with_manual_types.add(other_var)
 
     def get_variable_type(self, var) -> Optional[SimType]:
         return self.variable_to_types.get(var, None)
@@ -695,20 +808,35 @@ class VariableManagerInternal(Serializable):
                 self.set_unified_variable(v, unified)
 
         # unify register variables based on phi nodes
-        graph = networkx.Graph()
+        graph = networkx.DiGraph()  # an edge v1 -> v2 means v2 is the phi variable for v1
         for v, subvs in self._phi_variables.items():
             if not isinstance(v, SimRegisterVariable):
                 continue
-            if not self.get_variable_accesses(v):
-                # this phi node has never been used - discard it
-                continue
             for subv in subvs:
-                graph.add_edge(v, subv)
+                graph.add_edge(subv, v)
 
-        for nodes in networkx.connected_components(graph):
+        # prune the graph: remove nodes that have never been used
+        while True:
+            unused_nodes = set()
+            for node in [ nn for nn in graph.nodes() if graph.out_degree[nn] == 0]:
+                if not self.get_variable_accesses(node):
+                    # this node has never been used - discard it
+                    unused_nodes.add(node)
+            if unused_nodes:
+                graph.remove_nodes_from(unused_nodes)
+            else:
+                break
+
+        # convert the directional graph into a non-directional graph
+        graph_ = networkx.Graph()
+        graph_.add_nodes_from(graph.nodes)
+        graph_.add_edges_from(graph.edges)
+
+        for nodes in networkx.connected_components(graph_):
             if len(nodes) <= 1:
                 continue
-            nodes = list(nodes)
+            # side effect of sorting: arg_x variables are always in the front of the list
+            nodes = list(sorted(nodes, key=lambda x: x.ident))
             unified = nodes[0].copy()
             for v in nodes:
                 self.set_unified_variable(v, unified)

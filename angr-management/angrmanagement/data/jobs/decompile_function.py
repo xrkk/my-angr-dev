@@ -1,13 +1,14 @@
-import os.path
-
 from .job import Job
 
 
 class DecompileFunctionJob(Job):
-    def __init__(self, function, on_finish=None, **kwargs):
+    """
+    The job for running the decompiler analysis. You can trigger this by pressing f5 in a function.
+    """
+    def __init__(self, function, on_finish=None, blocking=False, **kwargs):
         self.kwargs = kwargs
         self.function = function
-        super().__init__(name="Decompiling", on_finish=on_finish)
+        super().__init__(name="Decompiling", on_finish=on_finish, blocking=blocking)
 
     def _run(self, inst):
         decompiler = inst.project.analyses.Decompiler(
@@ -20,13 +21,4 @@ class DecompileFunctionJob(Job):
         # cache the result
         inst.kb.structured_code[(self.function.addr, 'pseudocode')] = decompiler.cache
 
-        source_root = None
-        if inst.original_binary_path:
-            source_root = os.path.dirname(inst.original_binary_path)
-
-        inst.project.analyses.ImportSourceCode(
-            self.function,
-            flavor='source',
-            progress_callback=self._progress_callback,
-            source_root=source_root,
-        )
+        inst.workspace.plugins.decompile_callback(self.function)

@@ -185,7 +185,6 @@ class TestCfgfast(unittest.TestCase):
                 0x4006D4,  # frame_dummy
                 0x400708,
                 0x400710,  # authenticate
-                0x400814,
                 0x400814,  # accepted
                 0x400868,  # rejected
                 0x4008C0,  # main
@@ -890,6 +889,37 @@ class TestCfgfast(unittest.TestCase):
         assert len(n.successors[0].successors[0].successors) > 0
         assert n.successors[0].successors[0].successors[0].addr == 0x103D4
 
+    def test_error_returning(self):
+
+        # error() is a great function: its returning depends on the value of the first argument...
+        path = os.path.join(test_location, "x86_64", "mv_-O2")
+        proj = angr.Project(path, auto_load_libs=False)
+        cfg = proj.analyses.CFGFast()
+
+        error_not_returning = [
+            0x4030d4,
+            0x403100,
+            0x40313c,
+            0x4031f5,
+            0x40348a,
+        ]
+
+        error_returning = [
+            0x403179,
+            0x4031a2,
+            0x403981,
+            0x403e30,
+            0x40403b
+        ]
+
+        for error_site in error_not_returning:
+            node = cfg.model.get_any_node(error_site)
+            assert len(list(cfg.model.get_successors(node, excluding_fakeret=False))) == 1  # only the call successor
+
+        for error_site in error_returning:
+            node = cfg.model.get_any_node(error_site)
+            assert len(list(cfg.model.get_successors(node, excluding_fakeret=False))) == 2  # both a call and a fakeret
+
     def test_kepler_server_armhf(self):
         binary_path = os.path.join(test_location, "armhf", "kepler_server")
         proj = angr.Project(binary_path, auto_load_libs=False)
@@ -1032,6 +1062,33 @@ class TestCfgfastDataReferences(unittest.TestCase):
         refs = list(xrefs.get_xrefs_by_dst(0x120007dd8))
         assert len(refs) == 2
         assert set(x.ins_addr for x in refs) == {0x1200020e8, 0x120002108}
+
+    def test_data_references_i386_gcc_pie(self):
+
+        path = os.path.join(test_location, "i386", "nl")
+        proj = angr.Project(path, auto_load_libs=False)
+
+        cfg = proj.analyses.CFGFast(data_references=True, cross_references=True)
+        memory_data = cfg.memory_data
+
+        assert 0x405bb0 in memory_data
+        assert memory_data[0x405bb0].sort == "string"
+        assert memory_data[0x405bb0].content == b"/usr/local/share/locale"
+
+        xrefs = proj.kb.xrefs
+        refs = list(xrefs.get_xrefs_by_dst(0x405bb0))
+        assert len(refs) == 1
+        assert set(x.ins_addr for x in refs) == {0x4011dd}
+
+    def test_data_references_wide_string(self):
+        path = os.path.join(test_location, 'x86_64', 'windows', 'fauxware-wide.exe')
+        proj = angr.Project(path, auto_load_libs=False)
+
+        cfg = proj.analyses.CFGFast(data_references=True)
+        recovered_strings = [d.content for d in cfg.memory_data.values() if d.sort == MemoryDataSort.UnicodeString]
+
+        for testme in ('SOSNEAKY', 'Welcome to the admin console, trusted user!\n', 'Go away!\n', 'Username: \n'):
+            assert testme.encode('utf-16-le') in recovered_strings
 
 
 if __name__ == "__main__":

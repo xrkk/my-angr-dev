@@ -66,6 +66,7 @@ class DisassemblyView(SynchronizedView):
 
         self._linear_viewer = None  # type: Optional[QLinearDisassembly]
         self._flow_graph = None  # type: Optional[QDisassemblyGraph]
+        self._prefer_graph = True
         self._statusbar = None
         self.jump_history: JumpHistory = JumpHistory()
         self.infodock = InfoDock(self)
@@ -225,6 +226,10 @@ class DisassemblyView(SynchronizedView):
     @set_comment_callback.setter
     def set_comment_callback(self, v):
         self.workspace.instance.set_comment_callback = v
+
+    def on_variable_recovered(self, func_addr: int):
+        if not self._current_function.am_none and self._current_function.addr == func_addr:
+            self.reload()
 
     #
     # Events
@@ -499,15 +504,17 @@ class DisassemblyView(SynchronizedView):
     # Public methods
     #
 
-    def toggle_disasm_view(self):
+    def toggle_disasm_view(self, prefer=True):
         if self._flow_graph.isHidden():
             # Show flow graph
-            self.display_disasm_graph()
+            self.display_disasm_graph(prefer)
         else:
             # Show linear viewer
-            self.display_linear_viewer()
+            self.display_linear_viewer(prefer)
 
-    def display_disasm_graph(self):
+    def display_disasm_graph(self, prefer=True):
+        if prefer:
+            self._prefer_graph = True
 
         self._linear_viewer.hide()
         self._flow_graph.show()
@@ -522,7 +529,9 @@ class DisassemblyView(SynchronizedView):
         self.view_visibility_changed.emit()
         self._flow_graph.refresh()
 
-    def display_linear_viewer(self):
+    def display_linear_viewer(self, prefer=True):
+        if prefer:
+            self._prefer_graph = False
 
         self._flow_graph.hide()
         self._linear_viewer.show()
@@ -538,6 +547,11 @@ class DisassemblyView(SynchronizedView):
         self._linear_viewer.refresh()
 
     def display_function(self, function):
+        if function.addr not in self.workspace.instance.kb.variables.function_managers:
+            # variable information is not available
+            if self.workspace.variable_recovery_job is not None:
+                # prioritize the analysis of this function
+                self.workspace.variable_recovery_job.prioritize_function(function.addr)
         self.jump_history.jump_to(function.addr)
         self._display_function(function)
 
@@ -811,6 +825,9 @@ class DisassemblyView(SynchronizedView):
             })
 
     def _jump_to(self, addr, use_animation=False):
+        if self._prefer_graph and self.current_graph is self._linear_viewer:
+            self.display_disasm_graph(prefer=False)
+
         if self.current_graph is not self._linear_viewer:
             function = locate_function(self.workspace.instance, addr)
             if function is not None:
@@ -822,7 +839,7 @@ class DisassemblyView(SynchronizedView):
                 return True
 
             # it does not belong to any function - we need to switch to linear view mode
-            self.display_linear_viewer()
+            self.display_linear_viewer(prefer=False)
 
         try:
             item = self.workspace.instance.cfb.floor_item(addr)
@@ -848,6 +865,8 @@ class DisassemblyView(SynchronizedView):
             return self._insn_addr_on_context_menu
         elif len(self.infodock.selected_insns) == 1:
             return next(iter(self.infodock.selected_insns))
+        elif len(self.infodock.selected_labels) == 1:
+            return next(iter(self.infodock.selected_labels))
         else:
             return None
 
