@@ -19,6 +19,7 @@ rm -rf pysoot
 rm -rf heaphopper
 rm -rf pypcode
 rm -rf rex
+rm -rf angr-utils
 
 git clone https://github.com/angr/ailment
 git clone https://github.com/angr/angr
@@ -38,6 +39,7 @@ git clone https://github.com/angr/pysoot
 git clone https://github.com/angr/heaphopper
 git clone https://github.com/angr/pypcode
 git clone https://github.com/angr/rex
+git clone https://github.com/axt/angr-utils
 
 rm -rf ailment/.git
 rm -rf angr/.git
@@ -57,4 +59,4 @@ rm -rf pysoot/.git
 rm -rf heaphopper/.git
 rm -rf pypcode/.git
 rm -rf rex/.git
-
+rm -rf angr-utils/.git

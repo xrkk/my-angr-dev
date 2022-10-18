@@ -38,4 +38,4 @@ https://github.com/angr/pysoot
 https://github.com/angr/heaphopper
 https://github.com/angr/pypcode
 https://github.com/angr/rex
-
+https://github.com/axt/angr-utils
