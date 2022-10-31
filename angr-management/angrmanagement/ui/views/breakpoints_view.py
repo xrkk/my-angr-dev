@@ -1,9 +1,9 @@
 import logging
 from typing import Any, Optional, Sequence
 
-import PySide2
-from PySide2.QtCore import QAbstractTableModel, Qt, QSize
-from PySide2.QtWidgets import QTableView, QAbstractItemView, QHeaderView, QVBoxLayout, QMenu
+import PySide6
+from PySide6.QtCore import QAbstractTableModel, Qt, QSize
+from PySide6.QtWidgets import QTableView, QAbstractItemView, QHeaderView, QVBoxLayout, QMenu
 
 from ...data.breakpoint import Breakpoint, BreakpointType, BreakpointManager
 from ..dialogs import BreakpointDialog
@@ -33,20 +33,20 @@ class QBreakpointTableModel(QAbstractTableModel):
         self.beginResetModel()
         self.endResetModel()
 
-    def rowCount(self, parent:PySide2.QtCore.QModelIndex=...) -> int:  # pylint:disable=unused-argument
+    def rowCount(self, parent:PySide6.QtCore.QModelIndex=...) -> int:  # pylint:disable=unused-argument
         return len(self.breakpoint_mgr.breakpoints)
 
-    def columnCount(self, parent:PySide2.QtCore.QModelIndex=...) -> int:  # pylint:disable=unused-argument
+    def columnCount(self, parent:PySide6.QtCore.QModelIndex=...) -> int:  # pylint:disable=unused-argument
         return len(self.Headers)
 
-    def headerData(self, section:int, orientation:PySide2.QtCore.Qt.Orientation, role:int=...) -> Any:  # pylint:disable=unused-argument
+    def headerData(self, section:int, orientation:PySide6.QtCore.Qt.Orientation, role:int=...) -> Any:  # pylint:disable=unused-argument
         if role != Qt.DisplayRole:
             return None
         if section < len(self.Headers):
             return self.Headers[section]
         return None
 
-    def data(self, index:PySide2.QtCore.QModelIndex, role:int=...) -> Any:
+    def data(self, index:PySide6.QtCore.QModelIndex, role:int=...) -> Any:
         if not index.isValid():
             return None
         row = index.row()
@@ -93,7 +93,7 @@ class QBreakpointTableWidget(QTableView):
         vheader.setDefaultSectionSize(20)
 
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.setHorizontalScrollMode(self.ScrollPerPixel)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
 
         self.model: QBreakpointTableModel = QBreakpointTableModel(self.breakpoint_mgr)
         self.setModel(self.model)
@@ -145,8 +145,8 @@ class BreakpointsView(BaseView):
     Breakpoints table view.
     """
 
-    def __init__(self, workspace, default_docking_position, *args, **kwargs):
-        super().__init__('breakpoints', workspace, default_docking_position, *args, **kwargs)
+    def __init__(self, instance, default_docking_position, *args, **kwargs):
+        super().__init__('breakpoints', instance, default_docking_position, *args, **kwargs)
         self.base_caption = 'Breakpoints'
         self._tbl_widget: Optional[QBreakpointTableWidget] = None
         self._init_widgets()
@@ -161,6 +161,6 @@ class BreakpointsView(BaseView):
 
     def _init_widgets(self):
         vlayout = QVBoxLayout()
-        self._tbl_widget = QBreakpointTableWidget(self.workspace.instance.breakpoint_mgr, self.workspace)
+        self._tbl_widget = QBreakpointTableWidget(self.instance.breakpoint_mgr, self.instance.workspace)
         vlayout.addWidget(self._tbl_widget)
         self.setLayout(vlayout)

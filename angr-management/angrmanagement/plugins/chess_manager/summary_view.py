@@ -6,8 +6,8 @@ import datetime
 from time import sleep
 
 from sqlalchemy import func as sqlalchemy_func
-from PySide2.QtCore import Qt
-from PySide2.QtWidgets import QVBoxLayout, QHBoxLayout, QTableWidget, QHeaderView, \
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QTableWidget, QHeaderView, \
     QAbstractItemView, QTableWidgetItem, QWidget, QTabWidget, QLabel
 
 from angrmanagement.ui.views.view import BaseView
@@ -63,9 +63,9 @@ class QPluginsLogTable(QTableWidget):
         self.setColumnCount(len(self.HEADER))
         self.setHorizontalHeaderLabels(self.HEADER)
         self.horizontalHeader().setStretchLastSection(True)
-        self.horizontalHeader().setHorizontalScrollMode(self.ScrollPerPixel)
+        self.horizontalHeader().setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.setHorizontalScrollMode(self.ScrollPerPixel)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
         self.verticalHeader().setVisible(False)
@@ -178,7 +178,7 @@ class QFuzztainerTable(QTableWidget):
         self.verticalHeader().setVisible(True)
         self.horizontalHeader().setVisible(False)
 
-        self.setHorizontalScrollMode(self.ScrollPerPixel)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
 

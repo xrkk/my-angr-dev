@@ -1,8 +1,8 @@
 import time
 
-from PySide2.QtCore import Qt, QAbstractTableModel, QModelIndex, QEvent, Signal, QObject
-from PySide2.QtGui import QCursor
-from PySide2.QtWidgets import (
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QEvent, Signal, QObject
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import (
     QVBoxLayout,
     QMainWindow,
     QTableView,
@@ -169,12 +169,12 @@ class SeedTableWidget(QTableView):
         self.verticalHeader().setVisible(False)
         self.verticalHeader().setDefaultSectionSize(18)
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.setHorizontalScrollMode(self.ScrollPerPixel)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.horizontalHeader().setDefaultAlignment(Qt.AlignLeft)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
 
-    def contextMenuEvent(self, event:'PySide2.QtGui.QContextMenuEvent') -> None:
+    def contextMenuEvent(self, event:'PySide6.QtGui.QContextMenuEvent') -> None:
         rows = self.selectionModel().selectedIndexes()
         contextMenu = QMenu(self)
         saveSeed = contextMenu.addAction("&Save Seed")
@@ -200,8 +200,8 @@ class SeedTableView(BaseView):
         super().__init__("SeedTableView", workspace, *args, **kwargs)
         self.base_caption = "Seed Table"
         self.workspace = workspace
-        self.instance = workspace.instance
-        workspace.instance.project.am_subscribe(self.on_project_load)
+        self.instance = workspace.main_instance
+        workspace.main_instance.project.am_subscribe(self.on_project_load)
         self._init_widgets()
 
     def page_changed(self, i):

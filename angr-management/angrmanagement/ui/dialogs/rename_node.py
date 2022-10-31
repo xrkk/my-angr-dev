@@ -1,9 +1,9 @@
 from typing import Optional, TYPE_CHECKING
 from collections import OrderedDict
 
-from PySide2.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, \
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, \
     QDialogButtonBox
-from PySide2.QtGui import Qt
+from PySide6.QtGui import Qt
 from angr.sim_type import SimType, TypeRef, SimTypePointer, NamedTypeMixin
 from angr.analyses.decompiler.structured_codegen.c import CVariable, CFunction, CConstruct, CFunctionCall, CStructField
 
@@ -157,7 +157,7 @@ class RenameNode(QDialog):
         if node_name is not None:
             if self._code_view is not None and self._node is not None:
                 # need workspace for altering callbacks of changes
-                workspace = self._code_view.workspace
+                workspace = self._code_view.instance.workspace
                 code_kb = self._code_view.codegen.kb
 
                 # stack variable
@@ -182,7 +182,7 @@ class RenameNode(QDialog):
                         node_name
                     )
 
-                    self._code_view.workspace.instance.kb.labels[self._node.variable.addr] = node_name
+                    self._code_view.instance.kb.labels[self._node.variable.addr] = node_name
                     self._node.variable.name = node_name
                     self._node.variable.renamed = True
 

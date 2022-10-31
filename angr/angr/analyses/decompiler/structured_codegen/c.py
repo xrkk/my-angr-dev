@@ -1284,6 +1284,7 @@ class CUnaryOp(CExpression):
 
         OP_MAP = {
             'Not': self._c_repr_chunks_not,
+            'Neg': self._c_repr_chunks_neg,
             'Reference': self._c_repr_chunks_reference,
             'Dereference': self._c_repr_chunks_dereference,
         }
@@ -1301,6 +1302,13 @@ class CUnaryOp(CExpression):
     def _c_repr_chunks_not(self):
         paren = CClosingObject("(")
         yield "!", self
+        yield "(", paren
+        yield from CExpression._try_c_repr_chunks(self.operand)
+        yield ")", paren
+
+    def _c_repr_chunks_neg(self):
+        paren = CClosingObject("(")
+        yield "-", self
         yield "(", paren
         yield from CExpression._try_c_repr_chunks(self.operand)
         yield ")", paren
@@ -2046,6 +2054,21 @@ class CStructuredCodeGenerator(BaseStructuredCodeGenerator, Analysis):
             lvalue: bool,
             renegotiate_type: Callable[[SimType, SimType], SimType]=lambda old, proposed: old,
     ) -> CExpression:
+
+        def _force_type_cast(src_type_: SimType, dst_type_: SimType, expr_: CExpression) -> CUnaryOp:
+            src_type_ptr = SimTypePointer(src_type_).with_arch(self.project.arch)
+            dst_type_ptr = SimTypePointer(dst_type_).with_arch(self.project.arch)
+            return CUnaryOp(
+                "Dereference",
+                CTypeCast(
+                    src_type_ptr,
+                    dst_type_ptr,
+                    CUnaryOp("Reference", expr_, codegen=self),
+                    codegen=self,
+                ),
+                codegen=self,
+            )
+
         # expr must express a POINTER to the base
         # returns a value which has a simtype of data_type as if it were dereferenced out of expr
         data_type = unpack_typeref(data_type)
@@ -2076,7 +2099,12 @@ class CStructuredCodeGenerator(BaseStructuredCodeGenerator, Analysis):
                 # case 1: we're done because we found it
                 # case 2: we're done because we can never find it and we might as well stop early
                 if base_expr:
+                    if base_type != data_type:
+                        return _force_type_cast(base_type, data_type, base_expr)
                     return base_expr
+
+                if base_type != data_type:
+                    return _force_type_cast(base_type, data_type, expr)
                 return CUnaryOp("Dereference", expr, codegen=self)
 
         if isinstance(base_type, SimTypeBottom):
@@ -2115,16 +2143,30 @@ class CStructuredCodeGenerator(BaseStructuredCodeGenerator, Analysis):
 
         if isinstance(base_type, (SimTypeFixedSizeArray, SimTypeArray)):
             result = base_expr or expr  # death to C
-            result = CUnaryOp(
-                "Reference",
-                CIndexedVariable(
-                    result,
-                    CConstant(0, SimTypeInt(), codegen=self),
-                    variable_type=base_type.elem_type,
+            if isinstance(result, CIndexedVariable):
+                # unpack indexed variable
+                var = result.variable
+                result = CUnaryOp(
+                    "Reference",
+                    CIndexedVariable(
+                        var,
+                        result.index,
+                        variable_type=base_type.elem_type,
+                        codegen=self
+                    ),
                     codegen=self
-                ),
-                codegen=self
-            )
+                )
+            else:
+                result = CUnaryOp(
+                    "Reference",
+                    CIndexedVariable(
+                        result,
+                        CConstant(0, SimTypeInt(), codegen=self),
+                        variable_type=base_type.elem_type,
+                        codegen=self
+                    ),
+                    codegen=self
+                )
             return self._access_constant_offset(result, remainder, data_type, lvalue, renegotiate_type)
 
         # TODO is it a big-endian downcast?

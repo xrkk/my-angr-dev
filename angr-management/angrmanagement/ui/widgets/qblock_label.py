@@ -1,7 +1,7 @@
 
-from PySide2.QtGui import QPainter
-from PySide2.QtWidgets import QGraphicsSimpleTextItem
-from PySide2.QtCore import Qt, QRectF
+from PySide6.QtGui import QPainter
+from PySide6.QtWidgets import QGraphicsSimpleTextItem
+from PySide6.QtCore import Qt, QRectF
 
 from ...config import Conf
 from .qgraph_object import QCachedGraphicsItem
@@ -9,10 +9,10 @@ from .qgraph_object import QCachedGraphicsItem
 
 class QBlockLabel(QCachedGraphicsItem):
 
-    def __init__(self, addr, text, config, disasm_view, workspace, infodock, parent=None):
+    def __init__(self, addr, text, config, disasm_view, instance, infodock, parent=None):
         super().__init__(parent=parent)
 
-        self.workspace = workspace
+        self.instance = instance
         self.addr = addr
         self.text = text
         self._width = 0
@@ -28,7 +28,7 @@ class QBlockLabel(QCachedGraphicsItem):
 
     def paint(self, painter, option, widget):  #pylint: disable=unused-argument
         painter.setRenderHints(
-                QPainter.Antialiasing | QPainter.SmoothPixmapTransform | QPainter.HighQualityAntialiasing)
+                QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         painter.setFont(self._config.code_font)
 
         # background

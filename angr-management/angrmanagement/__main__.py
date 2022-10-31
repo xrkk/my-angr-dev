@@ -9,7 +9,7 @@ import warnings
 import platform
 import signal
 
-def shut_up(*args, **kwargs):
+def shut_up(*args, **kwargs):  # pylint:disable=unused-argument
     return
 warnings.simplefilter = shut_up
 
@@ -27,20 +27,11 @@ def check_dependencies_qt():
     missing_dep = False
 
     try:
-        import PySide2
+        import PySide6
     except ImportError:
-        PySide2 = None
-        sys.stderr.write("Cannot find the PySide2 package. You may install it via pip:\n" +
-                         "    pip install pyside2\n")
-        missing_dep = True
-
-    # version check
-    if PySide2 is not None and PySide2.__version__ in BUGGY_PYSIDE2_VERSIONS:
-        sys.stderr.write("Your installed version of PySide2 is known to have bugs that may lead to angr management "
-                         "crashing. Please switch to other versions.\n"
-                         "A known good version of PySide2 is 5.14.1. You may install it via pip:\n"
-                         "    pip install -U pyside2==5.14.1\n")
-        sys.stderr.write("Bad PySide2 versions include: %s" % ", ".join(BUGGY_PYSIDE2_VERSIONS))
+        PySide6 = None
+        sys.stderr.write("Cannot find the PySide6 package. You may install it via pip:\n" +
+                         "    pip install pyside6\n")
         missing_dep = True
 
     try:
@@ -78,13 +69,6 @@ def check_dependencies():
                          "    pip install pyxdg\n")
         missing_dep = True
 
-    try:
-        import requests
-    except ImportError:
-        sys.stderr.write("Cannot find the requests package. You may install it via pip:\n" +
-                         "    pip install requests\n")
-        missing_dep = True
-
     return not missing_dep
 
 
@@ -94,7 +78,7 @@ def set_app_user_model_id():
     if sys.platform == 'win32':
         winver = sys.getwindowsversion()
         if winver.major >= 5:
-            myappid = u'angr-management'
+            myappid = 'angr-management'
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
 
@@ -105,11 +89,11 @@ def set_windows_event_loop_policy():
 
 def macos_bigsur_wants_layer():
     # workaround for https://bugreports.qt.io/browse/QTBUG-87014
-    # this is because the latest PySide2 (5.15.2) does not include this fix
+    # this is because the latest PySide6 (5.15.2) does not include this fix
     v, _, _ = platform.mac_ver()
     vs = v.split(".")
     if len(vs) >= 2:
-        major, minor = list(map(int, vs[:2]))
+        major, minor = [int(x) for x in vs[:2]]
     else:
         return
     if major >= 11 or major == 10 and minor == 16:
@@ -129,9 +113,9 @@ def start_management(filepath=None, use_daemon=None, profiling=False):
     set_app_user_model_id()
     set_windows_event_loop_policy()
 
-    from PySide2.QtWidgets import QApplication, QSplashScreen, QMessageBox
-    from PySide2.QtGui import QFontDatabase, QPixmap, QIcon
-    from PySide2.QtCore import Qt, QCoreApplication
+    from PySide6.QtWidgets import QApplication, QSplashScreen
+    from PySide6.QtGui import QFontDatabase, QPixmap, QIcon
+    from PySide6.QtCore import Qt, QCoreApplication
 
     from .config import FONT_LOCATION, IMG_LOCATION, Conf
 
@@ -181,7 +165,7 @@ def start_management(filepath=None, use_daemon=None, profiling=False):
 
     import angr
 
-    angr.loggers.profiling_enabled = True if profiling else False
+    angr.loggers.profiling_enabled = bool(profiling)
 
     from .logic import GlobalInfo
     from .ui.main_window import MainWindow
@@ -203,6 +187,8 @@ def start_management(filepath=None, use_daemon=None, profiling=False):
 
     if file_to_open is not None:
         main_window.load_file(file_to_open)
+
+    main_window.workspace.view_manager.main_window_initialized()
 
     app.exec_()
 
@@ -251,7 +237,7 @@ def main():
         return
     if args.script:
         import runpy
-        script_globals = runpy.run_path(args.script)
+        script_globals = runpy.run_path(args.script)  # pylint:disable=unused-variable
     if args.interactive:
         if args.script:
             print("Your script's globals() dict is available in the `script_globals` variable.")

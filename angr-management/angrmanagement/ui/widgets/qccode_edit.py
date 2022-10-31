@@ -1,15 +1,15 @@
 from typing import Optional, TYPE_CHECKING
 
-from PySide2.QtCore import Qt, QEvent
-from PySide2.QtGui import QTextCharFormat, QKeySequence
-from PySide2.QtWidgets import QMenu, QAction, QInputDialog, QLineEdit, QApplication
+from PySide6.QtCore import Qt, QEvent
+from PySide6.QtGui import QTextCharFormat, QKeySequence, QAction
+from PySide6.QtWidgets import QMenu, QInputDialog, QLineEdit, QApplication
 
 from pyqodeng.core import api
 from pyqodeng.core import modes
 from pyqodeng.core import panels
 
 from ailment.statement import Store, Assignment
-from ailment.expression import Load, Convert, BinaryOp
+from ailment.expression import Load, Op, UnaryOp, BinaryOp
 from angr.sim_type import SimType
 from angr.sim_variable import SimVariable, SimTemporaryVariable
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CVariable, CFunctionCall, CFunction, \
@@ -23,7 +23,7 @@ from ..widgets.qccode_highlighter import QCCodeHighlighter
 from ..menus.menu import Menu
 
 if TYPE_CHECKING:
-    from PySide2.QtGui import QTextDocument
+    from PySide6.QtGui import QTextDocument
     from ..views.code_view import CodeView
 
 
@@ -128,7 +128,7 @@ class QCCodeEdit(api.CodeEdit):
             self._selected_node = under_cursor
             mnu.addActions(self.function_name_actions)
             for entry in self.workspace.plugins.build_context_menu_functions(
-                    [self.workspace.instance.kb.functions[under_cursor.name]]):
+                    [self.instance.kb.functions[under_cursor.name]]):
                 Menu.translate_element(mnu, entry)
         else:
             mnu.addActions(self.default_actions)
@@ -140,7 +140,11 @@ class QCCodeEdit(api.CodeEdit):
 
     @property
     def workspace(self):
-        return self._code_view.workspace if self._code_view is not None else None
+        return self._code_view.instance.workspace if self._code_view is not None else None
+
+    @property
+    def instance(self):
+        return self._code_view.instance if self._code_view is not None else None
 
     def event(self, event):
         """
@@ -206,14 +210,16 @@ class QCCodeEdit(api.CodeEdit):
         key = event.key()
         modifiers = event.modifiers()
         xkey = key
+        if isinstance(xkey, int):
+            xkey = Qt.Key(xkey)
         if modifiers & Qt.ShiftModifier:
-            xkey += Qt.SHIFT
+            xkey |= Qt.SHIFT
         if modifiers & Qt.ControlModifier:
-            xkey += Qt.CTRL
+            xkey |= Qt.CTRL
         if modifiers & Qt.AltModifier:
-            xkey += Qt.ALT
+            xkey |= Qt.ALT
         if modifiers & Qt.MetaModifier:
-            xkey += Qt.META
+            xkey |= Qt.META
         sequence = QKeySequence(xkey)
         mnu = self.get_context_menu()
         for item in mnu.actions():
@@ -274,20 +280,23 @@ class QCCodeEdit(api.CodeEdit):
         if isinstance(node, CVariable) and isinstance(node.variable, SimTemporaryVariable):
             # unsupported right now..
             return
-        dialog = RetypeNode(self.workspace.instance, code_view=self._code_view, node=node,
-                            node_type=node_type, variable=node.variable)
+        dialog = RetypeNode(self.instance, code_view=self._code_view, node=node,
+                            node_type=node_type)
         dialog.exec_()
 
         new_node_type = dialog.new_type
         if new_node_type is not None:
             if self._code_view is not None and node is not None:
                 # need workspace for altering callbacks of changes
-                workspace = self._code_view.workspace
                 variable_kb = self._code_view.codegen._variable_kb
                 # specify the type
-                new_node_type = new_node_type.with_arch(workspace.instance.project.arch)
-                variable_kb.variables[self._code_view.function.addr].variables_with_manual_types.add(node.variable)
-                variable_kb.variables[self._code_view.function.addr].set_variable_type(node.variable, new_node_type)
+                new_node_type = new_node_type.with_arch(self.instance.project.arch)
+                variable_kb.variables[self._code_view.function.addr].set_variable_type(
+                    node.variable,
+                    new_node_type,
+                    all_unified=True,
+                    mark_manual=True,
+                )
 
                 self._code_view.codegen.am_event(event="retype_variable", node=node, variable=node.variable)
 
@@ -369,7 +378,7 @@ class QCCodeEdit(api.CodeEdit):
         if addr is None:
             return
 
-        cache = self.workspace.instance.kb.structured_code[(self._code_view.function.addr, "pseudocode")]
+        cache = self.instance.kb.structured_code[(self._code_view.function.addr, "pseudocode")]
         if cache.ite_exprs is None:
             cache.ite_exprs = set()
         cache.ite_exprs.add((addr, ailexpr))
@@ -398,7 +407,7 @@ class QCCodeEdit(api.CodeEdit):
         if addr is None:
             return
 
-        cache = self.workspace.instance.kb.structured_code[(self._code_view.function.addr, "pseudocode")]
+        cache = self.instance.kb.structured_code[(self._code_view.function.addr, "pseudocode")]
         if cache.binop_operators is None:
             cache.binop_operators = { }
         op_desc = OpDescriptor(ailexpr.vex_block_addr if hasattr(ailexpr, "vex_block_addr") else None,
@@ -424,6 +433,20 @@ class QCCodeEdit(api.CodeEdit):
         def _assemble(expr, expr_addr) -> str:
             return converter.assemble(expr, self._code_view.function.addr, expr_addr)
 
+        def _find_loads(expr) -> list:
+            if isinstance(expr, Load):
+                return [expr]
+            elif isinstance(expr, Op):
+                if isinstance(expr, UnaryOp):
+                    return _find_loads(expr.operand)
+                else:
+                    loads = []
+                    for operand in expr.operands:
+                        loads += _find_loads(operand)
+                    return loads
+            else:
+                return []
+
         node = self._selected_node
         # figure out where we are
         if not isinstance(node, (CVariable, CIndexedVariable, CVariableField, CStructField)):
@@ -442,7 +465,7 @@ class QCCodeEdit(api.CodeEdit):
             return
 
         # traverse the stored clinic graph to find the AIL block
-        cache = self.workspace.instance.kb.structured_code[(self._code_view.function.addr, "pseudocode")]
+        cache = self.instance.kb.structured_code[(self._code_view.function.addr, "pseudocode")]
         the_node = None
         for node in cache.clinic.graph.nodes():
             if node.addr <= ins_addr < node.addr + node.original_size:
@@ -454,23 +477,18 @@ class QCCodeEdit(api.CodeEdit):
 
         converter = self.workspace.plugins.get_plugin_instance_by_name("AIL2ARM32")
 
-        # I'm lazy - I'll get the first Load if available
         lst = [ ]
         for stmt in the_node.statements:
             if isinstance(stmt, Assignment):
-                if isinstance(stmt.src, Load):
-                    asm = _assemble(stmt.src, stmt.src.ins_addr)
-                    lst.append((str(stmt), str(stmt.src), asm))
-                elif isinstance(stmt.src, Convert) and isinstance(stmt.src.operand, Load):
-                    asm = _assemble(stmt.src, stmt.src.operand.ins_addr)
-                    lst.append((str(stmt), str(stmt.src), asm))
+                loads = _find_loads(stmt.src)
+                for load in loads:
+                    asm = _assemble(load, load.ins_addr)
+                    lst.append((str(stmt), str(load), asm))
             elif isinstance(stmt, Store):
-                if isinstance(stmt.data, Load):
-                    asm = _assemble(stmt.data, stmt.data.ins_addr)
-                    lst.append((str(stmt), str(stmt.data), asm))
-                elif isinstance(stmt.data, Convert) and isinstance(stmt.data.operand, Load):
-                    asm = _assemble(stmt.data, stmt.data.operand.ins_addr)
-                    lst.append((str(stmt), str(stmt.data), asm))
+                loads = _find_loads(stmt.data)
+                for load in loads:
+                    asm = _assemble(load, load.ins_addr)
+                    lst.append((str(stmt), str(load), asm))
 
         # format text
         text = f"The AIL block:\n{str(the_node)}\n\n"

@@ -2,10 +2,10 @@ from typing import Optional, Sequence, Mapping
 import logging
 from sortedcontainers import SortedDict
 
-from PySide2.QtWidgets import QWidget, QHBoxLayout, QGraphicsScene, QGraphicsView, QGraphicsItem, QGraphicsRectItem, \
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QGraphicsScene, QGraphicsView, QGraphicsItem, QGraphicsRectItem, \
     QGraphicsPolygonItem, QGraphicsLineItem
-from PySide2.QtGui import QBrush, QPen, QPolygonF
-from PySide2.QtCore import Qt, QRectF, QSize, QPointF, QPoint, QEvent, QMarginsF
+from PySide6.QtGui import QBrush, QPen, QPolygonF
+from PySide6.QtCore import Qt, QRectF, QSize, QPointF, QPoint, QEvent, QMarginsF
 
 import cle
 from angr.block import Block
@@ -35,8 +35,8 @@ class FeatureMapItem(QGraphicsItem):
         self._height: int = 1
 
         self.disasm_view = disasm_view
-        self.workspace = disasm_view.workspace
-        self.instance = self.workspace.instance
+        self.workspace = disasm_view.instance.workspace
+        self.instance = self.disasm_view.instance
 
         self.addr = ObjectContainer(None, name='The current address of the Feature Map.')
 
@@ -345,7 +345,7 @@ class FeatureMapItem(QGraphicsItem):
 
         try:
             addr = self._get_addr_from_pos(point.x())
-            item = self.workspace.instance.cfb.floor_item(addr)
+            item = self.instance.cfb.floor_item(addr)
             if item is not None:
                 _, item = item
                 self.setToolTip(f'{str(item)} in {str(mr)}')
@@ -414,10 +414,12 @@ class QFeatureMapView(QGraphicsView):
         Handle wheel events to scale and translate the feature map.
         """
         if event.modifiers() & Qt.ControlModifier == Qt.ControlModifier:
-            self.adjust_viewport_scale(1.25 if event.delta() > 0 else 1/1.25,
-                                       QPoint(event.pos().x(), event.pos().y()))
+            self.adjust_viewport_scale(
+                1.25 if event.angleDelta() > 0 else 1/1.25,
+                QPoint(event.position().x(), event.position().y()),
+            )
         else:
-            self.translate(100 * (-1 if event.delta() < 0 else 1), 0)
+            self.translate(100 * (-1 if event.angleDelta() < 0 else 1), 0)
             super().wheelEvent(event)
 
     def resizeEvent(self, event):  # pylint: disable=unused-argument

@@ -4,13 +4,13 @@ from enum import Enum
 import logging
 
 import angr
-import PySide2
-from PySide2.QtWidgets import QApplication, QHBoxLayout, QMainWindow, QVBoxLayout, QFrame, QGraphicsView, \
+import PySide6
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QMainWindow, QVBoxLayout, QFrame, QGraphicsView, \
     QGraphicsScene, QGraphicsItem, QGraphicsObject, QGraphicsSimpleTextItem, \
-    QGraphicsSceneMouseEvent, QLabel, QMenu, QPushButton, QAction, QMessageBox, QAbstractScrollArea, \
+    QGraphicsSceneMouseEvent, QLabel, QMenu, QPushButton, QMessageBox, QAbstractScrollArea, \
     QAbstractSlider, QComboBox
-from PySide2.QtGui import QPainterPath, QPen, QFont, QColor, QWheelEvent, QCursor
-from PySide2.QtCore import Qt, QRectF, QPointF, QSizeF, Signal, QEvent, QMarginsF, QTimer
+from PySide6.QtGui import QPainterPath, QPen, QFont, QColor, QWheelEvent, QCursor, QAction
+from PySide6.QtCore import Qt, QRectF, QPointF, QSizeF, Signal, QEvent, QMarginsF, QTimer
 
 from angr import Block
 from angr.knowledge_plugins.cfg import MemoryData
@@ -96,7 +96,7 @@ class BreakpointHighlightRegion(HexHighlightRegion):
         """
         Remove this breakpoint.
         """
-        self.view.workspace.instance.breakpoint_mgr.remove_breakpoint(self.bp)
+        self.view.instance.breakpoint_mgr.remove_breakpoint(self.bp)
 
     def get_tooltip(self) -> Optional[str]:
         """
@@ -162,7 +162,7 @@ class PatchHighlightRegion(HexHighlightRegion):
         """
         Revert this patch.
         """
-        pm = self.view.workspace.instance.patches
+        pm = self.view.instance.patches
         pm.remove_patch(self.patch.addr)
         pm.am_event()
 
@@ -182,7 +182,7 @@ class PatchHighlightRegion(HexHighlightRegion):
             o = cursor - self.patch.addr
             new_patch = Patch(cursor, self.patch.new_bytes[o:], self.patch.comment)
             self.patch.new_bytes = self.patch.new_bytes[0:o]
-            pm = self.view.workspace.instance.patches
+            pm = self.view.instance.patches
             pm.add_patch_obj(new_patch)
             pm.am_event()
 
@@ -198,7 +198,7 @@ class PatchHighlightRegion(HexHighlightRegion):
         """
         if self.can_merge_with(other):
             self.patch.new_bytes += other.patch.new_bytes
-            pm = self.view.workspace.instance.patches
+            pm = self.view.instance.patches
             pm.remove_patch(other.patch.addr)
             pm.am_event()
 
@@ -210,7 +210,7 @@ class PatchHighlightRegion(HexHighlightRegion):
         dlg.exec_()
         if dlg.result:
             self.patch.comment = dlg.result
-            pm = self.view.workspace.instance.patches
+            pm = self.view.instance.patches
             pm.am_event()
 
 
@@ -271,7 +271,7 @@ class HexGraphicsObject(QGraphicsObject):
 
         self._update_layout()
 
-    def focusInEvent(self, event: PySide2.QtGui.QFocusEvent):  # pylint: disable=unused-argument
+    def focusInEvent(self, event: PySide6.QtGui.QFocusEvent):  # pylint: disable=unused-argument
         """
         Item receives focus.
         """
@@ -279,7 +279,7 @@ class HexGraphicsObject(QGraphicsObject):
         self.restart_cursor_blink_timer()
         self.update()
 
-    def focusOutEvent(self, event: PySide2.QtGui.QFocusEvent):  # pylint: disable=unused-argument
+    def focusOutEvent(self, event: PySide6.QtGui.QFocusEvent):  # pylint: disable=unused-argument
         """
         Item lost focus.
         """
@@ -637,7 +637,7 @@ class HexGraphicsObject(QGraphicsObject):
         next_nibble = 1 - nibble
         self.set_cursor(self.cursor + next_nibble, nibble=next_nibble)
 
-    def keyPressEvent(self, event: PySide2.QtGui.QKeyEvent):
+    def keyPressEvent(self, event: PySide6.QtGui.QKeyEvent):
         """
         Handle key press events (e.g. moving cursor around).
         """
@@ -861,7 +861,7 @@ class HexGraphicsObject(QGraphicsObject):
             color = color.darker(150)
 
         r = path.boundingRect()
-        bg = PySide2.QtGui.QLinearGradient(r.topLeft(), r.bottomLeft())
+        bg = PySide6.QtGui.QLinearGradient(r.topLeft(), r.bottomLeft())
         top_color = QColor(color)
         top_color.setAlpha(50)
         bg.setColorAt(0, top_color)
@@ -1018,7 +1018,7 @@ class HexGraphicsObject(QGraphicsObject):
             tl.setY(tl.y() + self.row_height - cursor_height)
             painter.drawRect(QRectF(tl, QSizeF(self.ascii_width, cursor_height)))
 
-    def boundingRect(self) -> PySide2.QtCore.QRectF:
+    def boundingRect(self) -> PySide6.QtCore.QRectF:
         return QRectF(0, 0, self.max_x, self.max_y)
 
 
@@ -1189,9 +1189,9 @@ class HexGraphicsView(QAbstractScrollArea):
 
     def wheelEvent(self, event: QWheelEvent):
         if event.modifiers() & Qt.ControlModifier == Qt.ControlModifier:
-            self.adjust_viewport_scale(1.25 if event.delta() > 0 else 1/1.25)
+            self.adjust_viewport_scale(1.25 if event.angleDelta().y() > 0 else 1/1.25)
         else:
-            d = event.delta()
+            d = event.angleDelta().y()
             if d != 0:
                 self.set_display_offset(self.hex.display_offset_addr - 0x10 * d // 32)
         event.accept()
@@ -1220,7 +1220,7 @@ class HexGraphicsView(QAbstractScrollArea):
         self._view.setSceneRect(vp_rect)
         self._update_horizontal_scrollbar()
 
-    def resizeEvent(self, event:PySide2.QtGui.QResizeEvent) -> None:  # pylint: disable=unused-argument
+    def resizeEvent(self, event:PySide6.QtGui.QResizeEvent) -> None:  # pylint: disable=unused-argument
         self._view.resize(self.viewport().size())
         self.update_scene_rect()
         self.set_display_offset(self.hex.display_offset_addr)
@@ -1268,7 +1268,7 @@ class HexGraphicsView(QAbstractScrollArea):
             self._view.setBackgroundBrush(Conf.palette_base)
             self.update()
 
-    def keyPressEvent(self, event: PySide2.QtGui.QKeyEvent):
+    def keyPressEvent(self, event: PySide6.QtGui.QKeyEvent):
         """
         Handle key events.
         """
@@ -1295,8 +1295,8 @@ class HexView(SynchronizedView):
 
     _widgets_initialized: bool = False
 
-    def __init__(self, workspace, default_docking_position, *args, **kwargs):
-        super().__init__('hex', workspace, default_docking_position, *args, **kwargs)
+    def __init__(self, instance, default_docking_position, *args, **kwargs):
+        super().__init__('hex', instance, default_docking_position, *args, **kwargs)
         self.base_caption: str = 'Hex'
         self.smart_highlighting_enabled: bool = True
         self._clipboard = None
@@ -1307,14 +1307,14 @@ class HexView(SynchronizedView):
         self._breakpoint_highlights: Sequence[BreakpointHighlightRegion] = []
 
         self._init_widgets()
-        self.workspace.instance.cfb.am_subscribe(self._reload_data)
-        self.workspace.instance.patches.am_subscribe(self._update_highlight_regions_from_patches)
-        self.workspace.instance.breakpoint_mgr.breakpoints.am_subscribe(self._update_highlight_regions_from_breakpoints)
+        self.instance.cfb.am_subscribe(self._reload_data)
+        self.instance.patches.am_subscribe(self._update_highlight_regions_from_patches)
+        self.instance.breakpoint_mgr.breakpoints.am_subscribe(self._update_highlight_regions_from_breakpoints)
         self._data_cache = {}
 
         self._reload_data()
 
-        self._dbg_manager = self.workspace.instance.debugger_mgr
+        self._dbg_manager = self.instance.debugger_mgr
         self._dbg_watcher = DebuggerWatcher(self._on_debugger_state_updated, self._dbg_manager.debugger)
         self._on_debugger_state_updated()
 
@@ -1341,10 +1341,10 @@ class HexView(SynchronizedView):
         cursor = self.inner_widget.hex.cursor
         source = self._data_source_combo.currentData()
         if source == HexDataSource.Loader:
-            if self.workspace.instance.cfb.am_none:
+            if self.instance.cfb.am_none:
                 self.inner_widget.clear()
                 return
-            loader = self.workspace.instance.project.loader
+            loader = self.instance.project.loader
             self.inner_widget.set_region_callback(
                 self.project_memory_write_func,
                 self.project_memory_read_func,
@@ -1405,7 +1405,7 @@ class HexView(SynchronizedView):
         Callback to populate hex view with bytes from debugger state.
         """
         if addr not in self._data_cache:
-            dbg = self.workspace.instance.debugger_mgr.debugger
+            dbg = self.instance.debugger_mgr.debugger
             if dbg.am_none:
                 v = '?'
             else:
@@ -1433,7 +1433,7 @@ class HexView(SynchronizedView):
         """
         Callback to populate hex view with bytes.
         """
-        p = self.workspace.instance.project
+        p = self.instance.project
 
         patches = p.kb.patches.get_all_patches(addr, 1)
         if len(patches) > 0:
@@ -1449,7 +1449,7 @@ class HexView(SynchronizedView):
         """
         Automatically update or create patches to ensure new_bytes are patched at addr.
         """
-        pm = self.workspace.instance.project.kb.patches
+        pm = self.instance.project.kb.patches
         max_addr = addr + len(new_bytes) - 1
 
         for p in pm.get_all_patches(addr, len(new_bytes)):
@@ -1491,8 +1491,8 @@ class HexView(SynchronizedView):
         Callback to write array of bytes as patch.
         """
         self.auto_patch(addr, bytearray(value))
-        pm = self.workspace.instance.project.kb.patches
-        pm_notifier = self.workspace.instance.patches
+        pm = self.instance.project.kb.patches
+        pm_notifier = self.instance.patches
         if pm_notifier.am_none:
             pm_notifier.am_obj = pm
         pm_notifier.am_event()
@@ -1653,7 +1653,7 @@ class HexView(SynchronizedView):
         else:
             minaddr = self.inner_widget.hex.cursor
             num_bytes_selected = 1
-        self.workspace.instance.breakpoint_mgr.add_breakpoint(
+        self.instance.breakpoint_mgr.add_breakpoint(
             Breakpoint(bp_type, minaddr, num_bytes_selected)
         )
 
@@ -1673,7 +1673,7 @@ class HexView(SynchronizedView):
         mnu.addAction(act)
         return mnu
 
-    def contextMenuEvent(self, event: PySide2.QtGui.QContextMenuEvent):  # pylint: disable=unused-argument
+    def contextMenuEvent(self, event: PySide6.QtGui.QContextMenuEvent):  # pylint: disable=unused-argument
         """
         Display view context menu.
         """
@@ -1760,7 +1760,7 @@ class HexView(SynchronizedView):
             s = 'Address: %08x' % self.inner_widget.hex.cursor
         self._status_lbl.setText(s)
 
-    def keyPressEvent(self, event: PySide2.QtGui.QKeyEvent):
+    def keyPressEvent(self, event: PySide6.QtGui.QKeyEvent):
         """
         Handle key events.
         """
@@ -1801,7 +1801,7 @@ class HexView(SynchronizedView):
         Update cached list of highlight regions under cursor.
         """
         regions = []
-        cfb = self.workspace.instance.cfb
+        cfb = self.instance.cfb
         if self.smart_highlighting_enabled and not cfb.am_none:
             for item in cfb.floor_items(self.inner_widget.hex.display_start_addr):
                 item_addr, item = item
@@ -1838,22 +1838,22 @@ class HexView(SynchronizedView):
         """
         Updates cached list of highlight regions from patches.
         """
-        if self.workspace.instance.project.am_none:
+        if self.instance.project.am_none:
             self._patch_highlights = []
         else:
             self._patch_highlights = [PatchHighlightRegion(patch, self)
-                                      for patch in self.workspace.instance.project.kb.patches.values()]
+                                      for patch in self.instance.project.kb.patches.values()]
         self._set_highlighted_regions()
 
     def _update_highlight_regions_from_breakpoints(self, **kwargs):  # pylint:disable=unused-argument
         """
         Updates cached list of highlight regions from breakpoints.
         """
-        if self.workspace.instance.project.am_none:
+        if self.instance.project.am_none:
             self._breakpoint_highlights = []
         else:
             self._breakpoint_highlights = [BreakpointHighlightRegion(bp, self)
-                                            for bp in self.workspace.instance.breakpoint_mgr.breakpoints]
+                                            for bp in self.instance.breakpoint_mgr.breakpoints]
         self._set_highlighted_regions()
 
     def _set_highlighted_regions(self):

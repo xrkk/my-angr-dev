@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from PySide2.QtWidgets import QScrollArea, QWidget, QVBoxLayout, QFrame, QHBoxLayout, QPushButton, QMessageBox, QLabel
+from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout, QFrame, QHBoxLayout, QPushButton, QMessageBox, QLabel
 
 from angr.sim_type import TypeRef, ALL_TYPES, SimStruct, SimUnion
 
@@ -21,8 +21,8 @@ class TypesView(BaseView):
 
     FUNCTION_SPECIFIC_VIEW = True
 
-    def __init__(self, workspace, default_docking_position, *args, **kwargs):
-        super().__init__('types', workspace, default_docking_position, *args, **kwargs)
+    def __init__(self, instance, default_docking_position, *args, **kwargs):
+        super().__init__('types', instance, default_docking_position, *args, **kwargs)
 
         self.base_caption = 'Types'
 
@@ -52,8 +52,8 @@ class TypesView(BaseView):
     @property
     def current_typestore(self) -> 'TypesStore':
         if self._function.am_none:
-            return self.workspace.instance.kb.types
-        var_manager: 'VariableManagerInternal' = self.workspace.instance.pseudocode_variable_kb.variables[
+            return self.instance.kb.types
+        var_manager: 'VariableManagerInternal' = self.instance.pseudocode_variable_kb.variables[
             self._function.addr]
         return var_manager.types
 
@@ -93,7 +93,7 @@ class TypesView(BaseView):
         self._layout.addStretch()
         # background color
         # TODO: Support dark mode
-        scroll_contents.setStyleSheet("background-color: white;")
+        #scroll_contents.setStyleSheet("background-color: white;")
 
     def reload(self):
         for child in list(self._layout.parent().children()):
@@ -118,10 +118,10 @@ class TypesView(BaseView):
     def _on_new_type(self):
         dialog = CTypeEditor(
             None,
-            self.workspace.instance.project.arch,
+            self.instance.project.arch,
             multiline=True,
             allow_multiple=True,
-            predefined_types=self.workspace.instance.kb.types
+            predefined_types=self.instance.kb.types
         )
         dialog.exec_()
 

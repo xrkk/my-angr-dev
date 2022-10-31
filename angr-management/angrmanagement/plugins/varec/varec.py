@@ -9,8 +9,8 @@ from collections import defaultdict
 import requests
 from sortedcontainers import SortedDict
 
-from PySide2.QtGui import Qt
-from PySide2.QtWidgets import QMessageBox
+from PySide6.QtGui import Qt
+from PySide6.QtWidgets import QMessageBox
 
 from angrmanagement.config import Conf
 from ..base_plugin import BasePlugin
@@ -38,7 +38,7 @@ class VaRec(BasePlugin):
         if idx < 0 or idx >= len(self.MENU_BUTTONS):
             return
 
-        if self.workspace.instance.project.am_none:
+        if self.workspace.main_instance.project.am_none:
             return
 
         mapping = {

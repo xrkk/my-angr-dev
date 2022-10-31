@@ -1,12 +1,12 @@
 
 from collections import defaultdict
 import logging
-from typing import Union, Optional, TYPE_CHECKING
+from typing import Union, Optional, Tuple, TYPE_CHECKING
 
-import PySide2
-from PySide2.QtWidgets import QHBoxLayout, QVBoxLayout, QApplication, QMessageBox, QMenu, QAction
-from PySide2.QtCore import Qt, Signal
-from PySide2.QtGui import QCursor
+import PySide6
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QApplication, QMessageBox, QMenu
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QCursor, QAction
 from angr.block import Block
 from angr.knowledge_plugins.cfg import MemoryData
 
@@ -24,7 +24,7 @@ from ..dialogs.rename import RenameDialog
 from ..dialogs.rename_label import RenameLabel
 from ..dialogs.set_comment import SetComment
 from ..dialogs.new_state import NewState
-from ..dialogs.xref import XRef
+from ..dialogs.xref import XRefDialog
 from ..dialogs.hook import HookDialog
 from ..dialogs.func_doc import FuncDocDialog
 from ..menus.disasm_insn_context_menu import DisasmInsnContextMenu
@@ -35,6 +35,7 @@ from ..widgets.qblock_code import QVariableObj
 from ...ui.widgets.qinst_annotation import QHookAnnotation, QBreakAnnotation
 
 if TYPE_CHECKING:
+    from angrmanagement.logic.disassembly.info_dock import OperandDescriptor
     from angr.knowledge_plugins import VariableManager
 
 
@@ -51,8 +52,8 @@ class DisassemblyView(SynchronizedView):
     view_visibility_changed = Signal()
     disassembly_level_changed = Signal(DisassemblyLevel)
 
-    def __init__(self, workspace, *args, **kwargs):
-        super().__init__('disassembly', workspace, *args, **kwargs)
+    def __init__(self, instance, *args, **kwargs):
+        super().__init__('disassembly', instance, *args, **kwargs)
 
         self.base_caption = 'Disassembly'
         self._disassembly_level = DisassemblyLevel.MachineCode
@@ -201,31 +202,31 @@ class DisassemblyView(SynchronizedView):
     # Callbacks
     #
 
-    # All callbacks are proxies to self.workspace.instance. These properties *in this class* may be removed in the near
+    # All callbacks are proxies to self.instance. These properties *in this class* may be removed in the near
     # future.
     @property
     def insn_backcolor_callback(self):
-        return self.workspace.instance.insn_backcolor_callback
+        return self.instance.insn_backcolor_callback
 
     @insn_backcolor_callback.setter
     def insn_backcolor_callback(self, v):
-        self.workspace.instance.insn_backcolor_callback = v
+        self.instance.insn_backcolor_callback = v
 
     @property
     def label_rename_callback(self):
-        return self.workspace.instance.label_rename_callback
+        return self.instance.label_rename_callback
 
     @label_rename_callback.setter
     def label_rename_callback(self, v):
-        self.workspace.instance.label_rename_callback = v
+        self.instance.label_rename_callback = v
 
     @property
     def set_comment_callback(self):
-        return self.workspace.instance.set_comment_callback
+        return self.instance.set_comment_callback
 
     @set_comment_callback.setter
     def set_comment_callback(self, v):
-        self.workspace.instance.set_comment_callback = v
+        self.instance.set_comment_callback = v
 
     def on_variable_recovered(self, func_addr: int):
         if not self._current_function.am_none and self._current_function.addr == func_addr:
@@ -295,7 +296,7 @@ class DisassemblyView(SynchronizedView):
         menu.addSeparator()
         menu.addMenu(self.get_synchronize_with_submenu())
 
-    def contextMenuEvent(self, event: PySide2.QtGui.QContextMenuEvent):  # pylint: disable=unused-argument
+    def contextMenuEvent(self, event: PySide6.QtGui.QContextMenuEvent):  # pylint: disable=unused-argument
         """
         Display view context menu.
         """
@@ -310,7 +311,7 @@ class DisassemblyView(SynchronizedView):
         # pass in the instruction address
         self._insn_menu.insn_addr = insn.addr
         # pop up the menu
-        mnu = self._insn_menu.qmenu(extra_entries=list(self.workspace.plugins.build_context_menu_insn(insn)),
+        mnu = self._insn_menu.qmenu(extra_entries=list(self.instance.workspace.plugins.build_context_menu_insn(insn)),
                                     cached=False)
         self.append_view_menu_actions(mnu)
         mnu.exec_(pos)
@@ -365,39 +366,40 @@ class DisassemblyView(SynchronizedView):
         JumpTo(self, parent=self).exec_()
 
     def popup_rename_label_dialog(self):
-        label_addr = self._address_in_selection()
-        if label_addr is None:
+        label_addr_tpl = self._address_in_selection()
+        if label_addr_tpl is None:
             return
 
-        dialog = RenameLabel(self, label_addr, parent=self)
+        type_, label_addr = label_addr_tpl
+        dialog = RenameLabel(self, label_addr, parent=self, full_refresh=type_ == "operand")
         dialog.exec_()
 
     def popup_comment_dialog(self):
-        comment_addr = self._address_in_selection()
+        comment_addr = self._instruction_address_in_selection()
         if comment_addr is None:
             return
 
-        dialog = SetComment(self.workspace, comment_addr, parent=self)
+        dialog = SetComment(self.instance.workspace, comment_addr, parent=self)
         dialog.exec_()
 
     def popup_newstate_dialog(self, async_=True):
-        addr = self._address_in_selection()
+        addr = self._instruction_address_in_selection()
         if addr is None:
             return
 
-        dialog = NewState(self.workspace.instance, addr=addr, create_simgr=True, parent=self)
+        dialog = NewState(self.instance, addr=addr, create_simgr=True, parent=self)
         if async_:
             dialog.show()
         else:
             dialog.exec_()
 
     def popup_hook_dialog(self, async_=True, addr=None):
-        addr = addr or self._address_in_selection()
+        addr = addr or self._instruction_address_in_selection()
 
         if addr is None:
             return
 
-        dialog = HookDialog(self.workspace.instance, addr=addr, parent=self)
+        dialog = HookDialog(self.instance, addr=addr, parent=self)
         if async_:
             dialog.show()
         else:
@@ -427,7 +429,7 @@ class DisassemblyView(SynchronizedView):
                 url = "http://"
                 ftype = "<>"
                 doc_tuple = (doc_string, url, ftype)
-            dialog = FuncDocDialog(self.workspace.instance,
+            dialog = FuncDocDialog(self.instance,
                                    addr=target, name=operand.text, doc_tuple=doc_tuple,
                                    parent=self)
             dialog.show()
@@ -458,7 +460,7 @@ class DisassemblyView(SynchronizedView):
         if func:
             # attempt to pass in a function
             try:
-                the_func = self.workspace.instance.kb.functions.get_by_addr(addr)
+                the_func = self.instance.kb.functions.get_by_addr(addr)
             except KeyError:
                 the_func = None
         else:
@@ -470,7 +472,7 @@ class DisassemblyView(SynchronizedView):
         if dependson.location is not None:
             if dependson.arg is not None:
                 # track function argument
-                self.workspace._main_window.run_dependency_analysis(
+                self.instance.workspace._main_window.run_dependency_analysis(
                     func_addr=addr,
                     func_arg_idx=dependson.arg,
                 )
@@ -490,11 +492,11 @@ class DisassemblyView(SynchronizedView):
     def popup_xref_dialog(self, addr=None, variable=None, dst_addr=None, async_=True):
 
         if variable is not None:
-            dialog = XRef(addr=addr, variable_manager=self.variable_manager, variable=variable,
-                          instance=self.workspace.instance, parent=self)
+            dialog = XRefDialog(addr=addr, variable_manager=self.variable_manager, variable=variable,
+                                instance=self.instance, disassembly_view=self, parent=self)
         else:
-            dialog = XRef(addr=addr, xrefs_manager=self.workspace.instance.project.kb.xrefs, dst_addr=dst_addr,
-                          instance=self.workspace.instance, parent=self)
+            dialog = XRefDialog(addr=addr, xrefs_manager=self.instance.project.kb.xrefs, dst_addr=dst_addr,
+                                instance=self.instance, disassembly_view=self, parent=self)
         if async_:
             dialog.show()
         else:
@@ -547,11 +549,11 @@ class DisassemblyView(SynchronizedView):
         self._linear_viewer.refresh()
 
     def display_function(self, function):
-        if function.addr not in self.workspace.instance.kb.variables.function_managers:
+        if function.addr not in self.instance.kb.variables.function_managers:
             # variable information is not available
-            if self.workspace.variable_recovery_job is not None:
+            if self.instance.variable_recovery_job is not None:
                 # prioritize the analysis of this function
-                self.workspace.variable_recovery_job.prioritize_function(function.addr)
+                self.instance.variable_recovery_job.prioritize_function(function.addr)
         self.jump_history.jump_to(function.addr)
         self._display_function(function)
 
@@ -563,7 +565,7 @@ class DisassemblyView(SynchronizedView):
             except StopIteration:
                 curr_ins = None
 
-            self.workspace.decompile_function(self._current_function.am_obj, curr_ins=curr_ins)
+            self.instance.workspace.decompile_function(self._current_function.am_obj, curr_ins=curr_ins)
 
     def toggle_show_minimap(self, show:bool):
         """
@@ -668,58 +670,71 @@ class DisassemblyView(SynchronizedView):
     def select_label(self, label_addr):
         self.infodock.select_label(label_addr)
 
-    def rename_label(self, addr, new_name):
+    def rename_label(self, addr, new_name, is_func: bool=False, full_refresh: bool=False):
         if self._flow_graph.disasm is not None:
 
             is_renaming = False
 
             kb = self._flow_graph.disasm.kb
-            if new_name == '':
-                if addr in kb.labels:
-                    del kb.labels[addr]
+            if is_func:
+                func = kb.functions.get_by_addr(addr)
+                is_renaming = True
+                if new_name:
+                    func.name = new_name
+                else:
+                    # restore to the default name
+                    func.name = f"sub_{addr:x}"
             else:
-                if addr in kb.labels:
-                    is_renaming = True
-                kb.labels[addr] = new_name
+                if new_name == '':
+                    if addr in kb.labels:
+                        del kb.labels[addr]
+                else:
+                    if addr in kb.labels:
+                        is_renaming = True
+                    kb.labels[addr] = new_name
 
             # callback first
-            if self.workspace.instance.label_rename_callback:
-                self.workspace.instance.label_rename_callback(addr=addr, new_name=new_name)
+            if self.instance.label_rename_callback:
+                self.instance.label_rename_callback(addr=addr, new_name=new_name)
 
-            # redraw the current block
-            self._flow_graph.update_label(addr, is_renaming=is_renaming)
+            if full_refresh:
+                # redraw the entire graph. required if a data address is renamed.
+                self._flow_graph.refresh()
+            else:
+                # redraw the current block
+                self._flow_graph.update_label(addr, is_renaming=is_renaming)
 
     def avoid_addr_in_exec(self, addr):
-        self.workspace._get_or_create_symexec_view().avoid_addr_in_exec(addr)
+        self.instance.workspace._get_or_create_symexec_view().avoid_addr_in_exec(addr)
 
     def find_addr_in_exec(self, addr):
-        self.workspace._get_or_create_symexec_view().find_addr_in_exec(addr)
+        self.instance.workspace._get_or_create_symexec_view().find_addr_in_exec(addr)
 
     def run_induction_variable_analysis(self):
         if self._flow_graph.induction_variable_analysis:
             self._flow_graph.induction_variable_analysis = None
         else:
-            analyses = self.workspace.instance.project.analyses
+            analyses = self.instance.project.analyses
             ana = analyses.AffineRelationAnalysis(self._flow_graph._function_graph.function)
             self._flow_graph.induction_variable_analysis = ana
         self._flow_graph.refresh()
 
     def fetch_qblock_annotations(self, qblock):
         addr_to_annotations = defaultdict(list)
-        for annotations in self.workspace.plugins.build_qblock_annotations(qblock):
+        for annotations in self.instance.workspace.plugins.build_qblock_annotations(qblock):
             addr_to_annotations[annotations.addr].append(annotations)
         for addr in qblock.addr_to_insns.keys():
-            if addr in self.workspace.instance.project._sim_procedures:
+            if addr in self.instance.project._sim_procedures:
                 hook_annotation = QHookAnnotation(addr)
                 addr_to_annotations[addr].append(hook_annotation)
-            view = self.workspace.view_manager.first_view_in_category("symexec")
+            view = self.instance.workspace.view_manager.first_view_in_category("symexec")
             if view is not None:
                 qsimgrs = view._simgrs
                 if addr in qsimgrs.find_addrs:
                     addr_to_annotations[addr].append(QFindAddrAnnotation(addr, qsimgrs))
                 if addr in qsimgrs.avoid_addrs:
                     addr_to_annotations[addr].append(QAvoidAddrAnnotation(addr, qsimgrs))
-                for bp in self.workspace.instance.breakpoint_mgr.get_breakpoints_at(addr):
+                for bp in self.instance.breakpoint_mgr.get_breakpoints_at(addr):
                     addr_to_annotations[addr].append(QBreakAnnotation(bp))
 
         return QBlockAnnotations(addr_to_annotations, parent=qblock, disasm_view=self)
@@ -740,8 +755,8 @@ class DisassemblyView(SynchronizedView):
     #
 
     def _init_widgets(self):
-        self._linear_viewer = QLinearDisassembly(self.workspace, self, parent=self)
-        self._flow_graph = QDisassemblyGraph(self.workspace, self, parent=self)
+        self._linear_viewer = QLinearDisassembly(self.instance, self, parent=self)
+        self._flow_graph = QDisassemblyGraph(self.instance, self, parent=self)
         self._feature_map = QFeatureMap(self, parent=self)
         self._statusbar = QDisasmStatusBar(self, parent=self)
 
@@ -766,7 +781,7 @@ class DisassemblyView(SynchronizedView):
         self.display_disasm_graph()
         # self.display_linear_viewer()
 
-        self.workspace.plugins.instrument_disassembly_view(self)
+        self.instance.workspace.plugins.instrument_disassembly_view(self)
 
     def _init_menus(self):
         self._insn_menu = DisasmInsnContextMenu(self)
@@ -783,8 +798,8 @@ class DisassemblyView(SynchronizedView):
         self.infodock.selected_labels.am_subscribe(self.redraw_current_graph)
         self.infodock.qblock_code_obj_selection_changed.connect(self.redraw_current_graph)
         self._feature_map.addr.am_subscribe(lambda: self._jump_to(self._feature_map.addr.am_obj))
-        self.workspace.current_screen.am_subscribe(self.on_screen_changed)
-        self.workspace.instance.breakpoint_mgr.breakpoints.am_subscribe(lambda **kwargs: self.refresh())
+        self.instance.workspace.current_screen.am_subscribe(self.on_screen_changed)
+        self.instance.breakpoint_mgr.breakpoints.am_subscribe(lambda **kwargs: self.refresh())
 
     #
     # Private methods
@@ -800,7 +815,7 @@ class DisassemblyView(SynchronizedView):
         self._statusbar.function = the_func
 
         # variable recovery
-        variable_manager = self.workspace.instance.project.kb.variables
+        variable_manager = self.instance.project.kb.variables
         self.variable_manager = variable_manager
         self.infodock.variable_manager = variable_manager
 
@@ -817,7 +832,7 @@ class DisassemblyView(SynchronizedView):
         elif self._linear_viewer.isVisible() or self._t_linear_viewer_visible:
             self._linear_viewer.navigate_to_addr(the_func.addr)
 
-        view = self.workspace.view_manager.first_view_in_category('console')
+        view = self.instance.workspace.view_manager.first_view_in_category('console')
         if view is not None:
             view.push_namespace({
                 'func': the_func,
@@ -829,7 +844,7 @@ class DisassemblyView(SynchronizedView):
             self.display_disasm_graph(prefer=False)
 
         if self.current_graph is not self._linear_viewer:
-            function = locate_function(self.workspace.instance, addr)
+            function = locate_function(self.instance, addr)
             if function is not None:
                 self._display_function(function)
                 instr_addr = function.addr_to_instruction_addr(addr)
@@ -842,7 +857,7 @@ class DisassemblyView(SynchronizedView):
             self.display_linear_viewer(prefer=False)
 
         try:
-            item = self.workspace.instance.cfb.floor_item(addr)
+            item = self.instance.cfb.floor_item(addr)
             _, item = item
             if isinstance(item, MemoryData) and addr < (item.addr + item.size):
                 self.infodock.select_label(item.addr)
@@ -860,18 +875,30 @@ class DisassemblyView(SynchronizedView):
     # Utils
     #
 
-    def _address_in_selection(self):
+    def _address_in_selection(self) -> Optional[Tuple[str,int]]:
+        if self._insn_addr_on_context_menu is not None:
+            return "insn", self._insn_addr_on_context_menu
+        if len(self.infodock.selected_operands) == 1:
+            selected_operand: 'OperandDescriptor' = next(iter(self.infodock.selected_operands.values()))
+            if selected_operand.num_value is not None:
+                return "operand", selected_operand.num_value
+        if len(self.infodock.selected_insns) == 1:
+            return "insn", next(iter(self.infodock.selected_insns))
+        if len(self.infodock.selected_labels) == 1:
+            return "insn", next(iter(self.infodock.selected_labels))
+        return None
+
+    def _instruction_address_in_selection(self) -> Optional[int]:
         if self._insn_addr_on_context_menu is not None:
             return self._insn_addr_on_context_menu
-        elif len(self.infodock.selected_insns) == 1:
+        if len(self.infodock.selected_insns) == 1:
             return next(iter(self.infodock.selected_insns))
-        elif len(self.infodock.selected_labels) == 1:
+        if len(self.infodock.selected_labels) == 1:
             return next(iter(self.infodock.selected_labels))
-        else:
-            return None
+        return None
 
     def _get_instruction_size(self, addr: int) -> Optional[int]:
-        kb = self.workspace.instance.project.kb
+        kb = self.instance.project.kb
         f = kb.functions.floor_func(addr)
         if f is None:
             return None

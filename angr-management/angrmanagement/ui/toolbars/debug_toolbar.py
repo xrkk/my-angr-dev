@@ -1,8 +1,9 @@
 from typing import Optional
 
 import qtawesome as qta
-from PySide2.QtCore import QAbstractItemModel, Qt, QModelIndex
-from PySide2.QtWidgets import QLabel, QComboBox, QAction, QMenu
+from PySide6.QtCore import QAbstractItemModel, Qt, QModelIndex
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QLabel, QComboBox, QMenu
 
 from ...logic.debugger import DebuggerWatcher
 from ...config import Conf
@@ -16,8 +17,8 @@ class AvailableDebuggersModel(QAbstractItemModel):
 
     def __init__(self, workspace: 'Workspace'):
         super().__init__()
-        self.debugger_mgr: 'DebuggerManager' = workspace.instance.debugger_mgr
-        self.debugger_list_mgr: 'DebuggerListManager' = workspace.instance.debugger_list_mgr
+        self.debugger_mgr: 'DebuggerManager' = workspace.main_instance.debugger_mgr
+        self.debugger_list_mgr: 'DebuggerListManager' = workspace.main_instance.debugger_list_mgr
         self.last_str = {}
 
     def rowCount(self, parent):  # pylint:disable=unused-argument
@@ -50,11 +51,12 @@ class AvailableDebuggersModel(QAbstractItemModel):
 class DebugToolbar(Toolbar):
     """
     Debugger Control Toolbar
+    TODO: decouple this from MainWindow and workspace.instance (main_instance)
     """
     def __init__(self, main_window: 'MainWindow'):
         super().__init__(main_window, 'DebugToolbar')
         self.workspace: 'Workspace' = main_window.workspace
-        self.instance: 'Instance' = self.workspace.instance
+        self.instance: 'Instance' = self.workspace.main_instance
 
         self._cont_backward_act = ToolbarAction(qta.icon("fa5s.fast-backward", color=Conf.palette_buttontext),
             'Continue-Backward', 'Reverse-Continue', self._on_cont_backward)

@@ -1,7 +1,7 @@
 from typing import Optional
 
-from PySide2.QtCore import Qt
-from PySide2.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QLineEdit, QDialogButtonBox, QGridLayout, \
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QLineEdit, QDialogButtonBox, QGridLayout, \
     QRadioButton, QButtonGroup
 
 from ...data.breakpoint import Breakpoint, BreakpointType
@@ -11,6 +11,7 @@ from ..widgets import QAddressInput
 class BreakpointDialog(QDialog):
     """
     Dialog to edit breakpoints.
+    TODO: decouple breakpoints from workspace.instance (main_instance)
     """
 
     def __init__(self, breakpoint_: Breakpoint, workspace: 'Workspace', parent=None):
@@ -117,5 +118,5 @@ class BreakpointDialog(QDialog):
         self.breakpoint.addr = self._address_box.target
         self.breakpoint.size = self._get_size()
         self.breakpoint.comment = self._comment_box.text()
-        self.workspace.instance.breakpoint_mgr.breakpoints.am_event()
+        self.workspace.main_instance.breakpoint_mgr.breakpoints.am_event()
         self.accept()

@@ -199,6 +199,7 @@ class ArchARM(Arch):
     triplet = 'arm-linux-gnueabihf'
     max_inst_bytes = 4
     ret_offset = 8
+    fp_ret_offset = 8
     vex_conditional_helpers = True
     syscall_num_offset = 36
     call_pushes_ret = False
@@ -314,22 +315,22 @@ class ArchARM(Arch):
         Register(name='cmlen', size=4, artificial=True, default_value=(0, False, None), concrete=False),
         Register(name='nraddr', size=4, artificial=True, default_value=(0, False, None), concrete=False),
         Register(name='ip_at_syscall', size=4, artificial=True, concrete=False),
-        Register(name='d0', size=8, floating_point=True, vector=True),
-        Register(name='d1', size=8, floating_point=True, vector=True),
-        Register(name='d2', size=8, floating_point=True, vector=True),
-        Register(name='d3', size=8, floating_point=True, vector=True),
-        Register(name='d4', size=8, floating_point=True, vector=True),
-        Register(name='d5', size=8, floating_point=True, vector=True),
-        Register(name='d6', size=8, floating_point=True, vector=True),
-        Register(name='d7', size=8, floating_point=True, vector=True),
-        Register(name='d8', size=8, floating_point=True, vector=True),
-        Register(name='d9', size=8, floating_point=True, vector=True),
-        Register(name='d10', size=8, floating_point=True, vector=True),
-        Register(name='d11', size=8, floating_point=True, vector=True),
-        Register(name='d12', size=8, floating_point=True, vector=True),
-        Register(name='d13', size=8, floating_point=True, vector=True),
-        Register(name='d14', size=8, floating_point=True, vector=True),
-        Register(name='d15', size=8, floating_point=True, vector=True),
+        Register(name='d0', size=8, floating_point=True, vector=True, subregisters=[('s0', 0, 4), ('s1', 4, 4)]),
+        Register(name='d1', size=8, floating_point=True, vector=True, subregisters=[('s2', 0, 4), ('s3', 4, 4)]),
+        Register(name='d2', size=8, floating_point=True, vector=True, subregisters=[('s4', 0, 4), ('s5', 4, 4)]),
+        Register(name='d3', size=8, floating_point=True, vector=True, subregisters=[('s6', 0, 4), ('s7', 4, 4)]),
+        Register(name='d4', size=8, floating_point=True, vector=True, subregisters=[('s8', 0, 4), ('s9', 4, 4)]),
+        Register(name='d5', size=8, floating_point=True, vector=True, subregisters=[('s10', 0, 4), ('s11', 4, 4)]),
+        Register(name='d6', size=8, floating_point=True, vector=True, subregisters=[('s12', 0, 4), ('s13', 4, 4)]),
+        Register(name='d7', size=8, floating_point=True, vector=True, subregisters=[('s14', 0, 4), ('s15', 4, 4)]),
+        Register(name='d8', size=8, floating_point=True, vector=True, subregisters=[('s16', 0, 4), ('s17', 4, 4)]),
+        Register(name='d9', size=8, floating_point=True, vector=True, subregisters=[('s18', 0, 4), ('s19', 4, 4)]),
+        Register(name='d10', size=8, floating_point=True, vector=True, subregisters=[('s20', 0, 4), ('s21', 4, 4)]),
+        Register(name='d11', size=8, floating_point=True, vector=True, subregisters=[('s22', 0, 4), ('s23', 4, 4)]),
+        Register(name='d12', size=8, floating_point=True, vector=True, subregisters=[('s24', 0, 4), ('s25', 4, 4)]),
+        Register(name='d13', size=8, floating_point=True, vector=True, subregisters=[('s26', 0, 4), ('s27', 4, 4)]),
+        Register(name='d14', size=8, floating_point=True, vector=True, subregisters=[('s28', 0, 4), ('s29', 4, 4)]),
+        Register(name='d15', size=8, floating_point=True, vector=True, subregisters=[('s30', 0, 4), ('s31', 4, 4)]),
         Register(name='d16', size=8, floating_point=True, vector=True),
         Register(name='d17', size=8, floating_point=True, vector=True),
         Register(name='d18', size=8, floating_point=True, vector=True),
@@ -366,6 +367,7 @@ class ArchARMHF(ArchARM):
     name = 'ARMHF'
     triplet = 'arm-linux-gnueabihf'
     ld_linux_name = 'ld-linux-armhf.so.3'
+    fp_ret_offset = 128  # s0
 
 
 class ArchARMEL(ArchARM):

@@ -1,7 +1,7 @@
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from PySide2 import QtWidgets, QtCore, QtGui
+from PySide6 import QtWidgets, QtCore, QtGui
 
 
 from angr.analyses.data_dep import ConstantDepNode, TmpDepNode
@@ -29,7 +29,7 @@ class QDataDepGraphBlock(QCachedGraphicsItem):
 
     def __init__(self, is_selected: bool, data_dep_view: 'DataDepView', node: 'BaseDepNode', instr: Optional['CsInsn']):
         super().__init__()
-        self.setFlags(self.ItemIsFocusable)
+        self.setFlags(QtWidgets.QGraphicsItem.ItemIsFocusable)
 
         self._selected = is_selected
         self._data_dep_view = data_dep_view

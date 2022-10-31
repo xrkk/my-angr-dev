@@ -382,13 +382,11 @@ class DataDependencyGraphAnalysis(Analysis):
 
         if act.action == SimActionData.WRITE:
             mem_node = MemDepNode.cast_to_mem(self._parse_action())
-
             src_nodes = read_nodes.get(mem_node.value, None)
             if src_nodes:
                 # Value being written to, address came from previous read
                 for src_node in src_nodes:
                     self._graph.add_edge(src_node, mem_node, label='val')
-
             elif len(read_nodes) == 1 and read_nodes.get(mem_node.addr, None):
                 # Only read thus far was for the memory address, value is direct
                 val_node = self._get_or_create_graph_node(DepNodeTypes.Constant, act, mem_node.value_tuple(), True)

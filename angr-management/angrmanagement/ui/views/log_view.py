@@ -1,7 +1,7 @@
 import logging
 
-from PySide2.QtWidgets import QHBoxLayout
-from PySide2.QtCore import QSize
+from PySide6.QtWidgets import QHBoxLayout
+from PySide6.QtCore import QSize
 
 from ..widgets.qlog_widget import QLogWidget
 from .view import BaseView
@@ -14,8 +14,8 @@ class LogView(BaseView):
     Log view displays logging output.
     """
 
-    def __init__(self, workspace, default_docking_position, *args, **kwargs):
-        super().__init__('log', workspace, default_docking_position, *args, **kwargs)
+    def __init__(self, instance, default_docking_position, *args, **kwargs):
+        super().__init__('log', instance, default_docking_position, *args, **kwargs)
 
         self.base_caption = 'Log'
         self._log_widget: QLogWidget = None

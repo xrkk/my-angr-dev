@@ -2,9 +2,9 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 from sortedcontainers import SortedDict
 
-from PySide2.QtGui import QCursor
-from PySide2.QtWidgets import QInputDialog, QLineEdit, QMenu, QPlainTextEdit, QStyle, QVBoxLayout
-from PySide2.QtCore import QEvent, Qt
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import QInputDialog, QLineEdit, QMenu, QPlainTextEdit, QStyle, QVBoxLayout
+from PySide6.QtCore import QEvent, Qt
 
 from pyqodeng.core.api import CodeEdit
 from pyqodeng.core.panels import LineNumberPanel, MarkerPanel, Marker
@@ -234,8 +234,8 @@ class SourceViewer(BaseView):
         super().__init__("SourceViewer", workspace, *args, **kwargs)
         self.base_caption = "Source Viewer"
         self.workspace = workspace
-        self.instance = workspace.instance
-        workspace.instance.project.am_subscribe(self.load_from_proejct)
+        self.instance = workspace.main_instance
+        workspace.main_instance.project.am_subscribe(self.load_from_proejct)
         self._init_widgets()
 
     @property

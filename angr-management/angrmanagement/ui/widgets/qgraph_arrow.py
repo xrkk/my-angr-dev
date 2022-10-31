@@ -1,9 +1,9 @@
 import math
 from typing import TYPE_CHECKING, List
 
-from PySide2.QtWidgets import QGraphicsItem, QApplication, QToolTip
-from PySide2.QtGui import QPen, QBrush, QColor, QPainterPath, QPainterPathStroker, QKeyEvent
-from PySide2.QtCore import QPointF, Qt
+from PySide6.QtWidgets import QGraphicsItem, QApplication, QToolTip
+from PySide6.QtGui import QPen, QBrush, QColor, QPainterPath, QPainterPathStroker, QKeyEvent
+from PySide6.QtCore import QPointF, Qt
 
 from ...utils.edge import EdgeSort
 from ...config import Conf
@@ -236,7 +236,7 @@ class QDataDepGraphArrow(QGraphArrow):
 
     def __init__(self, data_dep_view: 'DataDepView', *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setFlags(self.ItemIsFocusable)
+        self.setFlags(QGraphicsItem.ItemIsFocusable)
         self._data_dep_view = data_dep_view
         self.is_hovered = False
 

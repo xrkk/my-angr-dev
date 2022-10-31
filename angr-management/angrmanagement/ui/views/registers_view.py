@@ -1,10 +1,10 @@
 import logging
 from typing import Any, Optional
 
-import PySide2
-from PySide2.QtGui import QFont, QBrush
-from PySide2.QtCore import QAbstractTableModel, Qt, QSize
-from PySide2.QtWidgets import QTableView, QAbstractItemView, QHeaderView, QVBoxLayout
+import PySide6
+from PySide6.QtGui import QFont, QBrush
+from PySide6.QtCore import QAbstractTableModel, Qt, QSize
+from PySide6.QtWidgets import QTableView, QAbstractItemView, QHeaderView, QVBoxLayout
 import angr
 from archinfo import Register
 
@@ -34,20 +34,20 @@ class QRegisterTableModel(QAbstractTableModel):
     def _filtered_register_list(self):
         return [reg for reg in self.state.arch.register_list if reg.general_purpose]
 
-    def rowCount(self, parent:PySide2.QtCore.QModelIndex=...) -> int:  # pylint:disable=unused-argument
+    def rowCount(self, parent:PySide6.QtCore.QModelIndex=...) -> int:  # pylint:disable=unused-argument
         return 0 if self.state is None else len(self._filtered_register_list())
 
-    def columnCount(self, parent:PySide2.QtCore.QModelIndex=...) -> int:  # pylint:disable=unused-argument
+    def columnCount(self, parent:PySide6.QtCore.QModelIndex=...) -> int:  # pylint:disable=unused-argument
         return len(self.Headers)
 
-    def headerData(self, section:int, orientation:PySide2.QtCore.Qt.Orientation, role:int=...) -> Any:  # pylint:disable=unused-argument
+    def headerData(self, section:int, orientation:PySide6.QtCore.Qt.Orientation, role:int=...) -> Any:  # pylint:disable=unused-argument
         if role != Qt.DisplayRole:
             return None
         if section < len(self.Headers):
             return self.Headers[section]
         return None
 
-    def data(self, index:PySide2.QtCore.QModelIndex, role:int=...) -> Any:
+    def data(self, index:PySide6.QtCore.QModelIndex, role:int=...) -> Any:
         if not index.isValid():
             return None
         row = index.row()
@@ -98,7 +98,7 @@ class QRegisterTableWidget(QTableView):
         vheader.setDefaultSectionSize(20)
 
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.setHorizontalScrollMode(self.ScrollPerPixel)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
 
         self.model: QRegisterTableModel = QRegisterTableModel(self)
         self.setModel(self.model)
@@ -108,7 +108,7 @@ class QRegisterTableWidget(QTableView):
 
         hheader.setSectionResizeMode(0, QHeaderView.ResizeToContents)
 
-        self._dbg_manager = register_view.workspace.instance.debugger_mgr
+        self._dbg_manager = register_view.instance.debugger_mgr
         self._dbg_watcher = DebuggerWatcher(self._on_debugger_state_updated, self._dbg_manager.debugger)
         self._on_debugger_state_updated()
 
@@ -132,8 +132,8 @@ class RegistersView(BaseView):
     Register table view.
     """
 
-    def __init__(self, workspace, default_docking_position, *args, **kwargs):
-        super().__init__('registers', workspace, default_docking_position, *args, **kwargs)
+    def __init__(self, instance, default_docking_position, *args, **kwargs):
+        super().__init__('registers', instance, default_docking_position, *args, **kwargs)
 
         self.base_caption = 'Registers'
         self._tbl_widget: Optional[QRegisterTableWidget] = None

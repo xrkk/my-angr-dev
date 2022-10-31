@@ -1,7 +1,7 @@
 from typing import Optional, TYPE_CHECKING
 
-from PySide2.QtCore import Qt
-from PySide2.QtWidgets import QWidget, QVBoxLayout, QLineEdit, QTreeWidget, QTreeWidgetItem, QPushButton
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLineEdit, QTreeWidget, QTreeWidgetItem, QPushButton
 
 from angr.analyses.decompiler.decompilation_options import options as dec_options
 from angr.analyses.decompiler.optimization_passes import get_optimization_passes, get_default_optimization_passes
@@ -137,13 +137,13 @@ class QDecompilationOptions(QWidget):
         if self._instance is None or self._instance.project.am_none:
             return []
         return get_default_optimization_passes(self._instance.project.arch, self._instance.project.simos.name) + \
-            [x for x, de, in self._code_view.workspace.plugins.optimization_passes() if de]
+            [x for x, de, in self._code_view.instance.workspace.plugins.optimization_passes() if de]
 
     def get_all_passes(self):
         if self._instance is None or self._instance.project.am_none:
             return []
         return get_optimization_passes(self._instance.project.arch, self._instance.project.simos.name) + \
-            [x for x, _, in self._code_view.workspace.plugins.optimization_passes()]
+            [x for x, _, in self._code_view.instance.workspace.plugins.optimization_passes()]
 
     def get_default_peephole_opts(self):  # pylint: disable=no-self-use
         return STMT_OPTS + EXPR_OPTS

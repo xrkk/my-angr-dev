@@ -3,8 +3,18 @@ import os
 import json
 import binascii
 
-from PySide2.QtWidgets import QDialog, QLineEdit, QLabel, QHBoxLayout, QVBoxLayout, QPushButton, QProgressBar,\
-    QMessageBox, QSizePolicy, QFileDialog
+from PySide6.QtWidgets import (
+    QDialog,
+    QLineEdit,
+    QLabel,
+    QHBoxLayout,
+    QVBoxLayout,
+    QPushButton,
+    QProgressBar,
+    QMessageBox,
+    QSizePolicy,
+    QFileDialog,
+)
 
 from ....utils.io import isurl, download_url
 from ..data.component_tree import ComponentTree, ComponentTreeNode, ComponentFunction
@@ -157,9 +167,9 @@ class LoadComponentsDialog(QDialog):
                 if blob_type != "bin":
                     raise TypeError("Unsupported blob_type \"%s\"." % blob_type)
                 file_hash = binary.get('file_hash')
-                if self.workspace.instance.project.am_none:
+                if self.workspace.main_instance.project.am_none:
                     raise ValueError("No project has been loaded.")
-                sha256 = self.workspace.instance.project.loader.main_object.sha256
+                sha256 = self.workspace.main_instance.project.loader.main_object.sha256
                 if binascii.unhexlify(file_hash) != sha256:
                     # warn user about it
                     r = QMessageBox.warning(None,

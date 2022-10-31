@@ -1,16 +1,15 @@
-from PySide2.QtWidgets import QDialog, QVBoxLayout, QLabel, QGridLayout, QRadioButton, QGroupBox, QScrollArea, \
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QGridLayout, QRadioButton, QGroupBox, QScrollArea, \
     QWidget, QDialogButtonBox
-from PySide2.QtGui import QTextOption
+from PySide6.QtGui import QTextOption
 from pyqodeng.core.api import CodeEdit
 from pyqodeng.core.modes import CaretLineHighlighterMode, PygmentsSyntaxHighlighter, AutoIndentMode
-from ...data.instance import Instance
 
 
 class HookDialog(QDialog):
     """
     Provide templetes of hook function.
     """
-    def __init__(self, instance: Instance, addr=None, parent=None):
+    def __init__(self, instance, addr=None, parent=None):
         super().__init__(parent)
 
         # initialization
