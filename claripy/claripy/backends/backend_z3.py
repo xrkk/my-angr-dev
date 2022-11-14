@@ -1,4 +1,5 @@
 import os
+import sys
 import ctypes
 import logging
 import numbers
@@ -32,15 +33,16 @@ def handle_sigint(signals, frametype):
     if callable(old_handler):
         old_handler(signals, frametype)
     else:
-        print("*** CRITICAL ERROR - THIS SHOULD NEVER HAPPEN")
+        print("*** CRITICAL ERROR - THIS SHOULD NEVER HAPPEN", sys.stderr, flush=True)
         raise KeyboardInterrupt()
 
-old_handler = signal.getsignal(signal.SIGINT)
-if old_handler is None or old_handler == signal.SIG_DFL:
-    # there is a signal handler installed by someone other than python. we cannot handle this.
-    old_handler = True
-else:
-    signal.signal(signal.SIGINT, handle_sigint)
+if threading.current_thread() == threading.main_thread():  # Signal only works in the main thread
+    old_handler = signal.getsignal(signal.SIGINT)
+    if old_handler is None or old_handler == signal.SIG_DFL:
+        # there is a signal handler installed by someone other than python. we cannot handle this.
+        old_handler = True
+    else:
+        signal.signal(signal.SIGINT, handle_sigint)
 
 try:
     import __pypy__
@@ -65,7 +67,7 @@ def _add_memory_pressure(p):
     This is not a problem for CPython since its GC is based on reference counting.
     """
 
-    global _is_pypy
+    global _is_pypy # pylint:disable=global-variable-not-assigned
     if _is_pypy:
         __pypy__.add_memory_pressure(p)
 
@@ -108,10 +110,9 @@ def z3_solver_sat(solver, extra_constraints, occasion):
         reason = solver.reason_unknown()
         if reason in ('interrupted from keyboard', 'interrupted'):
             raise KeyboardInterrupt()
-        elif reason in ('timeout', 'max. resource limit exceeded', 'max. memory exceeded'):
+        if reason in ('timeout', 'max. resource limit exceeded', 'max. memory exceeded'):
             raise ClaripySolverInterruptError(reason)
-        else:
-            raise ClaripyZ3Error('solver unknown: ' + reason)
+        raise ClaripyZ3Error('solver unknown: ' + reason)
     return result == z3.sat
 
 class SmartLRUCache(LRUCache):
@@ -136,14 +137,12 @@ class BackendZ3(Backend):
 
     def __init__(self, reuse_z3_solver=None, ast_cache_size=10000):
         Backend.__init__(self, solver_required=True)
-        self._enable_simplification_cache = False
 
         # Per-thread Z3 solver
         # This setting is treated as a global setting and is not supposed to be changed during runtime, unless you know
         # what you are doing.
         if reuse_z3_solver is None:
-            reuse_z3_solver = True if os.environ.get('REUSE_Z3_SOLVER', "False").lower() in {"1", "true", "yes", "y"} \
-                else False
+            reuse_z3_solver = os.environ.get('REUSE_Z3_SOLVER', "False").lower() in {"1", "true", "yes", "y"}
         self.reuse_z3_solver = reuse_z3_solver
 
         self._ast_cache_size = ast_cache_size
@@ -257,30 +256,12 @@ class BackendZ3(Backend):
             self._tls.sym_cache = weakref.WeakValueDictionary()
             return self._tls.sym_cache
 
-    @property
-    def _simplification_cache_key(self):
-        try:
-            return self._tls.simplification_cache_key
-        except AttributeError:
-            self._tls.simplification_cache_key = weakref.WeakValueDictionary()
-            return self._tls.simplification_cache_key
-
-    @property
-    def _simplification_cache_val(self):
-        try:
-            return self._tls.simplification_cache_val
-        except AttributeError:
-            self._tls.simplification_cache_val = weakref.WeakValueDictionary()
-            return self._tls.simplification_cache_val
-
     def downsize(self):
         Backend.downsize(self)
 
         self._ast_cache.clear()
         self._var_cache.clear()
         self._sym_cache.clear()
-        self._simplification_cache_key.clear()
-        self._simplification_cache_val.clear()
 
     def _name(self, o): #pylint:disable=unused-argument
         l.warning("BackendZ3.name() called. This is weird.")
@@ -306,7 +287,11 @@ class BackendZ3(Backend):
         #       the else branch of the check. This evidence although comes from the execution of the angr and claripy
         #       test suite so I'm not sure if this assumption would hold on 100% of the cases
         bv = z3.BitVecSortRef(z3.Z3_mk_bv_sort(self._context.ref(), size), self._context)
-        expr = z3.BitVecRef(z3.Z3_mk_const(self._context.ref(), z3.to_symbol(name, self._context), bv.ast), self._context)
+        expr = z3.BitVecRef(z3.Z3_mk_const(
+            self._context.ref(),
+            z3.to_symbol(name, self._context), bv.ast),
+            self._context
+        )
         #if mn is not None:
         #    expr = z3.If(z3.ULT(expr, mn), mn, expr, ctx=self._context)
         #if mx is not None:
@@ -368,7 +353,7 @@ class BackendZ3(Backend):
 
     @condom
     def StringV(self, ast):
-        return z3.StringVal(ast.args[0], ctx=self._context)
+        return z3.StringVal(ast.args[0].ljust(ast.args[1], '\0'), ctx=self._context)
 
     @condom
     def StringS(self, ast):
@@ -378,7 +363,7 @@ class BackendZ3(Backend):
     #
 
     @condom
-    def _convert(self, obj):  # pylint:disable=arguments-differ
+    def _convert(self, obj):  # pylint:disable=arguments-renamed
         if isinstance(obj, FSort):
             return z3.FPSortRef(z3.Z3_mk_fpa_sort(self._context.ref(), obj.exp, obj.mantissa), self._context)
         elif isinstance(obj, RM):
@@ -406,7 +391,7 @@ class BackendZ3(Backend):
             l.debug("BackendZ3 encountered unexpected type %s", type(obj))
             raise BackendError("unexpected type %s encountered in BackendZ3" % type(obj))
 
-    def call(self, *args, **kwargs):  # pylint;disable=arguments-differ
+    def call(self, *args, **kwargs):  # pylint;disable=arguments-renamed
         return Backend.call(self, *args, **kwargs)
 
     @condom
@@ -445,7 +430,10 @@ class BackendZ3(Backend):
         num_args = z3.Z3_get_app_num_args(ctx, ast)
         split_on = self._split_on if split_on is None else split_on
         new_split_on = split_on if op_name in split_on else set()
-        children = [ self._abstract_internal(ctx, z3.Z3_get_app_arg(ctx, ast, i), new_split_on) for i in range(num_args) ]
+        children = [
+            self._abstract_internal(ctx, z3.Z3_get_app_arg(ctx, ast, i), new_split_on)
+            for i in range(num_args)
+        ]
 
         append_children = True
 
@@ -533,7 +521,7 @@ class BackendZ3(Backend):
 
         if z3_op_nums[decl_num] == 'Z3_OP_INTERNAL' and not args:
             # special case for Z3 string constants
-            a = self._string_constant_from_ast(ctx, ast, decl)
+            a = self._string_constant_from_ast(ctx, decl)
         else:
             # hmm.... honestly not sure what to do here
             result_ty = op_type_map[z3_op_nums[decl_num]]
@@ -617,7 +605,7 @@ class BackendZ3(Backend):
             return self._abstract_fp_encoded_val(ctx, arg_ast)
         elif op_name == 'INTERNAL' and self._abstract_string_check(ctx, ast):
             # Quirk in how z3 encodes string constants
-            return self._string_constant_from_ast(ctx, ast, decl)
+            return self._string_constant_from_ast(ctx, decl)
         else:
             raise BackendError("Unable to abstract Z3 object to primitive")
 
@@ -627,7 +615,8 @@ class BackendZ3(Backend):
         else:
             return int(z3.Z3_get_numeral_string(ctx, ast))
 
-    def _abstract_fp_val(self, ctx, ast, op_name):
+    @staticmethod
+    def _abstract_fp_val(ctx, ast, op_name):
         if op_name == 'FPVal':
             # TODO: do better than this
             fp_mantissa = float(z3.Z3_fpa_get_numeral_significand_string(ctx, ast))
@@ -650,7 +639,8 @@ class BackendZ3(Backend):
         else:
             raise BackendError("Called _abstract_fp_val with unknown type")
 
-    def _abstract_fp_encoded_val(self, ctx, ast):
+    @staticmethod
+    def _abstract_fp_encoded_val(ctx, ast):
         decl = z3.Z3_get_app_decl(ctx, ast)
         decl_num = z3.Z3_get_decl_kind(ctx, decl)
         op_name = op_map[z3_op_nums[decl_num]]
@@ -691,7 +681,8 @@ class BackendZ3(Backend):
         value = (fp_sign << (ebits + sbits)) | (fp_exp << sbits) | fp_mantissa
         return value
 
-    def _abstract_string_check(self, ctx, ast):
+    @staticmethod
+    def _abstract_string_check(ctx, ast):
         # Check whether ast encodes a string constant
         ast_sort = z3.Z3_get_sort(ctx, ast)
         ast_sort_kind = z3.Z3_get_sort_kind(ctx, ast_sort)
@@ -709,7 +700,7 @@ class BackendZ3(Backend):
         return False
 
     @staticmethod
-    def _string_constant_from_ast(ctx, ast, decl):
+    def _string_constant_from_ast(ctx, decl):
         # Get Z3-encoded string constants
         # see https://stackoverflow.com/a/58829514/3154996
         if z3.Z3_get_decl_num_parameters(ctx, decl) != 1:
@@ -799,7 +790,7 @@ class BackendZ3(Backend):
         return model
 
     def _satisfiable(self, extra_constraints=(), solver=None, model_callback=None):
-        global solve_count
+        global solve_count  # pylint: disable=global-statement
 
         solve_count += 1
 
@@ -822,7 +813,7 @@ class BackendZ3(Backend):
 
     @condom
     def _batch_eval(self, exprs, n, extra_constraints=(), solver=None, model_callback=None):
-        global solve_count
+        global solve_count  # pylint: disable=global-statement
 
         result_values = [ ]
 
@@ -862,19 +853,17 @@ class BackendZ3(Backend):
 
         return result_values
 
-    @condom
-    def _min(self, expr, extra_constraints=(), signed=False, solver=None, model_callback=None):
-        global solve_count
+    def _extrema(self, is_max: bool, expr, extra_constraints, signed, solver, model_callback):
+        """
+        _max if is_max else _min
+        """
+        global solve_count # pylint: disable=global-statement
 
-        if signed:
-            lo = -2**(expr.size()-1)
-            hi = 2**(expr.size()-1)-1
-        else:
-            lo = 0
-            hi = 2**expr.size()-1
+        lo = -2**(expr.size()-1) if signed else 0
+        hi = 2**(expr.size()-1)-1 if signed else 2**expr.size()-1
 
-        extra_constraints_converted = [self.convert(e) for e in extra_constraints]
-        new_constraints = []
+        constraints = [self.convert(e) for e in extra_constraints]
+        comment = "max" if is_max else "min"
 
         GE = operator.ge if signed else z3.UGE
         LE = operator.le if signed else z3.ULE
@@ -887,109 +876,52 @@ class BackendZ3(Backend):
             # TODO: is this assumption correct?
             # here it's not safe to call directly the z3 low level API since it might happen that the argument is an
             # integer and not a BV
-            new_constraints.append(z3.And(GE(expr, lo), LE(expr, middle)))
+            constraints.append(
+                z3.And(GE(expr, middle), LE(expr, hi))
+                if is_max else
+                z3.And(GE(expr, lo), LE(expr, middle))
+            )
 
             solve_count += 1
-            if z3_solver_sat(solver, extra_constraints_converted + new_constraints, "min"):
+            sat = z3_solver_sat(solver, constraints, comment)
+            constraints.pop()
+            if sat:
                 l.debug("... still sat")
                 if model_callback is not None:
                     model_callback(self._generic_model(solver.model()))
-                hi = middle
             else:
                 l.debug("... now unsat")
+            if sat == is_max:
                 lo = middle
-                new_constraints.pop()
-
-        #l.debug("final hi/lo: %d, %d", hi, lo)
-
-        ret = None
-        if hi == lo:
-            ret = lo
-        else:
-            if z3_solver_sat(solver, extra_constraints_converted + [expr == lo], "min"):
-                if model_callback is not None:
-                    model_callback(self._generic_model(solver.model()))
-                ret = lo
             else:
-                ret = hi
+                hi = middle
 
+        constraints.append(expr == (hi if is_max else lo))
+        sat = z3_solver_sat(solver, constraints, comment)
+        if sat and model_callback is not None:
+            model_callback(self._generic_model(solver.model()))
+        if sat == is_max:
+            ret = hi
+        else:
+            ret = lo
         return ret
+
+
+    @condom
+    def _min(self, expr, extra_constraints=(), signed=False, solver=None, model_callback=None):
+        return self._extrema(False, expr, extra_constraints, signed, solver, model_callback)
 
     @condom
     def _max(self, expr, extra_constraints=(), signed=False, solver=None, model_callback=None):
-        global solve_count
-
-        if signed:
-            lo = -2**(expr.size()-1)
-            hi = 2**(expr.size()-1)-1
-        else:
-            lo = 0
-            hi = 2**expr.size()-1
-
-        extra_constraints_converted = [self.convert(e) for e in extra_constraints]
-        new_constraints = []
-
-        GT = operator.gt if signed else z3.UGT
-        LE = operator.le if signed else z3.ULE
-
-        # TODO: Can only deal with bitvectors, not floats
-        while hi-lo > 1:
-            middle = (lo + hi)//2
-            #l.debug("h/m/l/d: %d %d %d %d", hi, middle, lo, hi-lo)
-
-            # TODO: is this assumption correct?
-            # here it's not safe to call directly the z3 low level API since it might happen that the argument is an
-            # integer and not a BV
-            new_constraints.append(z3.And(GT(expr, middle), LE(expr, hi)))
-
-            solve_count += 1
-            if z3_solver_sat(solver, extra_constraints_converted + new_constraints, "max"):
-                l.debug("... still sat")
-                if model_callback is not None:
-                    model_callback(self._generic_model(solver.model()))
-                lo = middle
-            else:
-                l.debug("... now unsat")
-                hi = middle
-                new_constraints.pop()
-            #l.debug("          now: %d %d %d %d", hi, middle, lo, hi-lo)
-
-        ret = None
-        if hi == lo:
-            ret = hi
-        else:
-            if z3_solver_sat(solver, extra_constraints_converted + [expr == hi], "max"):
-                if model_callback is not None:
-                    model_callback(self._generic_model(solver.model()))
-                ret = hi
-            else:
-                ret = lo
-
-        return ret
+        return self._extrema(True, expr, extra_constraints, signed, solver, model_callback)
 
     def _simplify(self, e): #pylint:disable=W0613,R0201
         raise Exception("This shouldn't be called. Bug Yan.")
 
     @condom
-    def simplify(self, expr):  #pylint:disable=arguments-differ
+    def simplify(self, expr):  #pylint:disable=arguments-renamed
         if expr._simplified:
             return expr
-
-        if self._enable_simplification_cache:
-            try:
-                k = self._simplification_cache_key[expr._cache_key]
-                #print "HIT WEAK KEY CACHE"
-                return k
-            except KeyError:
-                pass
-            try:
-                k = self._simplification_cache_val[expr._cache_key]
-                #print "HIT WEAK VALUE CACHE"
-                return k
-            except KeyError:
-                pass
-
-            #print "MISS CACHE"
 
         #l.debug("SIMPLIFYING EXPRESSION")
 
@@ -1016,9 +948,6 @@ class BackendZ3(Backend):
         o = self._abstract(s)
         o._simplified = Base.FULL_SIMPLIFY
 
-        if self._enable_simplification_cache:
-            self._simplification_cache_val[expr._cache_key] = o
-            self._simplification_cache_key[expr._cache_key] = o
         return o
 
     def _is_false(self, e, extra_constraints=(), solver=None, model_callback=None):
@@ -1028,7 +957,11 @@ class BackendZ3(Backend):
         return z3.simplify(e).eq(z3.BoolVal(True, ctx=self._context))
 
     def _solution(self, expr, v, extra_constraints=(), solver=None, model_callback=None):
-        return self._satisfiable(extra_constraints=(expr == v,) + tuple(extra_constraints), solver=solver, model_callback=model_callback)
+        return self._satisfiable(
+            extra_constraints=(expr == v,) + tuple(extra_constraints),
+            solver=solver,
+            model_callback=model_callback
+        )
 
     #
     # Some Z3 passthroughs
@@ -1375,7 +1308,6 @@ class BackendZ3(Backend):
 z3_op_names = [ _ for _ in dir(z3) if _.startswith('Z3_OP') ]
 z3_op_nums = { getattr(z3, _): _ for _ in z3_op_names }
 
-#pylint:disable=bad-continuation
 op_map = {
     # Boolean
     'Z3_OP_TRUE': 'True',
@@ -1526,9 +1458,8 @@ from ..ast.base import Base
 from ..ast.bv import BV, BVV
 from ..ast.bool import BoolV, Bool
 from ..ast.fp import FP, FPV
-from ..ast.strings import StringV, StringS
 from ..operations import backend_operations, backend_fp_operations, backend_strings_operations
-from ..fp import FSort, RM, RM_NearestTiesEven, RM_NearestTiesAwayFromZero, RM_TowardsPositiveInf, RM_TowardsNegativeInf, RM_TowardsZero
+from ..fp import FSort, RM
 from ..errors import ClaripyError, BackendError, ClaripyOperationError
 from .. import _all_operations
 

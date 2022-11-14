@@ -23,6 +23,10 @@ class LogView(BaseView):
         self._init_widgets()
         self.reload()
 
+    def closeEvent(self, event):
+        self._log_widget.close()
+        super().closeEvent(event)
+
     def reload(self):
         pass
 
@@ -35,5 +39,6 @@ class LogView(BaseView):
 
         hlayout = QHBoxLayout()
         hlayout.addWidget(self._log_widget)
+        hlayout.setContentsMargins(0, 0, 0, 0)
 
         self.setLayout(hlayout)

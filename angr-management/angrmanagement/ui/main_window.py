@@ -7,10 +7,11 @@ import time
 from functools import partial
 from typing import Optional, TYPE_CHECKING
 
-from PySide6.QtWidgets import QMainWindow, QTabWidget, QFileDialog, QProgressBar, QProgressDialog
-from PySide6.QtWidgets import QMessageBox, QTabBar
+from PySide6.QtWidgets import QMainWindow, QFileDialog, QProgressBar, QProgressDialog
+from PySide6.QtWidgets import QMessageBox
 from PySide6.QtGui import QIcon, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtCore import Qt, QSize, QEvent, QUrl
+import PySide6QtAds as QtAds
 
 import angr
 import angr.flirt
@@ -55,6 +56,7 @@ from .toolbar_manager import ToolbarManager
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QApplication
 
+
 _l = logging.getLogger(name=__name__)
 
 
@@ -65,6 +67,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, app: Optional['QApplication'] = None, parent=None, show=True, use_daemon=False):
         super().__init__(parent)
+        self.initialized = False
 
         icon_location = os.path.join(IMG_LOCATION, 'angr.png')
         self.setWindowIcon(QIcon(icon_location))
@@ -244,13 +247,14 @@ class MainWindow(QMainWindow):
 
         :return:    None
         """
-        self.central_widget = QMainWindow()
-        self.setCentralWidget(self.central_widget)
+        QtAds.CDockManager.setConfigFlags(
+            (QtAds.CDockManager.DefaultBaseConfig | QtAds.CDockManager.OpaqueSplitterResize)
+            & ~QtAds.CDockManager.DockAreaHasUndockButton)
+        self.dock_manager = QtAds.CDockManager(self)
+        self.dock_manager.setStyleSheet("")  # Clear stylesheet overrides
+        self.central_widget = self.dock_manager
         wk = Workspace(self, Instance())
         self.workspace = wk
-        self.workspace.view_manager.tabify_center_views()
-        self.central_widget.setTabPosition(Qt.RightDockWidgetArea, QTabWidget.North)
-        self.central_widget.setDockNestingEnabled(True)
 
         def set_caption(**kwargs):  # pylint: disable=unused-argument
             if self.workspace.main_instance.project.am_none:
@@ -261,9 +265,6 @@ class MainWindow(QMainWindow):
                 self.caption = os.path.basename(self.workspace.main_instance.project.filename)
 
         self.workspace.main_instance.project.am_subscribe(set_caption)
-
-        self.tab = self.central_widget.findChild(QTabBar)
-        self.tab.tabBarClicked.connect(self.on_center_tab_clicked)
 
     #
     # Shortcuts
@@ -405,7 +406,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
 
         # Ask if the user wants to save things
-        if self.workspace.main_instance is not None and not self.workspace.main_instance.project.am_none:
+        if self.workspace.main_instance is not None \
+                and not self.workspace.main_instance.project.am_none \
+                and self.shown_at_start:
             msgbox = QMessageBox()
             msgbox.setWindowTitle("Save database")
             msgbox.setText("angr management is about to exit. Do you want to save the database?")
@@ -450,9 +453,6 @@ class MainWindow(QMainWindow):
         """
         self.workspace.current_screen.am_obj = screen
         self.workspace.current_screen.am_event()
-
-    def on_center_tab_clicked(self, index):
-        self.workspace.view_manager.handle_center_tab_click(index)
 
     #
     # Actions
@@ -730,7 +730,7 @@ class MainWindow(QMainWindow):
 
         # trigger callbacks
         self.workspace.reload()
-        self.workspace.on_cfg_generated()
+        self.workspace.main_instance.on_cfg_generated()
         self.workspace.plugins.angrdb_load_entries(job.extra_info)
 
     def _save_database(self, file_path):

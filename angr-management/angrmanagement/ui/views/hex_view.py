@@ -652,7 +652,7 @@ class HexGraphicsObject(QGraphicsObject):
             Qt.Key_End: 0,
         }
         if event.key() in movement_keys:
-            if int(QApplication.keyboardModifiers()) & Qt.ShiftModifier:
+            if QApplication.keyboardModifiers() & Qt.ShiftModifier:
                 if self.selection_start is None:
                     self.begin_selection()
             else:
@@ -677,7 +677,7 @@ class HexGraphicsObject(QGraphicsObject):
                 self.set_cursor(new_cursor, update_viewport=False)
             event.accept()
             return
-        elif int(QApplication.keyboardModifiers()) & Qt.ControlModifier:
+        elif QApplication.keyboardModifiers() & Qt.ControlModifier:
             if event.key() == Qt.Key_Space:
                 self.set_cursor(self.cursor, ascii_column=(not self.ascii_column_active))
                 event.accept()
@@ -1153,6 +1153,7 @@ class HexGraphicsView(QAbstractScrollArea):
         if self._processing_scroll_event:
             return
         self._processing_scroll_event = True
+        action = QAbstractSlider.SliderAction(action)  # XXX: `action` is passed as an int
         if action == QAbstractSlider.SliderSingleStepAdd:
             self.set_display_offset(self.hex.display_offset_addr + 0x10)
         elif action == QAbstractSlider.SliderSingleStepSub:
@@ -1520,7 +1521,7 @@ class HexView(SynchronizedView):
 
         status_bar = QFrame()
         status_lyt = QHBoxLayout()
-        status_lyt.setContentsMargins(0, 0, 0, 0)
+        status_lyt.setContentsMargins(3, 3, 3, 3)
 
         self._status_lbl = QLabel()
         self._status_lbl.setText('Address: ')
@@ -1549,8 +1550,10 @@ class HexView(SynchronizedView):
 
         self.inner_widget = HexGraphicsView(parent=self)
         lyt = QVBoxLayout()
-        lyt.addWidget(self.inner_widget)
         lyt.addWidget(status_bar)
+        lyt.addWidget(self.inner_widget)
+        lyt.setContentsMargins(0, 0, 0, 0)
+        lyt.setSpacing(1)
         self.setLayout(lyt)
         self.inner_widget.cursor_changed.connect(self.on_cursor_changed)
         self.inner_widget.hex.viewport_changed.connect(self.on_cursor_changed)

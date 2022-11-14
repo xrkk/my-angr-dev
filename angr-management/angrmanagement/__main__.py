@@ -159,7 +159,7 @@ def start_management(filepath=None, use_daemon=None, profiling=False):
     if not check_dependencies():
         sys.exit(1)
 
-    from .ui.css import refresh_theme  # import .ui after shwing the splash screen since it's going to take time
+    from .ui.css import refresh_theme  # import .ui after showing the splash screen since it's going to take time
 
     refresh_theme()
 
@@ -188,6 +188,7 @@ def start_management(filepath=None, use_daemon=None, profiling=False):
     if file_to_open is not None:
         main_window.load_file(file_to_open)
 
+    main_window.initialized = True
     main_window.workspace.view_manager.main_window_initialized()
 
     app.exec_()

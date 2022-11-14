@@ -608,6 +608,22 @@ class StandardTests(TestCase):
         print(s.max(x, extra_constraints=[x <= 18]))
         assert s.max(x) == 19
 
+    def test_cached_max(self):
+        s = claripy.Solver()
+        x = claripy.BVS("x", 32)
+        assert not s.constraints
+        assert s.max(x) == 0xffffffff
+        assert len(s.constraints) == 1  # ConstraintExpansionMixin will add a new constraint
+        assert s.max(x) == 0xffffffff  # calling it the second time, the cache should not give a different result
+
+        s = claripy.Solver()
+        y = claripy.BVS("y", 32)
+        s.add(y == 8)
+        assert s.eval(y, n=1)[0] == 8
+        assert len(s.constraints) == 1
+        assert s.max(x) == 0xffffffff
+        assert s.max(x) == 0xffffffff
+
 #
 # Multi-Solver test base classes
 #
@@ -672,6 +688,42 @@ class TestComposite(TestCase, UnsatCore):
         raw_composite_solver(True)
     def test_composite_solver_without_reuse(self):
         raw_composite_solver(False)
+
+    def test_composite_solver_child_solvers_transitive_closure(self):
+
+        # https://github.com/angr/angr/issues/3604
+        # the child solver must be merged from solvers for the transitive closure of all variable names
+
+        s = claripy.SolverComposite()
+        aa = claripy.BVS("aa", 32)
+        bb = claripy.BVS("bb", 32)
+        cc = claripy.BVS("cc", 32)
+        dd = claripy.BVS("dd", 32)
+        ee = claripy.BVS("ee", 32)
+
+        s.add(dd[0:0] != 0)
+        s.add(bb != 0)
+        s.add(aa[15:0] != 0)
+        s.add(claripy.If(aa[15:0] >= 0x1, claripy.BVV(0x1, 32), claripy.BVV(0x0, 32)) == 1)
+        s.add(0xfffffff + cc + bb == 0)
+        s.add(claripy.If((claripy.If(bb == 0x0, bb, dd) | ee) == 0, claripy.BVV(1, 1), claripy.BVV(0, 1)) != 1)
+        # print(s._solvers)
+
+        s.add(dd == 0xb)
+        s.simplify()
+        # print(s._solvers)
+
+        s.add(bb == 0x8004)
+        s.simplify()
+        # print(s._solvers)
+
+        s.add(ee == 0)
+        s.simplify()
+        # print(s._solvers)
+
+        bb_values = s.eval(bb, n=8)
+        assert len(bb_values) == 1
+        assert bb_values[0] == 0x8004
 
 
 class TestSolverCacheless(TestCase, UnsatCore):

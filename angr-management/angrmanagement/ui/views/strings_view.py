@@ -88,7 +88,7 @@ class StringsView(BaseView):
                                                 )
 
         self._filter_string = QLineEdit(self)
-        self._regex_checkbox = QCheckBox("Regex?", self)
+        self._regex_checkbox = QCheckBox("Regex", self)
         self._filter_string.textChanged.connect(self.on_filter_change)
         self._regex_checkbox.stateChanged.connect(self.on_filter_change)
 
@@ -98,12 +98,15 @@ class StringsView(BaseView):
         function_layout.addWidget(QLabel("Filter:",self))
         function_layout.addWidget(self._filter_string, 10)
         function_layout.addWidget(self._regex_checkbox)
+        function_layout.setContentsMargins(3, 3, 3, 3)
+        function_layout.setSpacing(4)
 
         self._string_table = QStringTable(self.instance, self, selection_callback=self._on_string_selected)
 
         layout = QVBoxLayout()
         layout.addLayout(function_layout)
         layout.addWidget(self._string_table)
+        layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.setLayout(layout)
