@@ -1,11 +1,9 @@
-from typing import Optional, Tuple, Any
+# pylint:disable=wrong-import-position
+from typing import Optional, Tuple, Any, Union
 
 import networkx
 
 import ailment
-
-from .structurer_nodes import MultiNode, BaseNode, CodeNode, SequenceNode, ConditionNode, SwitchCaseNode, \
-    CascadingConditionNode
 
 
 def remove_last_statement(node):
@@ -26,6 +24,13 @@ def remove_last_statement(node):
             stmt = remove_last_statement(node.nodes[-1])
             if BaseNode.test_empty_node(node.nodes[-1]):
                 node.nodes = node.nodes[:-1]
+    elif type(node) is ConditionNode:
+        if node.true_node is None and node.false_node is not None:
+            stmt = remove_last_statement(node.false_node)
+        elif node.true_node is not None and node.false_node is None:
+            stmt = remove_last_statement(node.true_node)
+        else:
+            raise NotImplementedError("More than one last statement exist")
     else:
         raise NotImplementedError()
 
@@ -147,52 +152,65 @@ def get_ast_subexprs(claripy_ast):
             yield ast
 
 
-def insert_node(parent, insert_idx, node, node_idx, label=None, insert_location=None):
+def insert_node(parent, insert_location: str, node, node_idx: Optional[Union[int,Tuple[int]]], label=None):
+
+    if insert_location not in {"before", "after"}:
+        raise ValueError('"insert_location" must be either "before" or "after"')
 
     if isinstance(parent, SequenceNode):
-        parent.nodes.insert(insert_idx, node)
+        if insert_location == "before":
+            parent.nodes.insert(node_idx, node)
+        else: # if insert_location == "after":
+            parent.nodes.insert(node_idx + 1, node)
     elif isinstance(parent, CodeNode):
         # Make a new sequence node
-        seq = SequenceNode(parent.addr, nodes=[parent.node, node])
+        if insert_location == "before":
+            seq = SequenceNode(parent.addr, nodes=[node, parent.node])
+        else: # if insert_location == "after":
+            seq = SequenceNode(parent.addr, nodes=[parent.node, node])
         parent.node = seq
     elif isinstance(parent, MultiNode):
-        parent.nodes.insert(insert_idx, node)
+        if insert_location == "before":
+            parent.nodes.insert(node_idx, node)
+        else:
+            parent.nodes.insert(node_idx + 1, node)
     elif isinstance(parent, ConditionNode):
         if node_idx == 0:
             # true node
-            if not isinstance(parent.true_node, (SequenceNode, MultiNode)):
+            if not isinstance(parent.true_node, SequenceNode):
                 if parent.true_node is None:
                     parent.true_node = SequenceNode(parent.addr, nodes=[])
                 else:
                     parent.true_node = SequenceNode(parent.true_node.addr, nodes=[parent.true_node])
-            insert_node(parent.true_node, insert_idx - node_idx, node, 0)
+            insert_node(parent.true_node, insert_location, node, 0)
         else:
             # false node
-            if not isinstance(parent.false_node, (SequenceNode, MultiNode)):
+            if not isinstance(parent.false_node, SequenceNode):
                 if parent.false_node is None:
                     parent.false_node = SequenceNode(parent.addr, nodes=[])
                 else:
                     parent.false_node = SequenceNode(parent.false_node.addr, nodes=[parent.false_node])
-            insert_node(parent.false_node, insert_idx - node_idx, node, 0)
+            insert_node(parent.false_node, insert_location, node, 0)
     elif isinstance(parent, CascadingConditionNode):
         cond, child_node = parent.condition_and_nodes[node_idx]
         if not isinstance(child_node, SequenceNode):
             child_node = SequenceNode(child_node.addr, nodes=[child_node])
             parent.condition_and_nodes[node_idx] = (cond, child_node)
-        insert_node(child_node, insert_idx - node_idx, node, 0)
+        insert_node(child_node, insert_location, node, 0)
     elif isinstance(parent, SwitchCaseNode):
         # note that this case will be hit only when the parent node is not a container, such as SequenceNode or
         # MultiNode. we always need to create a new SequenceNode and replace the original node in place.
+
         if label == 'switch_expr':
             raise TypeError("You cannot insert a node after an expression.")
         if label == 'case':
-            # node_idx is the case number
+            # node_idx is the case number.
             if insert_location == 'after':
                 new_nodes = [ parent.cases[node_idx], node ]
             elif insert_location == 'before':
                 new_nodes = [ node, parent.cases[node_idx] ]
             else:
-                raise TypeError("Unsupported 'insert_location' value %r." % insert_location)
+                raise TypeError(f"Unsupported insert_location value \"{insert_location}\".")
             seq = SequenceNode(new_nodes[0].addr, nodes=new_nodes)
             parent.cases[node_idx] = seq
         elif label == 'default':
@@ -204,6 +222,9 @@ def insert_node(parent, insert_idx, node, node_idx, label=None, insert_location=
                 raise TypeError("Unsupported 'insert_location' value %r." % insert_location)
             seq = SequenceNode(new_nodes[0].addr, nodes=new_nodes)
             parent.default_node = seq
+        else:
+            raise TypeError(f"Unsupported label value \"{label}\". Must be one of the following: switch_expr, case, "
+                            f"default.")
     else:
         raise NotImplementedError()
 
@@ -266,3 +287,18 @@ def to_ail_supergraph(transition_graph: networkx.DiGraph) -> networkx.DiGraph:
             break
 
     return transition_graph
+
+
+def is_empty_node(node):
+    if isinstance(node, ailment.Block):
+        return not node.statements
+    if isinstance(node, MultiNode):
+        return all(is_empty_node(n) for n in node.nodes)
+    if isinstance(node, SequenceNode):
+        return all(is_empty_node(n) for n in node.nodes)
+    return False
+
+
+# delayed import
+from .structuring.structurer_nodes import MultiNode, BaseNode, CodeNode, SequenceNode, ConditionNode, SwitchCaseNode, \
+    CascadingConditionNode

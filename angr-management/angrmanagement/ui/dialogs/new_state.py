@@ -303,7 +303,7 @@ class NewState(QDialog):
                 continue
             parent = QTreeWidgetItem(options_tree)
             parent.setText(0, name)
-            parent.setFlags(parent.flags() | Qt.ItemIsTristate | Qt.ItemIsUserCheckable)
+            parent.setFlags(parent.flags() | Qt.ItemIsAutoTristate | Qt.ItemIsUserCheckable)
             for option in members:
                 child = QTreeWidgetItem(parent)
                 child.setText(0, option)
@@ -312,7 +312,7 @@ class NewState(QDialog):
                 children_items.append(child)
         parent = QTreeWidgetItem(options_tree)
         parent.setText(0, "All options")
-        parent.setFlags(parent.flags() | Qt.ItemIsTristate | Qt.ItemIsUserCheckable)
+        parent.setFlags(parent.flags() | Qt.ItemIsAutoTristate | Qt.ItemIsUserCheckable)
         for option in {x for x in angr.sim_options.__dict__.values() if type(x) is str and is_option(x)}:
             child = QTreeWidgetItem(parent)
             child.setText(0, option)
@@ -325,7 +325,7 @@ class NewState(QDialog):
             if not is_option(option):
                 return
 
-            checked = item.checkState(0)
+            checked = item.checkState(0) == Qt.CheckState.Checked
             if (option in self._options) == checked:
                 return
 
@@ -336,7 +336,7 @@ class NewState(QDialog):
 
             for child in children_items:
                 if child is not item and child.text(0) == option:
-                    child.setCheckState(0, checked)
+                    child.setCheckState(0, Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
 
         options_tree.itemChanged.connect(maintain_model)
 

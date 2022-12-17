@@ -195,9 +195,9 @@ class Function(Serializable):
                 if self.project.arch.name in DEFAULT_CC:
                     cc = DEFAULT_CC[arch.name](arch)
 
-            self.calling_convention = cc
+            self.calling_convention: Optional[SimCC] = cc
         else:
-            self.calling_convention = None
+            self.calling_convention: Optional[SimCC] = None
 
     @property
     def name(self):
@@ -995,7 +995,7 @@ class Function(Serializable):
             if 'type' in data:
                 if data['type'] in ('transition', 'exception') and ('outside' not in data or data['outside'] is False):
                     g.add_edge(src, dst, **data)
-                elif data['type'] == 'fake_return' and 'confirmed' in data and \
+                elif data['type'] == 'fake_return' and \
                         ('outside' not in data or data['outside'] is False):
                     g.add_edge(src, dst, **data)
 

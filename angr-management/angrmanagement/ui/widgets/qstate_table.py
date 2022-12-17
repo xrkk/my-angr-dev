@@ -12,6 +12,10 @@ from ..dialogs.new_state import NewState
 
 
 class QStateTableItem(QTableWidgetItem):
+    """
+    An entry within a QStateTable
+    """
+
     def __init__(self, state, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -24,7 +28,7 @@ class QStateTableItem(QTableWidgetItem):
         base_name = state.gui_data.base_name
         is_changed = 'No' if state.gui_data.is_original else 'Yes'
         mode = state.mode
-        address = '%#x' % state.addr if isinstance(state.addr, int) else 'Symbolic'
+        address = '%x' % state.addr if isinstance(state.addr, int) else 'Symbolic'
         state_options = {o for o, v in state.options._options.items() if v is True}
         options_plus = state_options - angr.sim_options.modes[mode]
         options_minus = angr.sim_options.modes[mode] - state_options
@@ -54,6 +58,10 @@ class QStateTableItem(QTableWidgetItem):
 
 
 class QStateTable(QTableWidget):
+    """
+    The table which is the subject of the States View
+    """
+
     def __init__(self, instance, parent, selection_callback=None):
         super().__init__(parent)
 
@@ -74,9 +82,8 @@ class QStateTable(QTableWidget):
         self.states.am_subscribe(self._watch_states)
         self.reload()
 
-    def hideEvent(self, event):
+    def closeEvent(self, _):
         self.states.am_unsubscribe(self._watch_states)
-        return super().hideEvent(event)
 
     def current_state_record(self):
         selected_index = self.currentRow()

@@ -15,11 +15,6 @@ docker = None
 
 l = logging.getLogger("archr.target.docker_target")
 
-_super_mount_cmd = "docker run --rm --privileged " \
-                   "--mount type=bind,src=/tmp/archr_mounts/,target=/tmp/archr_mounts,bind-propagation=rshared " \
-                   "--mount type=bind,src=/var/lib/docker,target=/var/lib/docker,bind-propagation=rshared " \
-                   "ubuntu "
-
 
 def import_docker():
     global docker  # pylint:disable=global-statement
@@ -117,8 +112,13 @@ class DockerImageTarget(Target):
         if self.target_args[:3] == [ "setarch", "x86_64", "-R" ]:
             self.target_args = self.target_args[3:]
         if "qemu-" in self.target_args[0]:
-            self.target_args_prefix = self.target_args[:1]
-            self.target_args = self.target_args[1:]
+            if '--' not in self.target_args:
+                self.target_args_prefix = self.target_args[:1]
+                self.target_args = self.target_args[1:]
+            else:
+                idx = self.target_args.index('--')
+                self.target_args_prefix = self.target_args[:idx]
+                self.target_args = self.target_args[idx+1:]
             self.target_arch = re.search(r"qemu-(\w+)(-\w+)?", self.target_args_prefix[0]).group(1)
 
         if re.match(r"ld[0-9A-Za-z\-]*\.so.*", os.path.basename(self.target_args[0])) is not None:
@@ -213,7 +213,20 @@ class DockerImageTarget(Target):
                 pass
             self.container = None
         if self.tmp_bind:
-            os.system(_super_mount_cmd + "rm -rf %s" % self.tmp_bind)
+            self._client.containers.run(
+                "ubuntu:jammy",
+                f"rm -rf {self.tmp_bind}",
+                mounts=[
+                    docker.types.Mount(
+                        type="bind",
+                        source="/tmp/archr_mounts",
+                        target="/tmp/archr_mounts",
+                        propagation="rshared",
+                    ),
+                ],
+                privileged=True,
+                remove=True,
+            )
         super().stop()
         return self
 
@@ -453,7 +466,13 @@ class DockerImageTarget(Target):
     def _pull(self):
         try:
             if ':' in self.image_id:
-                image, tag = self.image_id.split(':')
+                col_count = self.image_id.count(':')
+                if col_count == 1:
+                    image, tag = self.image_id.split(':')
+                elif col_count == 2:
+                    host, port_name, tag = self.image_id.split(':')
+                    image = host + ":" + port_name
+
                 self._client.images.pull(image, tag=tag)
             else:
                 self._client.images.pull(self.image_id)

@@ -68,7 +68,11 @@ class PluginManager:
                 self.loaded_plugins[desc.shortname] = desc
 
             # activate all enabled plugins
-            for _, desc in self.loaded_plugins.items():
+            for plugin_name, desc in self.loaded_plugins.items():
+                # don't reactivate already active plugins
+                if plugin_name in self.active_plugins:
+                    continue
+
                 plugin_conf_key = f"plugin_{desc.name}_enabled"
 
                 # see if the plugin is enabled or not
@@ -101,7 +105,7 @@ class PluginManager:
         basedir = os.path.join(os.path.dirname(desc.plugin_file_path))
         for plugin_cls in load_plugins_from_file(os.path.join(basedir, desc.entrypoints[0])):
             if isinstance(plugin_cls, Exception):
-                l.warning("Exception occurred during plugin loading: %s", plugin_cls)
+                l.warning("Exception occurred during plugin loading: %s", plugin_cls, exc_info=True)
             else:
                 self.activate_plugin(desc.shortname, plugin_cls)
 

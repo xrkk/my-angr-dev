@@ -18,7 +18,7 @@ from .analysis_options import AnalysesConfiguration, CFGAnalysisConfiguration, F
 from .jobs import VariableRecoveryJob, PrototypeFindingJob, CodeTaggingJob, FlirtSignatureRecognitionJob, \
     CFGGenerationJob
 from .object_container import ObjectContainer
-from .log import LogRecord, LogDumpHandler
+from .log import LogRecord, initialize
 from ..logic import GlobalInfo
 from ..logic.threads import gui_thread_schedule_async, gui_thread_schedule
 from ..logic.debugger import DebuggerListManager, DebuggerManager
@@ -26,7 +26,6 @@ from ..logic.debugger.simgr import SimulationDebugger
 from ..data.trace import Trace
 from ..data.breakpoint import BreakpointManager, BreakpointType, Breakpoint
 from ..ui.dialogs import AnalysisOptionsDialog
-from ..ui.views import DisassemblyView
 
 if TYPE_CHECKING:
     from ..ui.workspace import Workspace
@@ -38,7 +37,7 @@ class Instance:
     """
     An object to give access to normal angr project objects like a Project, CFG, and other analyses.
     """
-    project: Union[angr.Project, ObjectContainer]
+    project: ObjectContainer
     cfg: Union[angr.analyses.cfg.CFGBase, ObjectContainer]
     cfb: Union[angr.analyses.cfg.CFBlanket, ObjectContainer]
     log: Union[List[LogRecord], ObjectContainer]
@@ -79,7 +78,7 @@ class Instance:
                                 lambda: [PlainTextProtocol, BackslashTextProtocol],
                                 List[Type[ProtocolInteractor]],
                                 'Available interaction protocols')
-        self.register_container('log', lambda: [], List[LogRecord], 'Saved log messages')
+        self.register_container('log', lambda: [], List[LogRecord], 'Saved log messages', logging_permitted=False)
         self.register_container('current_trace', lambda: None, Type[Trace], 'Currently selected trace')
         self.register_container('traces', lambda: [], List[Trace], 'Global traces list')
 
@@ -95,10 +94,8 @@ class Instance:
         self._label_rename_callback = None  # type: Union[None, Callable[[int, str], None]]      #  (addr, new_name)
         self._set_comment_callback = None  # type: Union[None, Callable[[int, str], None]]       #  (addr, comment_text)
 
-        self._logging_handler = LogDumpHandler(self)
-
-        # Register a root logger
-        logging.root.handlers.insert(0, self._logging_handler)
+        # Setup logging
+        initialize(self)
 
         self.cfg_args = None
         self.variable_recovery_args = None
@@ -170,7 +167,7 @@ class Instance:
     # Public methods
     #
 
-    def register_container(self, name, default_val_func, ty, description):
+    def register_container(self, name, default_val_func, ty, description, **kwargs):
         if name in self.extra_containers:
             cur_ty = self._container_defaults[name][1]
             if ty != cur_ty:
@@ -178,7 +175,7 @@ class Instance:
 
         else:
             self._container_defaults[name] = (default_val_func, ty)
-            self.extra_containers[name] = ObjectContainer(default_val_func(), description)
+            self.extra_containers[name] = ObjectContainer(default_val_func(), description, **kwargs)
 
     def initialize(self, initialized=False, **kwargs):  # pylint:disable=unused-argument
         if self.project.am_none:
@@ -536,7 +533,6 @@ class Instance:
             # we don't have a current view or the current view does not have function-specific content. create a
             # disassembly view to display the selected function.
             disasm_view = self.workspace._get_or_create_disassembly_view()
-            #disasm_view = DisassemblyView(self, 'center')
             disasm_view.display_function(func)
             self.workspace.view_manager.raise_view(disasm_view)
         else:

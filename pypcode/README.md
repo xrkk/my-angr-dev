@@ -1,11 +1,10 @@
 pypcode
 =======
 [![pypi](https://img.shields.io/pypi/v/pypcode)](https://pypi.org/project/pypcode/)
-[![Build Status](https://github.com/angr/pypcode/actions/workflows/build.yml/badge.svg?branch=master&event=push)](https://github.com/angr/pypcode/actions/workflows/build.yml)
 
 Machine code disassembly and IR translation library for Python using the
 excellent [SLEIGH](https://ghidra.re/courses/languages/html/sleigh.html)
-library from the [Ghidra](https://ghidra-sre.org/) framework.
+library from the [Ghidra](https://ghidra-sre.org/) framework (version 10.2.2).
 
 This library was created primarily for use with [angr](http://angr.io), which
 provides analyses and symbolic execution of p-code.
@@ -13,18 +12,18 @@ provides analyses and symbolic execution of p-code.
 Quick Start
 -----------
 This package can be installed on Linux, macOS, and Windows platforms for recent
-(3.6+) versions of both CPython and PyPy. Wheels are provided for several
+(3.8+) versions of both CPython and PyPy. Wheels are provided for several
 configurations. You can install the latest release from PyPI using `pip`:
 
 ```bash
-pip3 install pypcode
+pip install pypcode
 ```
 
 You can also install the very latest development version from this repository
 using `pip`:
 
 ```bash
-pip3 install --user git+https://github.com/angr/pypcode
+pip install --user https://github.com/angr/pypcode/archive/refs/heads/master.zip
 ```
 
 You can now invoke the `pypcode` module from command line to translate supported

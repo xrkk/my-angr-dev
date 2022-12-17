@@ -4,14 +4,14 @@ import logging
 from typing import List, Any, Optional
 
 import PySide6
-from PySide6.QtWidgets import QTableView, QAbstractItemView, QHeaderView
+from PySide6.QtWidgets import QTableView, QAbstractItemView
 from PySide6.QtCore import QAbstractTableModel, Qt
 from PySide6.QtGui import QIcon, QCursor, QGuiApplication, QClipboard, QKeySequence
 
-from ...config import IMG_LOCATION
-from ...logic.threads import gui_thread_schedule_async
-from ...data.log import LogRecord
-from ..menus.log_menu import LogMenu
+from angrmanagement.config import IMG_LOCATION
+from angrmanagement.logic.threads import gui_thread_schedule_async
+from angrmanagement.data.log import LogRecord
+from angrmanagement.ui.menus.log_menu import LogMenu
 
 
 class QLogIcons:
@@ -154,7 +154,7 @@ class QLogWidget(QTableView):
         self.setModel(self.model)
 
         self.setColumnWidth(0, 20)
-        hheader.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.setColumnWidth(1, 150)
 
         self.log_view.instance.log.am_subscribe(self._on_new_logrecord)
 

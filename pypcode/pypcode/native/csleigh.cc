@@ -251,6 +251,10 @@ public:
 
     bool loadSlaFile(const char *path)
     {
+        // FIXME: Globals...
+        AttributeId::initialize();
+        ElementId::initialize();
+
         LOG("%p Loading slafile...", this);
         // FIXME: try/catch XmlError
         m_document = m_document_storage.openDocument(path);
@@ -412,9 +416,7 @@ int LPX(Addr_isConstant)(LPX(Address) *a)
 
 LPX(AddrSpace) LPX(Addr_getSpaceFromConst)(LPX(Address) *a)
 {
-    AddrSpace *space = Address::getSpaceFromConst(
-        Address((AddrSpace *)(a->space), a->offset));
-    return (LPX(AddrSpace))space;
+    return (LPX(AddrSpace))(uintp)a->offset;
 }
 
 const char *LPX(AddrSpace_getName)(LPX(AddrSpace) as)

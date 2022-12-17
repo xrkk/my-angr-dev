@@ -35,10 +35,12 @@ if [[ "$OSTYPE" == "linux-gnu" ]]; then
 fi
 
 # Install angr-mangement
-pip install -e .[binsync]
+pip install -e .
 
 # Bundle!
-python packaging/pyinstaller/bundle.py --onefile
+if [[ "$OSTYPE" != "darwin"* ]]; then
+    python packaging/pyinstaller/bundle.py --onefile
+fi
 python packaging/pyinstaller/bundle.py --onedir
 if [[ "$OSTYPE" == "linux-gnu" ]]; then
     bash packaging/appimage/build.sh
@@ -48,23 +50,23 @@ mkdir upload
 
 # Prepare onefiles
 ONEFILE_DIR=packaging/pyinstaller/onefile
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    cp $ONEFILE_DIR/angr-management upload/angr-management-onefile-macos
-elif [[ "$OSTYPE" == "linux-gnu" ]]; then
+if [[ "$OSTYPE" == "linux-gnu" ]]; then
     source /etc/os-release
     cp $ONEFILE_DIR/angr-management upload/angr-management-onefile-$ID-$VERSION_ID
-else
+elif [[ "$OSTYPE" == "msys" ]]; then
     cp $ONEFILE_DIR/angr-management.exe upload/angr-management-onefile-win64.exe
 fi
 
 # Prepare onedirs
 ONEDIR_DIR=packaging/pyinstaller/onedir
 if [[ "$OSTYPE" == "darwin"* ]]; then
-    hdiutil create upload/angr-management-macOS.dmg -volname "angr-management nightly" -srcfolder $ONEDIR_DIR
+    mkdir /tmp/angr-management-dmg
+    cp -r $ONEDIR_DIR/*.app /tmp/angr-management-dmg
+    hdiutil create upload/angr-management-macOS.dmg -volname "angr-management nightly" -srcfolder /tmp/angr-management-dmg
 elif [[ "$OSTYPE" == "linux-gnu" ]]; then
     source /etc/os-release
     tar -C $ONEDIR_DIR -czf upload/angr-management-$ID-$VERSION_ID.tar.gz angr-management
-else
+elif [[ "$OSTYPE" == "msys" ]]; then
     7z a upload/angr-management-win64.zip $ONEDIR_DIR/\*
 fi
 
