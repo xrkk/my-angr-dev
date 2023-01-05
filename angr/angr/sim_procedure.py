@@ -105,13 +105,13 @@ class SimProcedure:
         is_function=None, **kwargs
     ):
         # WE'LL FIGURE IT OUT
-        self.project = project # type: angr.Project
-        self.arch = project.arch if project is not None else None  # type: archinfo.arch.Arch
+        self.project: angr.Project = project
+        self.arch: archinfo.arch.Arch  = project.arch if project is not None else None
         self.addr = None
-        self.cc = cc # type: angr.SimCC
+        self.cc: angr.SimCC = cc
         if type(prototype) is str:
             prototype = parse_signature(prototype)
-        self.prototype = prototype  # type: angr.sim_type.SimTypeFunction
+        self.prototype: angr.sim_type.SimTypeFunction = prototype
         self.canonical = self
 
         self.kwargs = kwargs
@@ -270,7 +270,7 @@ class SimProcedure:
         # make a copy of the canon copy, customize it for the specific continuation, then hook it
         if name not in self.canonical.continuations:
             cont = copy.copy(self.canonical)
-            target_name = '%s.%s' % (self.display_name, name)
+            target_name = f'{self.display_name}.{name}'
             should_be_none = self.project.loader.extern_object.get_symbol(target_name)
             if should_be_none is None:
                 cont.addr = self.project.loader.extern_object.make_extern(target_name, sym_type=SymbolType.TYPE_OTHER).rebased_addr

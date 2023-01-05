@@ -1,12 +1,3 @@
-import angr
-import claripy
-import string
-import logging
-
-l = logging.getLogger(name=__name__)
-
-
-#pylint:disable=pointless-string-statement
 """
 This file contains objects to track additional information during a trace or
 modify symbolic variables during a trace.
@@ -21,8 +12,17 @@ This can happen in challenge response if all of the values in the flag page are 
 before being printed.
 """
 
+import logging
+import string
 
-class FormatInfo(object):
+import angr
+import claripy
+
+
+l = logging.getLogger(name=__name__)
+
+
+class FormatInfo:
     def copy(self):
         raise NotImplementedError
 
@@ -308,7 +308,7 @@ class ChallRespInfo(angr.state_plugins.SimStatePlugin):
         # for each constraint we check what the max stdin it has and how much stdout we have
         self.stdin_min_stdout_constraints = {}
         self.stdin_min_stdout_reads = {}
-        self.format_infos = dict()
+        self.format_infos = {}
         self.pending_info = None
         self.str_to_int_pairs = []
         self.int_to_str_pairs = []
@@ -633,11 +633,11 @@ class ZenPlugin(angr.state_plugins.SimStatePlugin):
     def __init__(self, max_depth=13):
         angr.state_plugins.SimStatePlugin.__init__(self)
         # dict from cache key to asts
-        self.replacements = dict()
+        self.replacements = {}
         # dict from zen vars to the depth
-        self.depths = dict()
+        self.depths = {}
         # dict from zen vars to the bytes contained
-        self.byte_dict = dict()
+        self.byte_dict = {}
         # the max depth an object can have before it is replaced with a zen object with no constraint
         self.max_depth = max_depth
         # the zen replacement constraints (the ones that don't preconstrain input)
@@ -670,7 +670,7 @@ class ZenPlugin(angr.state_plugins.SimStatePlugin):
     def get_expr_depth(self, expr):
         flag_args = self.get_flag_rand_args(expr)
         flag_arg_vars = set.union(*[set(v.variables) for v in flag_args])
-        flag_arg_vars = set(v for v in flag_arg_vars if v.startswith("cgc-flag") or v.startswith("random"))
+        flag_arg_vars = {v for v in flag_arg_vars if v.startswith("cgc-flag") or v.startswith("random")}
         if len(flag_arg_vars) == 0:
             return 0
         depth = max(self.depths.get(v, 0) for v in flag_arg_vars) + 1
@@ -700,7 +700,7 @@ class ZenPlugin(angr.state_plugins.SimStatePlugin):
     def get_flag_bytes(self, ast):
         flag_args = self.get_flag_rand_args(ast)
         flag_arg_vars = set.union(*[set(v.variables) for v in flag_args])
-        flag_arg_vars = set(v for v in flag_arg_vars if v.startswith("cgc-flag"))
+        flag_arg_vars = {v for v in flag_arg_vars if v.startswith("cgc-flag")}
         contained_bytes = set()
         for v in flag_arg_vars:
             if v in self.byte_dict:
@@ -708,7 +708,7 @@ class ZenPlugin(angr.state_plugins.SimStatePlugin):
         return contained_bytes
 
     def filter_constraints(self, constraints):
-        zen_cache_keys = set(x.cache_key for x in self.zen_constraints)
+        zen_cache_keys = {x.cache_key for x in self.zen_constraints}
         new_cons = [ ]
         for con in constraints:
             if con.cache_key in zen_cache_keys or \

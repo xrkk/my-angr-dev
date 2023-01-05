@@ -96,7 +96,7 @@ class Function(Serializable):
         # Calling convention
         self.calling_convention: Optional[SimCC] = None
         # Function prototype
-        self.prototype = None  # type: Optional[SimTypeFunction]
+        self.prototype: Optional[SimTypeFunction] = None
         self.is_prototype_guessed: bool = True
         # Whether this function returns or not. `None` means it's not determined yet
         self._returning = None
@@ -113,7 +113,7 @@ class Function(Serializable):
         self._local_block_addrs = set()  # a set of addresses of all blocks inside the function
 
         self.info = {}  # storing special information, like $gp values for MIPS32
-        self.tags = tuple()  # store function tags. can be set manually by performing CodeTagging analysis.
+        self.tags = ()  # store function tags. can be set manually by performing CodeTagging analysis.
 
         # TODO: Can we remove the following two members?
         # Register offsets of those arguments passed in registers
@@ -121,7 +121,7 @@ class Function(Serializable):
         # Stack offsets of those arguments passed in stack variables
         self._argument_stack_variables = []
 
-        self._project = None  # type: Optional[Project] # will be initialized upon the first access to self.project
+        self._project: Optional[Project] = None  # will be initialized upon the first access to self.project
 
         self.ran_cca = False  # this is set by CompleteCallingConventions to avoid reprocessing failed functions
 
@@ -369,7 +369,7 @@ class Function(Serializable):
         for block in self.blocks:
             known_executable_addresses.update(block.instruction_addrs)
         for function in self._function_manager.values():
-            known_executable_addresses.update(set(x.addr for x in function.graph.nodes()))
+            known_executable_addresses.update({x.addr for x in function.graph.nodes()})
 
         # loop over all local runtime values and check if the value points to a printable string
         for addr in self.local_runtime_values if not vex_only else self.code_constants:
@@ -421,7 +421,7 @@ class Function(Serializable):
         fresh_state = self._project.factory.blank_state(mode="fastpath")
         fresh_state.regs.ip = self.addr
 
-        graph_addrs = set(x.addr for x in self.graph.nodes() if isinstance(x, BlockNode))
+        graph_addrs = {x.addr for x in self.graph.nodes() if isinstance(x, BlockNode)}
 
         # process the nodes in a breadth-first order keeping track of which nodes have already been analyzed
         analyzed = set()
@@ -470,7 +470,7 @@ class Function(Serializable):
             if node is None:
                 # the node does not exist. maybe it's not a block node.
                 continue
-            missing = set(x.addr for x in list(self.graph.successors(node))) - analyzed
+            missing = {x.addr for x in list(self.graph.successors(node))} - analyzed
             for succ_addr in missing:
                 l.info("Forcing jump to missing successor: %#x", succ_addr)
                 if succ_addr not in analyzed:
@@ -499,7 +499,7 @@ class Function(Serializable):
             return False
 
     def __str__(self):
-        s = 'Function %s [%s]\n' % (self.name, self.addr)
+        s = f'Function {self.name} [{self.addr}]\n'
         s += '  Syscall: %s\n' % self.is_syscall
         s += '  SP difference: %d\n' % self.sp_delta
         s += '  Has return: %s\n' % self.has_return
@@ -514,9 +514,9 @@ class Function(Serializable):
 
     def __repr__(self):
         if self.is_syscall:
-            return '<Syscall function %s (%s)>' % (self.name,
+            return '<Syscall function {} ({})>'.format(self.name,
                                                    hex(self.addr) if isinstance(self.addr, int) else self.addr)
-        return '<Function %s (%s)>' % (self.name, hex(self.addr) if isinstance(self.addr, int) else self.addr)
+        return f'<Function {self.name} ({hex(self.addr) if isinstance(self.addr, int) else self.addr})>'
 
     def __setstate__(self, state):
         for k, v in state.items():
@@ -524,7 +524,7 @@ class Function(Serializable):
 
     def __getstate__(self):
         # self._local_transition_graph is a cache. don't pickle it
-        d = dict((k, getattr(self, k)) for k in self.__slots__)
+        d = {k: getattr(self, k) for k in self.__slots__}
         d['_local_transition_graph'] = None
         d['_project'] = None
         d['_function_manager'] = None
@@ -702,12 +702,12 @@ class Function(Serializable):
     def _confirm_fakeret(self, src, dst):
 
         if src not in self.transition_graph or dst not in self.transition_graph[src]:
-            raise AngrValueError('FakeRet edge (%s, %s) is not in transition graph.' % (src, dst))
+            raise AngrValueError(f'FakeRet edge ({src}, {dst}) is not in transition graph.')
 
         data = self.transition_graph[src][dst]
 
         if 'type' not in data or data['type'] != 'fake_return':
-            raise AngrValueError('Edge (%s, %s) is not a FakeRet edge' % (src, dst))
+            raise AngrValueError(f'Edge ({src}, {dst}) is not a FakeRet edge')
 
         # it's confirmed. register the node if needed
         if 'outside' not in data or data['outside'] is False:
@@ -1484,7 +1484,9 @@ class Function(Serializable):
         if len(func_def.keys()) > 1:
             raise Exception("Too many definitions: %s " % list(func_def.keys()))
 
-        name, ty = func_def.popitem() # type: str, SimTypeFunction
+        name: str
+        ty: SimTypeFunction
+        name, ty = func_def.popitem()
         self.name = name
         self.prototype = ty.with_arch(self.project.arch)
         # setup the calling convention

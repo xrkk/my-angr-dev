@@ -41,7 +41,7 @@ l = logging.getLogger(name=__name__)
 
 class CFGJob(CFGJobBase):
     def __init__(self, *args, **kwargs):
-        super(CFGJob, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         #
         # local variables used during analysis
@@ -108,7 +108,7 @@ class PendingJob:
         self.call_stack = call_stack
 
     def __repr__(self):
-        return "<PendingJob to %s, from function %s>" % (self.state.ip, hex(
+        return "<PendingJob to {}, from function {}>".format(self.state.ip, hex(
             self.returning_source) if self.returning_source is not None else 'Unknown')
 
     def __hash__(self):
@@ -323,7 +323,7 @@ class CFGEmulated(ForwardAnalysis, CFGBase):    # pylint: disable=abstract-metho
         :return: A copy of the CFG instance.
         """
         new_cfg = CFGEmulated.__new__(CFGEmulated)
-        super(CFGEmulated, self).make_copy(new_cfg)
+        super().make_copy(new_cfg)
 
         new_cfg._indirect_jump_target_limit = self._indirect_jump_target_limit
         new_cfg.named_errors = defaultdict(list, self.named_errors)
@@ -677,7 +677,7 @@ class CFGEmulated(ForwardAnalysis, CFGBase):    # pylint: disable=abstract-metho
         node_wrapper = (start_node, 0)
         stack = [node_wrapper]
         traversed_nodes = {start_node}
-        subgraph_nodes = set([start_node])
+        subgraph_nodes = {start_node}
 
         while stack:
             nw = stack.pop()
@@ -1201,8 +1201,8 @@ class CFGEmulated(ForwardAnalysis, CFGBase):    # pylint: disable=abstract-metho
 
             the_jobs = [ ]
             if block_id in self._pending_jobs:
-                the_jobs = self._pending_jobs.pop(block_id)
-                for the_job in the_jobs:  # type: Pendingjob
+                the_jobs: "Pendingjob" = self._pending_jobs.pop(block_id)
+                for the_job in the_jobs:
                     self._deregister_analysis_job(the_job.caller_func_addr, the_job)
             else:
                 the_jobs = [job]
@@ -3128,7 +3128,8 @@ class CFGEmulated(ForwardAnalysis, CFGBase):    # pylint: disable=abstract-metho
         if loop_callback is not None:
             graph_copy = networkx.DiGraph(self._graph)
 
-            for loop in loop_finder.loops:  # type: angr.analyses.loopfinder.Loop
+            loop: angr.analyses.loopfinder.Loop
+            for loop in loop_finder.loops:
                 loop_callback(graph_copy, loop)
 
             self.model.graph = graph_copy

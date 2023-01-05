@@ -1,4 +1,4 @@
-# pylint: disable=missing-class-docstring,no-self-use,
+# pylint: disable=missing-class-docstring,no-self-use,line-too-long
 import logging
 import os
 import re
@@ -433,7 +433,7 @@ class TestDecompiler(unittest.TestCase):
         # make sure function calls exist
         assert "set_program_name(" in dec.codegen.text
         assert "setlocale(" in dec.codegen.text
-        assert "usage();" in dec.codegen.text
+        assert "usage(0);" in dec.codegen.text
 
     @for_all_structuring_algos
     def test_decompiling_1after909_verify_password(self, decompiler_options=None):
@@ -482,7 +482,6 @@ class TestDecompiler(unittest.TestCase):
         p = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = p.analyses[CFGFast].prep()(normalize=True, data_references=True)
-        p.analyses[CompleteCallingConventionsAnalysis].prep()(recover_variables=True)
 
         # doit
         f = cfg.functions['doit']
@@ -528,6 +527,9 @@ class TestDecompiler(unittest.TestCase):
         assert "free(v" in code
         assert "free(NULL" not in code and "free(0" not in code
 
+        # return values are either 0xffffffff or -1
+        assert " = 4294967295;" in code or " = -1;" in code
+
     @for_all_structuring_algos
     def test_decompiling_libsoap(self, decompiler_options=None):
 
@@ -549,7 +551,6 @@ class TestDecompiler(unittest.TestCase):
         p = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = p.analyses[CFGFast].prep()(data_references=True, normalize=True)
-        _ = p.analyses[CompleteCallingConventionsAnalysis].prep()(recover_variables=True)
 
         func = cfg.functions['main']
 
@@ -708,7 +709,6 @@ class TestDecompiler(unittest.TestCase):
         p = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = p.analyses[CFGFast].prep()(data_references=True, normalize=True)
-        _ = p.analyses.CompleteCallingConventions(recover_variables=True)
 
         func_0 = cfg.functions['main']
         dec = p.analyses[Decompiler].prep()(func_0, cfg=cfg.model, options=decompiler_options)
@@ -838,7 +838,6 @@ class TestDecompiler(unittest.TestCase):
         p = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = p.analyses[CFGFast].prep()(data_references=True, normalize=True)
-        p.analyses[CompleteCallingConventionsAnalysis].prep()(recover_variables=True)
         func = cfg.functions['main']
 
         dec = p.analyses[Decompiler].prep()(func, cfg=cfg.model, options=decompiler_options)
@@ -858,7 +857,6 @@ class TestDecompiler(unittest.TestCase):
         p = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = p.analyses[CFGFast].prep()(data_references=True, normalize=True)
-        p.analyses[CompleteCallingConventionsAnalysis].prep()(recover_variables=True)
         func = cfg.functions['main']
 
         binop_operators = {
@@ -963,6 +961,7 @@ class TestDecompiler(unittest.TestCase):
         code_without_spaces = code.replace(" ", "").replace("\n", "")
         # make sure all break statements are followed by either "case " or "}"
         replaced = code_without_spaces.replace("break;case", "")
+        replaced = replaced.replace("break;default:", "")
         replaced = replaced.replace("break;}", "")
         assert "break" not in replaced
 
@@ -975,7 +974,6 @@ class TestDecompiler(unittest.TestCase):
         p = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = p.analyses[CFGFast].prep()(data_references=True, normalize=True)
-        p.analyses[CompleteCallingConventionsAnalysis].prep()(recover_variables=True)
 
         func = cfg.functions['my_message_callback']
 
@@ -997,7 +995,6 @@ class TestDecompiler(unittest.TestCase):
         p = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = p.analyses[CFGFast].prep()(data_references=True, normalize=True)
-        p.analyses[CompleteCallingConventionsAnalysis].prep()(recover_variables=True)
 
         func = cfg.functions.function(name='handle__suback', plt=False)
 
@@ -1053,7 +1050,6 @@ class TestDecompiler(unittest.TestCase):
         p = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = p.analyses.CFGFast(normalize=True)
-        p.analyses.CompleteCallingConventions(cfg=cfg, recover_variables=True)
 
         f = p.kb.functions['simple_strcpy']
         d = p.analyses.Decompiler(f, cfg=cfg.model, options=decompiler_options)
@@ -1075,7 +1071,6 @@ class TestDecompiler(unittest.TestCase):
         p = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = p.analyses.CFGFast(normalize=True)
-        p.analyses.CompleteCallingConventions(cfg=cfg, recover_variables=True)
 
         f = p.kb.functions['usage']
         d = p.analyses.Decompiler(f, cfg=cfg.model, options=decompiler_options)
@@ -1093,7 +1088,6 @@ class TestDecompiler(unittest.TestCase):
         p = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = p.analyses.CFGFast(normalize=True)
-        # p.analyses.CompleteCallingConventions(cfg=cfg, recover_variables=True)
 
         f = p.kb.functions['main']
         d = p.analyses.Decompiler(f, cfg=cfg.model, options=decompiler_options)
@@ -1152,7 +1146,6 @@ class TestDecompiler(unittest.TestCase):
         p = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = p.analyses.CFGFast(normalize=True, show_progressbar=not WORKER)
-        p.analyses.CompleteCallingConventions(cfg=cfg, recover_variables=True)
 
         f = p.kb.functions['main']
         d = p.analyses.Decompiler(f, cfg=cfg.model, options=decompiler_options, show_progressbar=not WORKER)
@@ -1348,13 +1341,25 @@ class TestDecompiler(unittest.TestCase):
         mul7 = [line for line in lines if re.match(retexpr + r" = v\d+ \* 7;", line.strip(" ")) is not None]
         assert len(mul7) == 1, f"Cannot find statement {retexpr} = v0 * 7."
 
+    # @for_all_structuring_algos
+    @structuring_algo("dream")
+    def test_decompiling_dirname_quotearg_n_options(self, decompiler_options=None):
+        bin_path = os.path.join(test_location, "x86_64", "decompiler", "dirname")
+        proj = angr.Project(bin_path, auto_load_libs=False)
+
+        cfg = proj.analyses.CFGFast(normalize=True, data_references=True)
+
+        f = proj.kb.functions["quotearg_n_options"]
+
+        d = proj.analyses[Decompiler].prep()(f, cfg=cfg.model, options=decompiler_options)
+        self._print_decompilation_result(d)
+
     @for_all_structuring_algos
     def test_decompiling_simple_ctfbin_modulo(self, decompiler_options=None):
         bin_path = os.path.join(test_location, "x86_64", "decompiler", "simple_ctfbin_modulo")
         proj = angr.Project(bin_path, auto_load_libs=False)
 
         proj.analyses.CFGFast(normalize=True)
-        proj.analyses.CompleteCallingConventions(recover_variables=True)
 
         d = proj.analyses.Decompiler(proj.kb.functions["encrypt"], options=decompiler_options)
         self._print_decompilation_result(d)
@@ -1367,7 +1372,6 @@ class TestDecompiler(unittest.TestCase):
         proj = angr.Project(bin_path, auto_load_libs=False)
 
         proj.analyses.CFGFast(normalize=True)
-        proj.analyses.CompleteCallingConventions(recover_variables=True)
 
         typedefs = angr.sim_type.parse_file("""
         struct A {
@@ -1446,7 +1450,7 @@ class TestDecompiler(unittest.TestCase):
         dec = proj.analyses.Decompiler(proj.kb.functions["print_long_format"], options=decompiler_options)
         self._print_decompilation_result(dec)
 
-        assert "if (timespec_cmp(" in dec.codegen.text
+        assert "if (timespec_cmp(" in dec.codegen.text or "if ((int)timespec_cmp(" in dec.codegen.text
         assert "&& localtime_rz(localtz, " in dec.codegen.text
 
     @structuring_algo("phoenix")
@@ -1456,7 +1460,6 @@ class TestDecompiler(unittest.TestCase):
         proj = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = proj.analyses.CFGFast(normalize=True)
-        proj.analyses.CompleteCallingConventions(cfg=cfg, recover_variables=True)
 
         # disable eager returns simplifier
         all_optimization_passes = angr.analyses.decompiler.optimization_passes.get_default_optimization_passes("AMD64",
@@ -1477,7 +1480,6 @@ class TestDecompiler(unittest.TestCase):
         cfg = proj.analyses.CFGFast(normalize=True, data_references=True)
 
         f = proj.kb.functions["x2nrealloc"]
-        proj.analyses.CompleteCallingConventions(cfg=cfg, recover_variables=True)
 
         # disable eager returns simplifier
         all_optimization_passes = angr.analyses.decompiler.optimization_passes.get_default_optimization_passes("AMD64",
@@ -1539,7 +1541,6 @@ class TestDecompiler(unittest.TestCase):
         proj = angr.Project(bin_path, auto_load_libs=False)
 
         cfg = proj.analyses.CFGFast(normalize=True, data_references=True)
-        proj.analyses.CompleteCallingConventions(cfg=cfg, recover_variables=True)
 
         # argmatch_die
         f = proj.kb.functions["__argmatch_die"]
@@ -1562,7 +1563,6 @@ class TestDecompiler(unittest.TestCase):
         cfg = proj.analyses.CFGFast(normalize=True, data_references=True)
 
         f = proj.kb.functions["di_set_alloc"]
-        proj.analyses.CompleteCallingConventions(cfg=cfg, recover_variables=True)
 
         d = proj.analyses[Decompiler].prep()(f, cfg=cfg.model, options=decompiler_options)
         self._print_decompilation_result(d)
@@ -1586,6 +1586,100 @@ class TestDecompiler(unittest.TestCase):
 
         assert d.codegen.text.count("if (v0 == 0)") == 3 or d.codegen.text.count("if (v0 != 0)") == 3
         assert d.codegen.text.count("break;") == 1
+
+    @structuring_algo("phoenix")
+    def test_decompiling_setb(self, decompiler_options=None):
+        bin_path = os.path.join(test_location, "x86_64", "decompiler", "basenc")
+        proj = angr.Project(bin_path, auto_load_libs=False)
+
+        cfg = proj.analyses.CFGFast(normalize=True, data_references=True)
+
+        f = proj.kb.functions["c_isupper"]
+        d = proj.analyses[Decompiler].prep()(f, cfg=cfg.model, options=decompiler_options)
+        self._print_decompilation_result(d)
+
+        assert f.prototype.returnty is not None and f.prototype.returnty.size == 8
+        assert "a0 - 65 < 26;" in d.codegen.text
+
+    @for_all_structuring_algos
+    def test_decompiling_tac_base_len(self, decompiler_options=None):
+        # source: https://github.com/coreutils/gnulib/blob/08ba9aaebff69a02cbb794c6213314fd09dd5ec5/lib/basename-lgpl.c#L52
+        bin_path = os.path.join(test_location, "x86_64", "decompiler", "tac")
+        proj = angr.Project(bin_path, auto_load_libs=False)
+
+        cfg = proj.analyses.CFGFast(normalize=True, data_references=True)
+
+        f = proj.kb.functions["base_len"]
+        d = proj.analyses[Decompiler].prep()(f, cfg=cfg.model, options=decompiler_options)
+        self._print_decompilation_result(d)
+
+        spaceless_text = d.codegen.text.replace(" ", "").replace("\n", "")
+        assert "==47" in spaceless_text or "!= 47" in spaceless_text
+
+    @for_all_structuring_algos
+    def test_decompiling_dd_argmatch_to_argument_noeagerreturns(self, decompiler_options=None):
+        bin_path = os.path.join(test_location, "x86_64", "decompiler", "dd")
+        proj = angr.Project(bin_path, auto_load_libs=False)
+
+        cfg = proj.analyses.CFGFast(normalize=True, data_references=True)
+
+        # disable eager returns simplifier
+        all_optimization_passes = angr.analyses.decompiler.optimization_passes.get_default_optimization_passes(
+            "AMD64",
+            "linux",
+        )
+        all_optimization_passes = [
+            p for p in all_optimization_passes
+            if p is not angr.analyses.decompiler.optimization_passes.EagerReturnsSimplifier
+        ]
+
+        f = proj.kb.functions["argmatch_to_argument"]
+        d = proj.analyses[Decompiler].prep()(
+            f,
+            cfg=cfg.model,
+            options=decompiler_options,
+            optimization_passes=all_optimization_passes,
+        )
+        self._print_decompilation_result(d)
+
+        # break should always be followed by a curly brace, not another statement
+        t = d.codegen.text.replace(" ", "").replace("\n", "")
+        if "break;" in t:
+            assert "break;}" in t
+            t = t.replace("break;}", "")
+            assert "break;" not in t
+
+        # continue should always be followed by a curly brace, not another statement
+        if "continue;" in t:
+            assert "continue;}" in t
+            t = t.replace("continue;}", "")
+            assert "continue;" not in t
+
+    @for_all_structuring_algos
+    def test_decompiling_dd_argmatch_to_argument_eagerreturns(self, decompiler_options=None):
+        bin_path = os.path.join(test_location, "x86_64", "decompiler", "dd")
+        proj = angr.Project(bin_path, auto_load_libs=False)
+
+        cfg = proj.analyses.CFGFast(normalize=True, data_references=True)
+
+        f = proj.kb.functions["argmatch_to_argument"]
+        d = proj.analyses[Decompiler].prep()(f, cfg=cfg.model, options=decompiler_options)
+        self._print_decompilation_result(d)
+
+        # return should always be followed by a curly brace, not another statement
+        t = d.codegen.text.replace(" ", "").replace("\n", "")
+        return_stmt_ctr = 0
+        for m in re.finditer(r"return[^;]+;", t):
+            return_stmt_ctr += 1
+            assert t[m.start() + len(m.group(0))] == "}"
+
+        if return_stmt_ctr == 0:
+            assert False, "Cannot find any return statements."
+
+        # continue should always be followed by a curly brace, not another statement
+        if "continue;}" in t:
+            t = t.replace("continue;}", "")
+            assert "continue;" not in t
 
 
 if __name__ == "__main__":

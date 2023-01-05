@@ -1,5 +1,6 @@
+# pylint:disable=line-too-long,missing-class-docstring
 import logging
-from typing import Union, Optional, List, Dict, Type
+from typing import Optional, List, Dict, Type
 from collections import defaultdict
 
 import claripy
@@ -617,7 +618,7 @@ class SimCC:
                 ptr_loc = self.next_arg(self.ArgSession(self), SimTypePointer(SimTypeBottom()))
             return SimReferenceArgument(ptr_loc, SimStackArg(0, ty.size // self.arch.byte_width, is_fp=isinstance(ty, SimTypeFloat)))
 
-        if isinstance(ty, SimTypeFloat):
+        if isinstance(ty, SimTypeFloat) and self.FP_RETURN_VAL is not None:
             return self.FP_RETURN_VAL.refine(size=ty.size // self.arch.byte_width, arch=self.arch, is_fp=True)
 
         if ty.size > self.RETURN_VAL.size * self.arch.byte_width:
@@ -897,63 +898,54 @@ class SimCC:
             return alloc(real_value, state)
 
         elif isinstance(arg, (str, bytes)):
+            # sanitize the argument and request standardization again with SimTypeArray
             if type(arg) is str:
                 arg = arg.encode()
             arg += b'\0'
             if isinstance(ty, SimTypePointer) and \
                     isinstance(ty.pts_to, SimTypeChar):
-                ref = True
+                pass
             elif isinstance(ty, SimTypeFixedSizeArray) and \
                     isinstance(ty.elem_type, SimTypeChar):
-                ref = False
                 if len(arg) > ty.length:
-                    raise TypeError("String %s is too long for %s" % (repr(arg), ty))
+                    raise TypeError(f"String {repr(arg)} is too long for {ty}")
                 arg = arg.ljust(ty.length, b'\0')
             elif isinstance(ty, SimTypeArray) and \
                     isinstance(ty.elem_type, SimTypeChar):
-                ref = True
                 if ty.length is not None:
                     if len(arg) > ty.length:
-                        raise TypeError("String %s is too long for %s" % (repr(arg), ty))
+                        raise TypeError(f"String {repr(arg)} is too long for {ty}")
                     arg = arg.ljust(ty.length, b'\0')
             elif isinstance(ty, SimTypeString):
-                ref = False
                 if len(arg) > ty.length + 1:
-                    raise TypeError("String %s is too long for %s" % (repr(arg), ty))
+                    raise TypeError(f"String {repr(arg)} is too long for {ty}")
                 arg = arg.ljust(ty.length + 1, b'\0')
             else:
                 raise TypeError("Type mismatch: Expected %s, got char*" % ty)
-            val = SimCC._standardize_value(list(arg), SimTypeFixedSizeArray(SimTypeChar(), len(arg)), state, alloc)
-            if ref:
-                val = alloc(val, state)
+            val = SimCC._standardize_value(list(arg), SimTypeArray(SimTypeChar(), len(arg)), state, alloc)
             return val
 
         elif isinstance(arg, list):
             if isinstance(ty, (SimTypePointer, SimTypeReference)):
                 ref = True
                 subty = ty.pts_to
-            elif isinstance(ty, SimTypeFixedSizeArray):
-                ref = False
-                subty = ty.elem_type
-                if len(arg) != ty.length:
-                    raise TypeError("Array %s is the wrong length for %s" % (repr(arg), ty))
             elif isinstance(ty, SimTypeArray):
                 ref = True
                 subty = ty.elem_type
                 if ty.length is not None:
                     if len(arg) != ty.length:
-                        raise TypeError("Array %s is the wrong length for %s" % (repr(arg), ty))
+                        raise TypeError(f"Array {repr(arg)} is the wrong length for {ty}")
             else:
                 raise TypeError("Type mismatch: Expected %s, got char*" % ty)
 
             val = [SimCC._standardize_value(sarg, subty, state, alloc) for sarg in arg]
             if ref:
-                val = alloc(claripy.Concat(*val), state)
+                val = alloc(val, state)
             return val
 
         elif isinstance(arg, (tuple, dict, SimStructValue)):
             if not isinstance(ty, SimStruct):
-                raise TypeError("Type mismatch: Expected %s, got %s (i.e. struct)" % (ty, type(arg)))
+                raise TypeError(f"Type mismatch: Expected {ty}, got {type(arg)} (i.e. struct)")
             if type(arg) is not SimStructValue:
                 if len(arg) != len(ty.fields):
                     raise TypeError("Wrong number of fields in struct, expected %d got %d" % (len(ty.fields), len(arg)))
@@ -980,11 +972,11 @@ class SimCC:
         elif isinstance(arg, claripy.ast.FP):
             if isinstance(ty, SimTypeFloat):
                 if len(arg) != ty.size:
-                    raise TypeError("Type mismatch: expected %s, got %s" % (ty, arg.sort))
+                    raise TypeError(f"Type mismatch: expected {ty}, got {arg.sort}")
                 return arg
             if isinstance(ty, (SimTypeReg, SimTypeNum)):
                 return arg.val_to_bv(ty.size, ty.signed)
-            raise TypeError("Type mismatch: expected %s, got %s" % (ty, arg.sort))
+            raise TypeError(f"Type mismatch: expected {ty}, got {arg.sort}")
 
         elif isinstance(arg, claripy.ast.BV):
             if isinstance(ty, (SimTypeReg, SimTypeNum)):
@@ -1000,7 +992,7 @@ class SimCC:
             raise TypeError("I don't know how to serialize %s." % repr(arg))
 
     def __repr__(self):
-        return "<{}>".format(self.__class__.__name__)
+        return f"<{self.__class__.__name__}>"
 
     def __eq__(self, other):
         return isinstance(other, self.__class__)

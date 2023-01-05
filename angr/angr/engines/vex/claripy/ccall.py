@@ -64,7 +64,7 @@ class CCallMultivaluedException(Exception):
 ### x86* data ###
 ##################
 
-data = {
+data: Dict[str, Dict[str, Dict[str, Optional[int]]]] = {
     'AMD64': {
         'CondTypes': { },
         'CondBitOffsets': { },
@@ -76,7 +76,7 @@ data = {
         'CondBitMasks': { },
         'OpTypes': { },
     }
-} # type: Dict[str, Dict[str, Dict[str, Optional[int]]]]
+}
 
 # condition types
 data['AMD64']['CondTypes']['CondO']      = 0  # /* overflow           */
@@ -863,7 +863,7 @@ def pc_calculate_condition_simple(state, cond, cc_op, cc_dep1, cc_dep2, cc_ndep,
     cc_dep2_nbits = cc_dep2[nbits-1:0]
 
     # check for a specialized version first
-    funcname = "pc_actions_%s_%s" % (op, cond)
+    funcname = f"pc_actions_{op}_{cond}"
     if funcname in globals():
         r = globals()[funcname](state, cc_dep1_nbits, cc_dep2_nbits, cc_ndep)
     else:
@@ -874,7 +874,7 @@ def pc_calculate_condition_simple(state, cond, cc_op, cc_dep1, cc_dep2, cc_ndep,
             r = globals()[cond_funcname](state, cc_expr)
         else:
             l.warning('Operation %s with condition %s is not supported in pc_calculate_condition_simple(). Consider implementing.', op, cond)
-            raise SimCCallError('Operation %s with condition %s not found.' % (op, cond))
+            raise SimCCallError(f'Operation {op} with condition {cond} not found.')
 
     return claripy.Concat(claripy.BVV(0, data[platform]['size'] - 1), r)
 
@@ -948,24 +948,39 @@ def amd64g_check_ldmxcsr(state, mxcsr):
     # /* Detect any required emulation warnings. */
     ew = EmNote_NONE
 
-    if ((mxcsr & 0x1F80) != 0x1F80).is_true:
-        # /* unmasked exceptions! */
-        ew = EmWarn_X86_sseExns
+    cond = ((mxcsr & 0x1F80) != 0x1F80)
+    if not mxcsr.symbolic:  # Fast path
+        if cond.is_true:
+            # /* unmasked exceptions! */
+            ew = EmWarn_X86_sseExns
 
-    elif (mxcsr & (1 << 15)).is_true:
-        # /* FZ is set */
-        ew = EmWarn_X86_fz
-    elif (mxcsr & (1 << 6)).is_true:
-        # /* DAZ is set */
-        ew = EmWarn_X86_daz
+        elif (mxcsr & (1 << 15)).is_true:
+            # /* FZ is set */
+            ew = EmWarn_X86_fz
+        elif (mxcsr & (1 << 6)).is_true:
+            # /* DAZ is set */
+            ew = EmWarn_X86_daz
 
-    return (ew << 32) | rmode
+        return (ew << 32) | rmode
 
+    return (claripy.If(
+            cond,
+            claripy.BVV(EmWarn_X86_sseExns, 64),
+            claripy.If(
+                mxcsr & (1<<15) != 0,
+                claripy.BVV(EmWarn_X86_fz, 64),
+                claripy.If(
+                    mxcsr & (1<<6) != 0,
+                    claripy.BVV(EmWarn_X86_daz, 64),
+                    claripy.BVV(EmNote_NONE, 64)
+                )
+            )
+         ) << 32) | rmode
 
 # https://github.com/angr/vex/blob/master/priv/guest_amd64_helpers.c#L2304
 def amd64g_create_mxcsr(state, sseround):
-    sseround &= 3
-    return 0x1F80 | (sseround << 13)
+    return 0x1F80 | ((sseround & 3) << 13)
+
 
 
 # https://github.com/angr/vex/blob/master/priv/guest_amd64_helpers.c#L2316
@@ -1355,28 +1370,6 @@ EmFail_S390X_fpext = 17
 EmFail_S390X_invalid_PFPO_rounding_mode = 18
 EmFail_S390X_invalid_PFPO_function = 19
 
-
-def amd64g_create_mxcsr(state, sseround):
-    return 0x1F80 | ((sseround & 3) << 13)
-
-def amd64g_check_ldmxcsr(state, mxcsr):
-    rmode = claripy.LShR(mxcsr, 13) & 3
-
-    ew = claripy.If(
-            (mxcsr & 0x1F80) != 0x1F80,
-            claripy.BVV(EmWarn_X86_sseExns, 64),
-            claripy.If(
-                mxcsr & (1<<15) != 0,
-                claripy.BVV(EmWarn_X86_fz, 64),
-                claripy.If(
-                    mxcsr & (1<<6) != 0,
-                    claripy.BVV(EmWarn_X86_daz, 64),
-                    claripy.BVV(EmNote_NONE, 64)
-                )
-            )
-         )
-
-    return (ew << 32) | rmode
 
 #################
 ### ARM Flags ###

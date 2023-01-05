@@ -231,10 +231,10 @@ class RegionIdentifier(Analysis):
                 for exit_ in exits:
                     initial_exit_to_newnodes[exit_].add(newnode)
             if initial_exit_to_newnodes:
-                tree_sizes = dict((exit_, len(initial_exit_to_newnodes[exit_])) for exit_ in initial_exit_to_newnodes)
+                tree_sizes = {exit_: len(initial_exit_to_newnodes[exit_]) for exit_ in initial_exit_to_newnodes}
                 max_tree_size = max(tree_sizes.values())
                 if list(tree_sizes.values()).count(max_tree_size) == 1:
-                    tree_size_to_exit = dict((v, k) for k, v in tree_sizes.items())
+                    tree_size_to_exit = {v: k for k, v in tree_sizes.items()}
                     max_size_exit = tree_size_to_exit[max_tree_size]
                     if all(len(newnode_to_initial_exits[nn]) == 1 for nn in initial_exit_to_newnodes[max_size_exit]):
                         refined_loop_nodes = refined_loop_nodes - \
@@ -587,6 +587,8 @@ class RegionIdentifier(Analysis):
                                     original_successors = secondary_graph.successors(nn)
                                     for succ in original_successors:
                                         if succ not in graph_copy:
+                                            # the successor wasn't added to the graph because it does not belong to the
+                                            # frontier. we backpatch the successor graph here.
                                             region.graph_with_successors.add_edge(nn, succ)
 
                             # l.debug("Walked back %d levels in postdom tree.", levels)

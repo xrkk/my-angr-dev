@@ -68,10 +68,10 @@ class DisassemblerInsn:
         raise NotImplementedError()
 
     def __str__(self):
-        return "%#x:\t%s\t%s" % (self.address, self.mnemonic, self.op_str)
+        return f"{self.address:#x}:\t{self.mnemonic}\t{self.op_str}"
 
     def __repr__(self):
-        return '<DisassemblerInsn "%s" for %#x>' % (self.mnemonic, self.address)
+        return f'<DisassemblerInsn "{self.mnemonic}" for {self.address:#x}>'
 
 
 class CapstoneBlock(DisassemblerBlock):
@@ -199,7 +199,7 @@ class Block(Serializable):
         self._load_from_ro_regions = load_from_ro_regions
 
         self._instructions = num_inst
-        self._instruction_addrs = [] # type: List[int]
+        self._instruction_addrs: List[int] = []
 
         self._parse_vex_info(self._vex)
 
@@ -233,8 +233,8 @@ class Block(Serializable):
         return '<Block for %#x, %d bytes>' % (self.addr, self.size)
 
     def __getstate__(self):
-        return dict((k, getattr(self, k)) for k in self.__slots__
-                    if k not in {'_capstone', '_disassembly', '_project'})
+        return {k: getattr(self, k) for k in self.__slots__
+                    if k not in {'_capstone', '_disassembly', '_project'}}
 
     def __setstate__(self, data):
         for k, v in data.items():
@@ -257,7 +257,11 @@ class Block(Serializable):
     def pp(self, **kwargs):
         if self._project is not None:
             addr = self.addr - 1 if self.thumb else self.addr
-            print(self._project.analyses.Disassembly(ranges=[(addr, addr + self.size)]).render(**kwargs))
+            print(self._project.analyses.Disassembly(
+                ranges=[(addr, addr + self.size)],
+                thumb=self.thumb,
+                block_bytes=self.bytes,
+            ).render(**kwargs))
         else:
             self.disassembly.pp()
 

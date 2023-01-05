@@ -56,7 +56,7 @@ class DisassemblyPiece:
     @staticmethod
     def color(string, coloring, formatting):
         try:
-            return '%s%s%s' % (formatting['colors'][coloring][0], string, formatting['colors'][coloring][1])
+            return '{}{}{}'.format(formatting['colors'][coloring][0], string, formatting['colors'][coloring][1])
         except KeyError:
             return string
 
@@ -95,7 +95,7 @@ class FunctionStart(DisassemblyPiece):
 
     def _render(self, formatting):
         # TODO: Make the individual elements be individual Pieces
-        return ['%s = %#x' % (name, offset) for offset, name in self.vars]
+        return [f'{name} = {offset:#x}' for offset, name in self.vars]
 
     def height(self, formatting):
         return len(self.vars)
@@ -175,12 +175,12 @@ class Instruction(DisassemblyPiece):
         self.opcode = None
         self.operands = [ ]
 
-        # the following members will be filled in after disecting the instruction
+        # the following members will be filled in after dissecting the instruction
         self.type = None
         self.branch_type = None
         self.branch_target_operand = None
 
-        self.disect_instruction()
+        self.dissect_instruction()
 
         if isinstance(insn, CapstoneInsn):
             decode_instruction(self.arch, self)
@@ -191,17 +191,17 @@ class Instruction(DisassemblyPiece):
 
     def reload_format(self):
         self.insn = CapstoneInsn(next(self.arch.capstone.disasm(self.insn.bytes, self.addr)))
-        self.disect_instruction()
+        self.dissect_instruction()
 
-    def disect_instruction(self):
+    def dissect_instruction(self):
         if self.arch.name == "AARCH64":
-            self.disect_instruction_for_aarch64()
+            self.dissect_instruction_for_aarch64()
         else:
             # the default one works well for x86, add more arch-specific
             # code when you find it doesn't meet your need.
-            self.disect_instruction_by_default()
-    
-    def disect_instruction_for_aarch64(self):
+            self.dissect_instruction_by_default()
+
+    def dissect_instruction_for_aarch64(self):
         ## ARM64 consts from capstone
         # ARM64 conditional
         ARM64_CC = ['', 'eq', 'ne', 'hs', 'lo', 'mi', 'pl', 'vs', 'vc', 'hi', 'ls', 'ge', 'lt', 'gt', 'le', 'al', 'nv']
@@ -219,7 +219,7 @@ class Instruction(DisassemblyPiece):
             if not (self.insn.mnemonic.startswith('b.') or self.insn.mnemonic.startswith('bc.')):
                 # a dummy operand (Cond string) is expected at the end of op_str
                 expected_cc_op = ARM64_CC[cc]
-        
+
         # We use capstone for arm64 disassembly, so this assertion must success
         assert hasattr(self.insn, 'operands')
 
@@ -228,7 +228,7 @@ class Instruction(DisassemblyPiece):
             return
 
         op_str = self.insn.op_str
-        # splited by comma outside of squared brackets
+        # split by comma outside squared brackets
         dummy_operands = self.split_aarch64_op_string(op_str)
         if len(dummy_operands) != len(self.insn.operands):
             if not op_str.endswith(expected_cc_op) :
@@ -240,7 +240,7 @@ class Instruction(DisassemblyPiece):
                 )
                 self.operands = [ ]
                 return
-        
+
         for operand in dummy_operands:
             opr_pieces = self.split_op_string(operand)
             cur_operand = []
@@ -290,7 +290,7 @@ class Instruction(DisassemblyPiece):
                 opr,
                 self
             )
-    
+
     @staticmethod
     def split_aarch64_op_string(op_str: str):
         pieces = []
@@ -314,7 +314,7 @@ class Instruction(DisassemblyPiece):
         return pieces
 
 
-    def disect_instruction_by_default(self):
+    def dissect_instruction_by_default(self):
         # perform a "smart split" of an operands string into smaller pieces
         insn_pieces = self.split_op_string(self.insn.op_str)
         self.operands = []
@@ -444,7 +444,7 @@ class Instruction(DisassemblyPiece):
         return pieces
 
     def _render(self, formatting=None):
-        return ['%s %s' % (self.opcode.render(formatting)[0], ', '.join(o.render(formatting)[0] for o in self.operands))]
+        return ['{} {}'.format(self.opcode.render(formatting)[0], ', '.join(o.render(formatting)[0] for o in self.operands))]
 
 
 class SootExpression(DisassemblyPiece):
@@ -457,7 +457,7 @@ class SootExpression(DisassemblyPiece):
 
 class SootExpressionTarget(SootExpression):
     def __init__(self, target_stmt_idx):
-        super(SootExpressionTarget, self).__init__(target_stmt_idx)
+        super().__init__(target_stmt_idx)
         self.target_stmt_idx = target_stmt_idx
 
     def _render(self, formatting=None):
@@ -467,7 +467,7 @@ class SootExpressionTarget(SootExpression):
 class SootExpressionStaticFieldRef(SootExpression):
     def __init__(self, field):
         field_str = ".".join(field)
-        super(SootExpressionStaticFieldRef, self).__init__(field_str)
+        super().__init__(field_str)
         self.field = field
         self.field_str = field_str
 
@@ -483,7 +483,7 @@ class SootExpressionInvoke(SootExpression):
 
     def __init__(self, invoke_type, expr):
 
-        super(SootExpressionInvoke, self).__init__(str(expr))
+        super().__init__(str(expr))
 
         self.invoke_type = invoke_type
         self.base = str(expr.base) if self.invoke_type in (self.Virtual, self.Special) else ""
@@ -492,7 +492,7 @@ class SootExpressionInvoke(SootExpression):
 
     def _render(self, formatting=None):
 
-        return [ "%s%s(%s) [%s]" % (self.base + "." if self.base else "",
+        return [ "{}{}({}) [{}]".format(self.base + "." if self.base else "",
                                     self.method_name,
                                     self.arg_str,
                                     self.invoke_type
@@ -703,12 +703,12 @@ class RegisterOperand(Operand):
         if custom_value_str:
             return [custom_value_str]
         else:
-            return super(RegisterOperand, self)._render(formatting)
+            return super()._render(formatting)
 
 
 class MemoryOperand(Operand):
     def __init__(self, op_num, children, parentinsn):
-        super(MemoryOperand, self).__init__(op_num, children, parentinsn)
+        super().__init__(op_num, children, parentinsn)
 
         # a typical "children" looks like the following:
         # [ 'dword', 'ptr', '[', Register, Value, ']' ]
@@ -814,7 +814,7 @@ class MemoryOperand(Operand):
     def _render(self, formatting):
         if self.prefix is None:
             # we failed in parsing. use the default rendering
-            return super(MemoryOperand, self)._render(formatting)
+            return super()._render(formatting)
         else:
             values_style = self.values_style
             show_prefix = True
@@ -869,7 +869,7 @@ class MemoryOperand(Operand):
             if segment_selector_str and prefix_str:
                 prefix_str += ' '
 
-            return [ '%s%s%s%s' % (prefix_str, segment_selector_str, value_str, self.suffix_str) ]
+            return [ f'{prefix_str}{segment_selector_str}{value_str}{self.suffix_str}' ]
 
 
 class OperandPiece(DisassemblyPiece): # pylint: disable=abstract-method
@@ -924,7 +924,7 @@ class Value(OperandPiece):
                     if labeloffset == 0:
                         lbl = self.project.kb.labels[self.val]
                         return [lbl]
-                    return ['%s%s%#+x' % ('+' if self.render_with_sign else '', self.project.kb.labels[self.val + labeloffset], labeloffset)]
+                    return ['{}{}{:#+x}'.format('+' if self.render_with_sign else '', self.project.kb.labels[self.val + labeloffset], labeloffset)]
             except KeyError:
                 pass
 
@@ -978,8 +978,14 @@ class Disassembly(Analysis):
     Produce formatted machine code disassembly.
     """
 
-    def __init__(self, function: Optional[Function] = None, ranges: Optional[Sequence[Tuple[int,int]]] = None,
-                 include_ir: bool = False):
+    def __init__(
+            self,
+            function: Optional[Function] = None,
+            ranges: Optional[Sequence[Tuple[int,int]]] = None,
+            thumb: bool = False,
+            include_ir: bool = False,
+            block_bytes: Optional[bytes] = None,
+    ):
         self.raw_result = []
         self.raw_result_map = {
             'block_starts': {},
@@ -992,6 +998,7 @@ class Disassembly(Analysis):
         self.block_to_insn_addrs = defaultdict(list)
         self._func_cache = {}
         self._include_ir = include_ir
+        self._block_bytes = block_bytes
         self._graph = None
 
         if function is not None:
@@ -1002,38 +1009,52 @@ class Disassembly(Analysis):
                 self.parse_block(block)
         elif ranges is not None:
             cfg = self.project.kb.cfgs.get_most_accurate()
-            if cfg is None:
-                # CFG not available yet. Simply disassemble the code in the given regions. In the future we may want
-                # to handle this case by automatically running CFG analysis on given ranges.
+            fallback = True
+            if cfg is not None:
+                try:
+                    self._graph = cfg.graph
+                    for start, end in ranges:
+                        if start == end:
+                            continue
+                        assert start < end
+
+                        # Grab all blocks that intersect target range
+                        blocks = sorted([n.to_codenode()
+                                         for n in self._graph.nodes() if not (n.addr + (n.size or 1) <= start or
+                                                                              n.addr >= end)],
+                                        key=lambda node: (node.addr, not node.is_hook))
+
+                        # Trim blocks that are not within range
+                        for i, block in enumerate(blocks):
+                            if block.size and block.addr < start:
+                                delta = start - block.addr
+                                block_bytes = block.bytestr[delta:] if block.bytestr else None
+                                blocks[i] = BlockNode(block.addr + delta, block.size - delta, block_bytes)
+                        for i, block in enumerate(blocks):
+                            real_block_addr = block.addr if not block.thumb else block.addr - 1
+                            if block.size and real_block_addr + block.size > end:
+                                delta = real_block_addr + block.size - end
+                                block_bytes = block.bytestr[0:-delta] if block.bytestr else None
+                                blocks[i] = BlockNode(block.addr, block.size - delta, block_bytes)
+
+                        for block in blocks:
+                            self.parse_block(block)
+                    fallback = False
+                except KeyError:
+                    pass
+
+            if fallback:
+                # CFG not available, or the block cannot be found in the CFG (e.g., the block is dynamically
+                # generated). Simply disassemble the code in the given regions. In the future we may want to handle
+                # this case by automatically running CFG analysis on given ranges.
                 for start, end in ranges:
-                    self.parse_block(BlockNode(start, end - start))
-            else:
-                self._graph = cfg.graph
-                for start, end in ranges:
-                    if start == end:
-                        continue
-                    assert start < end
-
-                    # Grab all blocks that intersect target range
-                    blocks = sorted([n.to_codenode()
-                                     for n in self._graph.nodes() if not (n.addr + (n.size or 1) <= start or
-                                                                          n.addr >= end)],
-                                    key=lambda node: (node.addr, not node.is_hook))
-
-                    # Trim blocks that are not within range
-                    for i, block in enumerate(blocks):
-                        if block.size and block.addr < start:
-                            delta = start - block.addr
-                            block_bytes = block.bytestr[delta:] if block.bytestr else None
-                            blocks[i] = BlockNode(block.addr + delta, block.size - delta, block_bytes)
-                    for i, block in enumerate(blocks):
-                        if block.size and block.addr + block.size > end:
-                            delta = block.addr + block.size - end
-                            block_bytes = block.bytestr[0:-delta] if block.bytestr else None
-                            blocks[i] = BlockNode(block.addr, block.size - delta, block_bytes)
-
-                    for block in blocks:
-                        self.parse_block(block)
+                    self.parse_block(BlockNode(
+                        start,
+                        end - start,
+                        thumb=thumb,
+                        bytestr=self._block_bytes if len(ranges) == 1 else None,
+                    )
+                    )
 
     def func_lookup(self, block):
         try:

@@ -344,7 +344,7 @@ class AILSimplifier(Analysis):
         if not replacements_by_block_addrs_and_idx:
             return False
 
-        blocks_by_addr_and_idx = dict(((node.addr, node.idx), node) for node in self.func_graph.nodes())
+        blocks_by_addr_and_idx = {(node.addr, node.idx): node for node in self.func_graph.nodes()}
 
         replaced = False
         for (block_addr, block_idx), reps in replacements_by_block_addrs_and_idx.items():
@@ -556,7 +556,7 @@ class AILSimplifier(Analysis):
                     # only when all uses are determined by the same definition will we continue with the simplification
                     continue
 
-                all_uses_with_def = set((to_replace_def, use_and_expr) for use_and_expr in all_uses)
+                all_uses_with_def = {(to_replace_def, use_and_expr) for use_and_expr in all_uses}
 
                 remove_initial_assignment = False  # expression folding will take care of it
 
@@ -712,7 +712,7 @@ class AILSimplifier(Analysis):
                 super_node_blocks = self._get_super_node_blocks(
                     addr_and_idx_to_block[(the_def.codeloc.block_addr, the_def.codeloc.block_idx)]
                 )
-                if u.block_addr not in set(b.addr for b in super_node_blocks):
+                if u.block_addr not in {b.addr for b in super_node_blocks}:
                     continue
 
                 # replace all uses
@@ -790,9 +790,10 @@ class AILSimplifier(Analysis):
         # Find all statements that should be removed
 
         rd = self._compute_reaching_definitions()
-        stackarg_offsets = set(tpl[1] for tpl in self._stack_arg_offsets) \
+        stackarg_offsets = {tpl[1] for tpl in self._stack_arg_offsets} \
             if self._stack_arg_offsets is not None else None
-        for def_ in rd.all_definitions:  # type: Definition
+        def_: Definition
+        for def_ in rd.all_definitions:
             if def_.dummy:
                 continue
             # we do not remove references to global memory regions no matter what
@@ -810,7 +811,9 @@ class AILSimplifier(Analysis):
             uses = rd.all_uses.get_uses(def_)
 
             if not uses:
-                stmts_to_remove_per_block[(def_.codeloc.block_addr, def_.codeloc.block_idx)].add(def_.codeloc.stmt_idx)
+                if not isinstance(def_.codeloc, ExternalCodeLocation):
+                    stmts_to_remove_per_block[(def_.codeloc.block_addr, def_.codeloc.block_idx)].add(
+                        def_.codeloc.stmt_idx)
 
         for codeloc in self._calls_to_remove | self._assignments_to_remove:
             # this call can be removed. make sure it exists in stmts_to_remove_per_block
@@ -917,7 +920,7 @@ class AILSimplifier(Analysis):
 
             return AILBlockWalker._handle_expr(walker, expr_idx, expr, stmt_idx, stmt, block)
 
-        blocks_by_addr_and_idx = dict(((node.addr, node.idx), node) for node in self.func_graph.nodes())
+        blocks_by_addr_and_idx = {(node.addr, node.idx): node for node in self.func_graph.nodes()}
 
         walker = AILBlockWalker()
         walker._handle_expr = _handle_expr

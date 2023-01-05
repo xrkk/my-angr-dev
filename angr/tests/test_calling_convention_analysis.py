@@ -240,7 +240,7 @@ class TestCallingConventionAnalysis(unittest.TestCase):
         cfg = proj.analyses.CFG(data_references=True, normalize=True)
 
         func = cfg.functions.function(name="mosquitto_publish", plt=True)
-        cca = proj.analyses.CallingConvention(func)
+        cca = proj.analyses.CallingConvention(func, analyze_callsites=True)
         assert len(cca.prototype.args) == 6
 
     def test_x64_return_value_used(self):
@@ -287,7 +287,7 @@ class TestCallingConventionAnalysis(unittest.TestCase):
             proj.analyses.CompleteCallingConventions(recover_variables=True)
 
             for func in ['target', 'direct', 'plt']:
-                self.assertEqual(str(proj.kb.functions[func].prototype), '(long long (64 bits)) -> int (32 bits)')
+                self.assertEqual(str(proj.kb.functions[func].prototype), '(long long (64 bits)) -> long long (64 bits)')
                 # technically should be (int) -> int, but the compiler loads all 64 bits and then truncates
 
 if __name__ == "__main__":

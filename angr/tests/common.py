@@ -48,7 +48,7 @@ def slow_test(func):
     slow_test_env = (
         os.environ["SKIP_SLOW_TESTS"].lower()
         if "SKIP_SLOW_TESTS" in os.environ
-        else str()
+        else ""
     )
     return skipIf(
         slow_test_env == "true" or slow_test_env == "1", "Skipping slow test"
@@ -72,7 +72,7 @@ def do_trace(proj, test_name, input_data, **kwargs):
         bin_location,
         "tests_data",
         "runner_traces",
-        "%s_%s_%s.p" % (test_name, os.path.basename(proj.filename), proj.arch.name),
+        f"{test_name}_{os.path.basename(proj.filename)}_{proj.arch.name}.p",
     )
 
     if os.path.isfile(fname):

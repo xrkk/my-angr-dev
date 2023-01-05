@@ -39,7 +39,7 @@ class SimStateHistory(SimStatePlugin):
         self.jump_target = None if clone is None else clone.jump_target
         self.jump_source = None if clone is None else clone.jump_source
         self.jump_avoidable = None if clone is None else clone.jump_avoidable
-        self.jump_guard = None if clone is None else clone.jump_guard  # type: Optional[BV]
+        self.jump_guard: Optional[BV] = None if clone is None else clone.jump_guard
         self.jumpkind = None if clone is None else clone.jumpkind
 
         # the execution log for this history
@@ -80,7 +80,7 @@ class SimStateHistory(SimStatePlugin):
             ancestry[-1].parent = None
 
         rev_ancestry = list(reversed(ancestry))
-        d = super(SimStateHistory, self).__getstate__()
+        d = super().__getstate__()
         d['strongref_state'] = None
         d['rev_ancestry'] = rev_ancestry
         d['successor_ip'] = self.successor_ip
@@ -382,8 +382,7 @@ class SimStateHistory(SimStatePlugin):
     @property
     def parents(self):
         if self.parent:
-            for p in self.parent.lineage:
-                yield p
+            yield from self.parent.lineage
 
     @property
     def events(self):
@@ -487,7 +486,7 @@ class SimStateHistory(SimStatePlugin):
         return SimStateHistory(parent=self)
 
 
-class TreeIter(object):
+class TreeIter:
     def __init__(self, start, end=None):
         self._start = start
         self._end = end
@@ -499,8 +498,7 @@ class TreeIter(object):
             n = n.parent
 
     def __iter__(self):
-        for i in self.hardcopy:
-            yield i
+        yield from self.hardcopy
 
     def __reversed__(self):
         raise NotImplementedError("Why are you using this class")
@@ -543,8 +541,7 @@ class TreeIter(object):
 
 class HistoryIter(TreeIter):
     def __reversed__(self):
-        for hist in self._iter_nodes():
-            yield hist
+        yield from self._iter_nodes()
 
 
 class LambdaAttrIter(TreeIter):
@@ -567,8 +564,7 @@ class LambdaIterIter(LambdaAttrIter):
 
     def __reversed__(self):
         for hist in self._iter_nodes():
-            for a in reversed(self._f(hist)) if self._reverse else self._f(hist):
-                yield a
+            yield from reversed(self._f(hist)) if self._reverse else self._f(hist)
 
 
 from angr.sim_state import SimState

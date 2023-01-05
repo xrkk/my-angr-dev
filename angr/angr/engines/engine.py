@@ -20,7 +20,7 @@ class SimEngineBase:
     def __init__(self, project=None, **kwargs):
         if kwargs:
             raise TypeError("Unused initializer args: " + ", ".join(kwargs.keys()))
-        self.project = project  # type: Optional[angr.Project]
+        self.project: Optional[angr.Project] = project
         self.state = None
 
     __tls = ('state',)
@@ -73,7 +73,7 @@ class TLSMixin:
         for subcls in cls.mro():
             for attr in subcls.__dict__.get('_%s__tls' % subcls.__name__, ()):
                 if attr.startswith('__'):
-                    attr = '_%s%s' % (subcls.__name__, attr)
+                    attr = f'_{subcls.__name__}{attr}'
 
                 if hasattr(cls, attr):
                     if type(getattr(cls, attr, None)) is not TLSProperty:

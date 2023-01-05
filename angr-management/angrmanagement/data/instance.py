@@ -171,7 +171,7 @@ class Instance:
         if name in self.extra_containers:
             cur_ty = self._container_defaults[name][1]
             if ty != cur_ty:
-                raise Exception("Container %s already registered with different type: %s != %s" % (name, ty, cur_ty))
+                raise Exception(f"Container {name} already registered with different type: {ty} != {cur_ty}")
 
         else:
             self._container_defaults[name] = (default_val_func, ty)
@@ -506,11 +506,13 @@ class Instance:
         )
 
         if self._analysis_configuration['varec'].enabled:
-            workers = 4 if not is_testing else 0  # disable multiprocessing on angr CI
+            options = self._analysis_configuration['varec'].to_dict()
+            if is_testing:
+                # disable multiprocessing on angr CI
+                options['workers'] = 0
             self.variable_recovery_job = VariableRecoveryJob(
                 **self._analysis_configuration['varec'].to_dict(),
                 on_variable_recovered=self.on_variable_recovered,
-                workers=workers,
             )
             # prioritize the current function in display
             disassembly_view = self.workspace.view_manager.first_view_in_category("disassembly")

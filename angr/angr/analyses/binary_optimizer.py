@@ -1,26 +1,29 @@
-
 import logging
 import re
+from typing import TYPE_CHECKING
 from collections import defaultdict
+
+from angr.knowledge_base import KnowledgeBase
+from angr.codenode import HookNode
+from angr.sim_variable import SimConstantVariable, SimRegisterVariable, SimMemoryVariable, SimStackVariable
+from angr import SIM_PROCEDURES
 
 from . import Analysis, CFGEmulated, DDG
 
-from ..knowledge_base import KnowledgeBase
-from .. import SIM_PROCEDURES
-from ..codenode import HookNode
-from ..sim_variable import SimConstantVariable, SimRegisterVariable, SimMemoryVariable, SimStackVariable
+if TYPE_CHECKING:
+    from angr.knowledge_plugins import Function
 
 l = logging.getLogger(name=__name__)
 
 
-class ConstantPropagation(object):
+class ConstantPropagation:
     def __init__(self, constant, constant_assignment_loc, constant_consuming_loc):
         self.constant = constant
         self.constant_assignment_loc = constant_assignment_loc
         self.constant_consuming_loc = constant_consuming_loc
 
     def __repr__(self):
-        s = "<Constant %#x propagates from %#x to %#x>" % (
+        s = "<Constant {:#x} propagates from {:#x} to {:#x}>".format(
             self.constant,
             self.constant_assignment_loc.ins_addr,
             self.constant_consuming_loc.ins_addr
@@ -29,7 +32,7 @@ class ConstantPropagation(object):
         return s
 
 
-class RedundantStackVariable(object):
+class RedundantStackVariable:
     def __init__(self, argument, stack_variable, stack_variable_consuming_locs):
         self.argument = argument
         self.stack_variable = stack_variable
@@ -47,7 +50,7 @@ class RedundantStackVariable(object):
         return s
 
 
-class RegisterReallocation(object):
+class RegisterReallocation:
     def __init__(self, stack_variable, register_variable, stack_variable_sources, stack_variable_consumers,
                  prologue_addr, prologue_size, epilogue_addr, epilogue_size):
         """
@@ -83,7 +86,7 @@ class RegisterReallocation(object):
         return s
 
 
-class DeadAssignment(object):
+class DeadAssignment:
     def __init__(self, pv):
         """
         Constructor.
@@ -137,7 +140,8 @@ class BinaryOptimizer(Analysis):
         self.optimize()
 
     def optimize(self):
-        for f in self.kb.functions.values():  # type: angr.knowledge.Function
+        f: Function
+        for f in self.kb.functions.values():
             # if there are unresolved targets in this function, we do not try to optimize it
             unresolvable_targets = (SIM_PROCEDURES['stubs']['UnresolvableJumpTarget'],
                                     SIM_PROCEDURES['stubs']['UnresolvableCallTarget'])
@@ -153,7 +157,7 @@ class BinaryOptimizer(Analysis):
     def _optimize_function(self, function):
         """
 
-        :param angr.knowledge.Function function:
+        :param Function function:
         :return:
         """
 
@@ -321,8 +325,7 @@ class BinaryOptimizer(Analysis):
                         argument_register_as_retval.add(argument_variable)
 
             else:
-                # TODO:
-                import ipdb; ipdb.set_trace()
+                raise NotImplementedError() # TODO:
 
         #import pprint
         #pprint.pprint(argument_to_local, width=160)
@@ -359,7 +362,7 @@ class BinaryOptimizer(Analysis):
         - Prologue and epilogue of the function is identifiable.
         - At least one register is not used in the entire function.
 
-        :param angr.knowledge.Function function:
+        :param Function function:
         :param networkx.MultiDiGraph data_graph:
         :return: None
         """
@@ -439,7 +442,7 @@ class BinaryOptimizer(Analysis):
         # push ebp (insn0 - read, insn0 - write) ; sub esp, 0xXX (insn2) ;
         # add esp, 0xXX (insn3) ; pop ebp (insn4) ; ret (insn5)
 
-        esp_insns = set( n.location.ins_addr for n in esp_variables )
+        esp_insns = { n.location.ins_addr for n in esp_variables }
         if esp_insns != { insn0.address, insn2.address, insn3.address, insn4.address, insn5.address } | call_insns:
             return
 
@@ -451,7 +454,8 @@ class BinaryOptimizer(Analysis):
         # look at consumer of those esp variables. no other instruction should be consuming them
         # esp_consumer_insns = { insn0.address, insn1.address, insn2.address, insn3.address, insn4.address,
         #                        insn5.address} | esp_insns
-        # for esp_variable in esp_variables:  # type: angr.analyses.ddg.ProgramVariable
+        # esp_variable: angr.analyses.ddg.ProgramVariable
+        # for esp_variable in esp_variables:
         #     consumers = data_graph.successors(esp_variable)
         #     if any([ consumer.location.ins_addr not in esp_consumer_insns for consumer in consumers ]):
         #         return
@@ -617,7 +621,7 @@ class BinaryOptimizer(Analysis):
 
         BROKEN - DO NOT USE IT
 
-        :param angr.knowledge.Function function:
+        :param Function function:
         :param networkx.MultiDiGraph data_graph:
         :return: None
         """

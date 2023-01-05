@@ -13,19 +13,19 @@ import archinfo
 from archinfo.arch_soot import SootAddressDescriptor
 from archinfo.arch_arm import is_arm_arch, get_real_address_if_arm
 
-from ...knowledge_plugins.functions.function_manager import FunctionManager
-from ...knowledge_plugins.functions.function import Function
-from ...knowledge_plugins.cfg import IndirectJump, CFGNode, CFGENode, CFGModel  # pylint:disable=unused-import
-from ...misc.ux import deprecated
-from ...procedures.stubs.UnresolvableJumpTarget import UnresolvableJumpTarget
-from ...utils.constants import DEFAULT_STATEMENT
-from ...procedures.procedure_dict import SIM_PROCEDURES
-from ...errors import SimTranslationError, SimMemoryError, SimIRSBError, SimEngineError, AngrUnsupportedSyscallError, \
+from angr.knowledge_plugins.functions.function_manager import FunctionManager
+from angr.knowledge_plugins.functions.function import Function
+from angr.knowledge_plugins.cfg import IndirectJump, CFGNode, CFGENode, CFGModel  # pylint:disable=unused-import
+from angr.misc.ux import deprecated
+from angr.procedures.stubs.UnresolvableJumpTarget import UnresolvableJumpTarget
+from angr.utils.constants import DEFAULT_STATEMENT
+from angr.procedures.procedure_dict import SIM_PROCEDURES
+from angr.errors import SimTranslationError, SimMemoryError, SimIRSBError, SimEngineError, AngrUnsupportedSyscallError, \
     SimError
-from ...codenode import HookNode, BlockNode
-from ...engines.vex.lifter import VEX_IRSB_MAX_SIZE, VEX_IRSB_MAX_INST
-from .. import Analysis
-from ..stack_pointer_tracker import StackPointerTracker
+from angr.codenode import HookNode, BlockNode
+from angr.engines.vex.lifter import VEX_IRSB_MAX_SIZE, VEX_IRSB_MAX_INST
+from angr.analyses import Analysis
+from angr.analyses.stack_pointer_tracker import StackPointerTracker
 from .indirect_jump_resolvers.default_resolvers import default_indirect_jump_resolvers
 
 l = logging.getLogger(name=__name__)
@@ -171,7 +171,7 @@ class CFGBase(Analysis):
         if model is not None:
             self._model = model
         else:
-            self._model = self.kb.cfgs.new_model(self.tag)  # type: angr.knowledge_plugins.cfg.CFGModel
+            self._model: CFGModel = self.kb.cfgs.new_model(self.tag)
 
     def __contains__(self, cfg_node):
         return cfg_node in self.graph
@@ -346,7 +346,7 @@ class CFGBase(Analysis):
             raise ValueError("%r is not in CFG." % block_to)
 
         if block_to not in self.graph[block_from]:
-            raise ValueError("Edge %r->%r does not exist." % (block_from, block_to))
+            raise ValueError(f"Edge {block_from!r}->{block_to!r} does not exist.")
 
         self.graph.remove_edge(block_from, block_to)
 
@@ -957,10 +957,10 @@ class CFGBase(Analysis):
 
         analyzed_functions = set()
         # short-hand
-        functions = self.kb.functions  # type: angr.knowledge.FunctionManager
+        functions: FunctionManager = self.kb.functions
 
         while all_functions:
-            func = all_functions.pop(-1)  # type: angr.knowledge.Function
+            func: Function = all_functions.pop(-1)
             analyzed_functions.add(func.addr)
 
             if func.returning is not None:
@@ -2006,7 +2006,7 @@ class CFGBase(Analysis):
         traversed = set() if traversed_cfg_nodes is None else traversed_cfg_nodes
 
         while stack:
-            n = stack.pop(last=False)  # type: CFGNode
+            n: CFGNode = stack.pop(last=False)
 
             if n in traversed:
                 continue
@@ -2290,7 +2290,7 @@ class CFGBase(Analysis):
                 MIPS32_BE_NOOPS = {
                     b"\x00\x20\x08\x25",  # move $at, $at
                 }
-                insns = set(block.bytes[i:i + 4] for i in range(0, block.size, 4))
+                insns = {block.bytes[i:i + 4] for i in range(0, block.size, 4)}
                 if MIPS32_BE_NOOPS.issuperset(insns):
                     return True
 
@@ -2307,7 +2307,7 @@ class CFGBase(Analysis):
                         b"\x00\x00\x00\x00",  # andeq r0, r0, r0
                         b"\xe1\xa0\x00\x00",  # mov r0, r0
                     }
-                insns = set(block.bytes[i:i + 4] for i in range(0, block.size, 4))
+                insns = {block.bytes[i:i + 4] for i in range(0, block.size, 4)}
                 if ARM_NOOPS.issuperset(insns):
                     return True
 
@@ -2325,7 +2325,7 @@ class CFGBase(Analysis):
                         b"\x00\xb0",  # add sp, #0
                         b"\xbf\x00",  # nop
                     }
-                insns = set(block.bytes[i:i+2] for i in range(0, block.size, 2))
+                insns = {block.bytes[i:i+2] for i in range(0, block.size, 2)}
                 if THUMB_NOOPS.issuperset(insns):
                     return True
 
@@ -2550,7 +2550,7 @@ class CFGBase(Analysis):
             self.indirect_jumps[addr] = ij
             resolved = False
         else:
-            ij = self.indirect_jumps[addr]  # type: IndirectJump
+            ij: IndirectJump = self.indirect_jumps[addr]
             resolved = len(ij.resolved_targets) > 0
 
         return resolved, ij.resolved_targets, ij
@@ -2571,7 +2571,9 @@ class CFGBase(Analysis):
         l.info("%d indirect jumps to resolve.", len(self._indirect_jumps_to_resolve))
 
         all_targets = set()
-        for idx, jump in enumerate(self._indirect_jumps_to_resolve):  # type:int,IndirectJump
+        idx: int
+        jump: IndirectJump
+        for idx, jump in enumerate(self._indirect_jumps_to_resolve):
             if self._low_priority:
                 self._release_gil(idx, 50, 0.000001)
             all_targets |= self._process_one_indirect_jump(jump)

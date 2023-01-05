@@ -132,7 +132,7 @@ def create_angr_type_from_json(t):
         # for member in t["Values"]:
         #     new_enum.append(member["Name"], int(member["Value"]))
         # real_new_type = binaryninja.types.Type.named_type_from_type(t["Name"], binaryninja.types.Type.enumeration_type(arch,new_enum))
-        # typelib.add_named_type(t["Name"], real_new_type)
+        #| typelib.add_named_type(t["Name"], real_new_type)
     elif t["Kind"] == "Struct":
         real_new_type = handle_json_type(t)
         typelib.add_named_type(t["Name"], real_new_type)
@@ -158,7 +158,7 @@ def create_angr_type_from_json(t):
         #         param_list.append(real_new_param)
         #     new_func = binaryninja.types.Type.function(ret_type, param_list)
         #     new_struct.append(binaryninja.types.Type.pointer(arch, new_func), method["Name"])
-        # typelib.add_named_type(t["Name"], binaryninja.types.Type.structure_type(new_struct))
+        #| typelib.add_named_type(t["Name"], binaryninja.types.Type.structure_type(new_struct))
     elif t["Kind"] == "ComClassID":
         return None
     elif t["Kind"] == "Union":
@@ -214,8 +214,7 @@ def do_it(in_dir, out_file):
             arg_names = [ ]
             for param in f["Params"]:
                 new_param = handle_json_type(param["Type"])
-                if new_param is None:
-                    import ipdb; ipdb.set_trace()
+                assert new_param is not None, "This should not happen, please report this."
                 args.append(new_param)
                 arg_names.append(param["Name"])
             new_func = angr.types.SimTypeFunction(args, ret_type, arg_names=arg_names)

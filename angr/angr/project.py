@@ -68,10 +68,9 @@ class Project:
     :param simos:                       a SimOS class to use for this project.
     :param engine:                      The SimEngine class to use for this project.
     :param bool translation_cache:      If True, cache translated basic blocks rather than re-translating them.
-    :param support_selfmodifying_code:  Whether we aggressively support self-modifying code. When enabled, emulation
+    :param selfmodifying_code:          Whether we aggressively support self-modifying code. When enabled, emulation
                                         will try to read code from the current state instead of the original memory,
                                         regardless of the current memory protections.
-    :type support_selfmodifying_code:   bool
     :param store_function:              A function that defines how the Project should be stored. Default to pickling.
     :param load_function:               A function that defines how the Project should be loaded. Default to unpickling.
     :param analyses_preset:             The plugin preset for the analyses provider (i.e. Analyses instance).
@@ -102,7 +101,8 @@ class Project:
                  engine=None,
                  load_options: Dict[str, Any]=None,
                  translation_cache=True,
-                 support_selfmodifying_code=False,
+                 selfmodifying_code: bool=False,
+                 support_selfmodifying_code: Optional[bool]=None,  # deprecated. use selfmodifying_code instead
                  store_function=None,
                  load_function=None,
                  analyses_preset=None,
@@ -141,7 +141,7 @@ class Project:
         if isinstance(arch, str):
             self.arch = archinfo.arch_from_id(arch)  # may raise ArchError, let the user see this
         elif isinstance(arch, archinfo.Arch):
-            self.arch = arch # type: archinfo.Arch
+            self.arch: archinfo.Arch = arch
         elif arch is None:
             self.arch = self.loader.main_object.arch
         else:
@@ -177,12 +177,18 @@ class Project:
         self._exclude_sim_procedures_list = exclude_sim_procedures_list
         self.use_sim_procedures = use_sim_procedures
         self._ignore_functions = ignore_functions
-        self._support_selfmodifying_code = support_selfmodifying_code
+        self.selfmodifying_code = selfmodifying_code
         self._translation_cache = translation_cache
         self._eager_ifunc_resolution = eager_ifunc_resolution
-        self._executing = False # this is a flag for the convenience API, exec() and terminate_execution() below
+        self._executing = False  # this is a flag for the convenience API, exec() and terminate_execution() below
 
-        if self._support_selfmodifying_code:
+        # deprecation warning
+        if support_selfmodifying_code is not None:
+            l.warning("Parameter \"support_selfmodifying_code\" is deprecated. Please use \"selfmodifying_code\""
+                      " instead. \"support_selfmodifying_code\" will be removed in the near future.")
+            self.selfmodifying_code = bool(support_selfmodifying_code)
+
+        if self.selfmodifying_code:
             if self._translation_cache is True:
                 self._translation_cache = False
                 l.warning("Disabling IRSB translation cache because support for self-modifying code is enabled.")
@@ -675,7 +681,7 @@ class Project:
             self.store_function, self.load_function = None, None
             # ignore analyses. we re-initialize analyses when restoring from pickling so that we do not lose any newly
             # added analyses classes
-            d = dict((k, v) for k, v in self.__dict__.items() if k not in {'analyses', })
+            d = {k: v for k, v in self.__dict__.items() if k not in {'analyses', }}
             return d
         finally:
             self.store_function, self.load_function = store_func, load_func

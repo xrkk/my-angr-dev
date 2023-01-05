@@ -75,7 +75,7 @@ class SimEngineLight(
     def __init__(self):
 
         logger = logging.getLogger(self.__module__ + "." + self.__class__.__name__)
-        super(SimEngineLight, self).__init__(logger=logger)
+        super().__init__(logger=logger)
 
         # local variables
         self.state = None
@@ -113,7 +113,7 @@ class SimEngineLight(
 
         if not self._call_stack:
             # contextful but the callstack is empty
-            return tuple()
+            return ()
 
         # Convert to Tuple to make `context` hashable if not None
         call_stack_addresses = tuple(self._call_stack)

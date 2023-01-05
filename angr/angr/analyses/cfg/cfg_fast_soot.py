@@ -1,4 +1,3 @@
-
 import logging
 
 from collections import defaultdict
@@ -40,7 +39,7 @@ class CFGFastSoot(CFGFast):
 
         self._soot_class_hierarchy = self.project.analyses.SootClassHierarchy()
         self.support_jni = support_jni
-        super(CFGFastSoot, self).__init__(regions=SortedDict({}), **kwargs)
+        super().__init__(regions=SortedDict({}), **kwargs)
 
         self._changed_functions = None
         self._total_methods = None
@@ -58,7 +57,7 @@ class CFGFastSoot(CFGFast):
 
         self._function_returns = defaultdict(set)
 
-        entry = self.project.entry  # type:SootAddressDescriptor
+        entry: SootAddressDescriptor = self.project.entry
         entry_func = entry.method
 
         obj = self.project.loader.main_object

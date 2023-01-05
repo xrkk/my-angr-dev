@@ -1,8 +1,7 @@
-
 import collections
 import itertools
 import logging
-from typing import Optional
+import typing
 
 from archinfo import ArchSoot
 from claripy import BVV, StrSubstr
@@ -21,7 +20,7 @@ class JNISimProcedure(SimProcedure):
     """
 
     # Java type of return value
-    return_ty: Optional[str] = None
+    return_ty: typing.Optional[str] = None
 
     # jboolean constants
     JNI_TRUE = 1
@@ -36,7 +35,7 @@ class JNISimProcedure(SimProcedure):
                                       returnty=state.project.simos.get_native_type(self.return_ty))
             self.cc = DefaultCC[state.arch.name](state.arch)
             self.prototype = prototype
-        super(JNISimProcedure, self).execute(state, successors, arguments, ret_to)
+        super().execute(state, successors, arguments, ret_to)
 
     #
     # Memory
@@ -201,7 +200,7 @@ class JNISimProcedure(SimProcedure):
 #
 # JNI function table
 # => Map all interface function to the name of their corresponding SimProcedure
-jni_functions = collections.OrderedDict() # type: collections.OrderedDict[str, str]
+jni_functions: typing.OrderedDict[str, str] = collections.OrderedDict()
 not_implemented = "UnsupportedJNIFunction"
 
 # Reserved Entries

@@ -194,7 +194,7 @@ class AnnotatedCFG:
         for addr, run in self._addr_to_run.items():
             if addr is None:
                 continue
-            ret_str += "%#x => %s\n" % (addr, run)
+            ret_str += f"{addr:#x} => {run}\n"
         l.debug("statements: ")
         for addr, stmts in self._run_statement_whitelist.items():
             if addr is None:
@@ -317,6 +317,6 @@ class AnnotatedCFG:
         for loop_lst in networkx.simple_cycles(temp_graph):
             l.debug("A loop is found. %d", ctr)
             ctr += 1
-            loop = (tuple([x[-1] for x in loop_lst]))
+            loop = (tuple(x[-1] for x in loop_lst))
             print(" => ".join(["0x%08x" % x for x in loop]))
             self.add_loop(loop)

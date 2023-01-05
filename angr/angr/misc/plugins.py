@@ -22,10 +22,10 @@ class PluginHub:
     """
 
     def __init__(self):
-        super(PluginHub, self).__init__()
-        self._active_plugins = {} # type: Dict[str, SimStatePlugin]
-        self._active_preset = None # type: Optional[PluginPreset]
-        self._provided_by_preset = [] # type: List[int]
+        super().__init__()
+        self._active_plugins: Dict[str, SimStatePlugin] = {}
+        self._active_preset: Optional[PluginPreset] = None
+        self._provided_by_preset: List[int] = []
 
     #
     #   Class methods for registration
@@ -212,7 +212,7 @@ class PluginPreset:
     """
 
     def __init__(self):
-        self._default_plugins = {} # type: Dict[str, Type['SimStatePlugin']]
+        self._default_plugins: Dict[str, Type['SimStatePlugin']] = {}
 
     def activate(self, hub):  # pylint:disable=no-self-use,unused-argument
         """
@@ -271,7 +271,7 @@ class PluginVendor(PluginHub):
         pass
 
     def __dir__(self):
-        x = super(PluginVendor, self).__dir__()
+        x = super().__dir__()
         x.remove('release_plugin')
         x.remove('register_plugin')
         x.remove('has_plugin')
