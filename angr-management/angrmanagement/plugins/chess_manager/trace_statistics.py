@@ -2,10 +2,10 @@ import logging
 import random
 from collections import defaultdict
 
-from PySide6.QtGui import QColor
 from angr.errors import SimEngineError
+from PySide6.QtGui import QColor
 
-l = logging.getLogger(name=__name__)
+log = logging.getLogger(__name__)
 
 
 class TraceFunc:
@@ -13,6 +13,7 @@ class TraceFunc:
     Trace and Function class
 
     """
+
     def __init__(self, bbl_addr=None, func_name=None, func=None):
         self.bbl_addr = bbl_addr
         self.func_name = func_name
@@ -24,8 +25,8 @@ class TraceStatistics:
     Trace and color / legend record
     """
 
-    BBL_FILL_COLOR = QColor(0, 0xf0, 0xf0, 0xf)
-    BBL_BORDER_COLOR = QColor(0, 0xf0, 0xf0)
+    BBL_FILL_COLOR = QColor(0, 0xF0, 0xF0, 0xF)
+    BBL_BORDER_COLOR = QColor(0, 0xF0, 0xF0)
     BBL_EMPTY_COLOR = QColor("white")
 
     def __init__(self, workspace, trace, trace_id=None, baddr=None):
@@ -67,7 +68,7 @@ class TraceStatistics:
             mark_index = self._get_position(addr, i)
             mark_color = self._mark_color[mark_index]
         except (IndexError, KeyError) as e:
-            l.error(e)
+            log.error(e)
             return self.BBL_EMPTY_COLOR
         return mark_color
 
@@ -96,7 +97,7 @@ class TraceStatistics:
         """
         :param trace: basic block address list
         """
-        self.mapped_trace = [ ]
+        self.mapped_trace = []
         for addr in trace_addrs:
             converted = self._apply_trace_offset(addr)
             if converted is not None:
@@ -110,10 +111,10 @@ class TraceStatistics:
                 self._positions[addr].append(p)
 
             node = self.workspace.main_instance.cfg.get_any_node(bbl_addr)
-            if node is None: #try again without asssuming node is start of a basic block
+            if node is None:  # try again without asssuming node is start of a basic block
                 node = self.workspace.main_instance.cfg.get_any_node(bbl_addr, anyaddr=True)
 
-            func_name = hex(bbl_addr) #default to using bbl_addr as name if none is not found
+            func_name = hex(bbl_addr)  # default to using bbl_addr as name if none is not found
             func = None
             if node is not None:
                 func_addr = node.function_address
@@ -124,7 +125,7 @@ class TraceStatistics:
                 else:
                     func_name = "Unknown"
             else:
-                l.warning("Node at %x is None, using bbl_addr as function name", bbl_addr)
+                log.warning("Node at %x is None, using bbl_addr as function name", bbl_addr)
             self.trace_func.append(TraceFunc(bbl_addr, func_name, func))
 
         self.count = len(self.trace_func)

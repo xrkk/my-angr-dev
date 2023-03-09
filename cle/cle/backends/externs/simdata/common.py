@@ -1,8 +1,9 @@
 import struct
 
-from . import SimData
-from ...relocation import Relocation
-from ...symbol import SymbolType
+from cle.backends.relocation import Relocation
+from cle.backends.symbol import SymbolType
+
+from .simdata import SimData
 
 
 class StaticData(SimData):
@@ -14,8 +15,9 @@ class StaticData(SimData):
     :cvar libname:  The name of the library from which the symbol originally comes (currently unused).
     :cvar data:     The bytes to provide
     """
+
     type = SymbolType.TYPE_OBJECT
-    data = NotImplemented  # type: bytes
+    data: bytes = NotImplemented
 
     @classmethod
     def static_size(cls, owner):
@@ -35,9 +37,10 @@ class StaticWord(SimData):
     :cvar word:     The value to provide
     :cvar wordsize: (optional) The size of the value in bytes, default the CPU wordsize
     """
+
     type = SymbolType.TYPE_OBJECT
-    word = NotImplemented  # type: int
-    wordsize = None # type: int
+    word: int = NotImplemented
+    wordsize: int = None
 
     @classmethod
     def static_size(cls, owner):
@@ -59,10 +62,11 @@ class PointTo(SimData):
                         ``SymbolType.TYPE_OBJECT``)
     :cvar addend:       (optional) an integer to be added to the symbol's address before storage
     """
-    pointto_name = NotImplemented  # type: str
-    pointto_type = NotImplemented  # type: SymbolType
-    type = SymbolType.TYPE_OBJECT # type: SymbolType
-    addend = 0  # type: int
+
+    pointto_name: str = NotImplemented
+    pointto_type: SymbolType = NotImplemented
+    type: SymbolType = SymbolType.TYPE_OBJECT
+    addend: int = 0
 
     @classmethod
     def static_size(cls, owner):
@@ -72,18 +76,21 @@ class PointTo(SimData):
         return bytes(self.size)
 
     def relocations(self):
-        return [SimDataSimpleRelocation(
-            self.owner,
-            self.owner.make_import(self.pointto_name, self.pointto_type),
-            self.relative_addr,
-            self.addend
-        )]
+        return [
+            SimDataSimpleRelocation(
+                self.owner,
+                self.owner.make_import(self.pointto_name, self.pointto_type),
+                self.relative_addr,
+                self.addend,
+            )
+        ]
 
 
 class SimDataSimpleRelocation(Relocation):
     """
     A relocation used to implement PointTo. Pretty simple.
     """
+
     def __init__(self, owner, symbol, addr, addend, preresolved=False):
         super().__init__(owner, symbol, addr)
         self.addend = addend

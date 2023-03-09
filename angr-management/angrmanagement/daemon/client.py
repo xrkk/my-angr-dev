@@ -1,10 +1,10 @@
-import logging
 import functools
+import logging
 
 import rpyc
 
-from ..logic.threads import gui_thread_schedule_async
-from ..logic import GlobalInfo
+from angrmanagement.logic import GlobalInfo
+from angrmanagement.logic.threads import gui_thread_schedule_async
 
 _l = logging.getLogger(name=__name__)
 
@@ -15,11 +15,11 @@ def requires_daemon_conn(f):
         if self.conn is None:
             return None
         return f(self, *args, **kwargs)
+
     return with_daemon_conn
 
 
 class ClientService(rpyc.Service):
-
     @property
     def instance(self):
         return GlobalInfo.main_window.workspace.main_instance
@@ -29,7 +29,6 @@ class ClientService(rpyc.Service):
         return GlobalInfo.main_window.workspace
 
     def exposed_jumpto(self, addr, symbol):
-
         if self.workspace is not None:
             gui_thread_schedule_async(GlobalInfo.main_window.bring_to_front)
             if addr is not None:
@@ -39,7 +38,6 @@ class ClientService(rpyc.Service):
                 gui_thread_schedule_async(self.workspace.jump_to, args=(symbol,))
 
     def exposed_commentat(self, addr, comment):
-
         if self.workspace is not None:
             if addr is not None:
                 gui_thread_schedule_async(GlobalInfo.main_window.bring_to_front)
@@ -58,7 +56,7 @@ class DaemonClientCls:
     def __init__(self, custom_handlers=None):
         self.custom_handlers = {} if custom_handlers is None else custom_handlers
 
-    def register_handler(self, action:str, handler):
+    def register_handler(self, action: str, handler):
         self.custom_handlers[action] = handler
 
     def invoke(self, action, kwargs):

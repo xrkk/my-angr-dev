@@ -1,6 +1,6 @@
 from PySide6.QtCore import QObject, Signal
 
-from ...data.object_container import ObjectContainer
+from angrmanagement.data.object_container import ObjectContainer
 
 
 class OperandHighlightMode:
@@ -9,8 +9,12 @@ class OperandHighlightMode:
 
 
 class OperandDescriptor:
-
-    __slots__ = ('text', 'num_value', 'func_addr', 'variable_ident', )
+    __slots__ = (
+        "text",
+        "num_value",
+        "func_addr",
+        "variable_ident",
+    )
 
     def __init__(self, text, num_value, func_addr=None, variable_ident=None):
         self.text = text
@@ -24,6 +28,7 @@ class InfoDock(QObject):
     Stores information associated to a disassembly view. Such information will be shared between the graph view and the
     linear view.
     """
+
     qblock_code_obj_selection_changed = Signal()
 
     def __init__(self, disasm_view):
@@ -35,12 +40,12 @@ class InfoDock(QObject):
 
         self.highlight_mode = OperandHighlightMode.SAME_IDENT  # default highlight mode
 
-        self.selected_insns = ObjectContainer(set(), 'The currently selected instructions')
-        self.selected_operands = ObjectContainer({}, 'The currently selected instruction operands')
-        self.selected_blocks = ObjectContainer(set(), 'The currently selected blocks')
-        self.hovered_block = ObjectContainer(None, 'The currently hovered block')
-        self.hovered_edge = ObjectContainer(None, 'The currently hovered edge')
-        self.selected_labels = ObjectContainer(set(), 'The currently selected labels')
+        self.selected_insns = ObjectContainer(set(), "The currently selected instructions")
+        self.selected_operands = ObjectContainer({}, "The currently selected instruction operands")
+        self.selected_blocks = ObjectContainer(set(), "The currently selected blocks")
+        self.hovered_block = ObjectContainer(None, "The currently hovered block")
+        self.hovered_edge = ObjectContainer(None, "The currently hovered edge")
+        self.selected_labels = ObjectContainer(set(), "The currently selected labels")
         self.selected_qblock_code_obj = None
 
     @property
@@ -60,7 +65,7 @@ class InfoDock(QObject):
         self.selected_operands.clear()
         self.hovered_block.am_obj = None
 
-    def copy(self) -> 'InfoDock':
+    def copy(self) -> "InfoDock":
         r = InfoDock(self.disasm_view)
         r.variable_manager = self.variable_manager
         r.highlight_mode = self.highlight_mode
@@ -98,11 +103,13 @@ class InfoDock(QObject):
         self.selected_blocks.clear()  # selecting one block at a time
         self.selected_blocks.add(block_addr)
         self.selected_blocks.am_event()
+        self._update_published_view_state()
 
     def unselect_block(self, block_addr):
         if block_addr in self.selected_blocks:
             self.selected_blocks.remove(block_addr)
             self.selected_blocks.am_event()
+        self._update_published_view_state()
 
     def select_instruction(self, insn_addr, unique=True, insn_pos=None, use_animation=True):
         self.disasm_view.set_synchronized_cursor_address(insn_addr)
@@ -118,17 +125,21 @@ class InfoDock(QObject):
             self.disasm_view.current_graph.show_instruction(insn_addr, insn_pos=insn_pos, use_animation=use_animation)
             self.selected_insns.am_event(insn_addr=insn_addr)
 
+        self._update_published_view_state()
+
     def unselect_instruction(self, insn_addr):
         if insn_addr in self.selected_insns:
             self.selected_insns.remove(insn_addr)
             self.selected_insns.am_event()
+        self._update_published_view_state()
 
     def unselect_all_instructions(self):
         if self.selected_insns:
             self.selected_insns.clear()
             self.selected_insns.am_event()
+        self._update_published_view_state()
 
-    def select_operand(self, ins_addr: int, operand_index: int, operand: OperandDescriptor, unique: bool=False):
+    def select_operand(self, ins_addr: int, operand_index: int, operand: OperandDescriptor, unique: bool = False):
         """
         Mark an operand as selected.
 
@@ -147,7 +158,6 @@ class InfoDock(QObject):
             self.selected_operands.am_event()
 
     def unselect_operand(self, insn_addr, operand_idx):
-
         if (insn_addr, operand_idx) in self.selected_operands:
             self.selected_operands.pop((insn_addr, operand_idx))
             self.selected_operands.am_event()
@@ -169,6 +179,8 @@ class InfoDock(QObject):
         self.selected_labels.add(label_addr)
         self.selected_labels.am_event()
 
+        self._update_published_view_state()
+
     def toggle_label_selection(self, addr: int) -> None:
         """
         Toggle the selection state of a label in the disassembly view.
@@ -185,10 +197,12 @@ class InfoDock(QObject):
         if label_addr in self.selected_labels:
             self.selected_labels.remove(label_addr)
             self.selected_labels.am_event()
+        self._update_published_view_state()
 
     def unselect_all_labels(self):
         self.selected_labels.clear()
         self.selected_labels.am_event()
+        self._update_published_view_state()
 
     def toggle_instruction_selection(self, insn_addr, insn_pos=None, unique=False):
         """
@@ -231,6 +245,8 @@ class InfoDock(QObject):
 
         self.selected_operands.clear()
         self.selected_operands.am_event()
+
+        self._update_published_view_state()
 
     def is_edge_hovered(self, src_addr, dst_addr):
         return self.hovered_edge.am_obj == (src_addr, dst_addr)
@@ -284,3 +300,7 @@ class InfoDock(QObject):
         """
         self.selected_qblock_code_obj = obj
         self.qblock_code_obj_selection_changed.emit()
+
+    def _update_published_view_state(self):
+        self.disasm_view.published_view_state.cursors = self.selected_insns.union(self.selected_labels)
+        self.disasm_view.notify_view_state_updated()

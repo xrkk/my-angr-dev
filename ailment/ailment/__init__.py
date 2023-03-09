@@ -1,4 +1,4 @@
-__version__ = "9.2.33.dev0"
+__version__ = "9.2.42.dev0"
 
 import logging
 from typing import Set
@@ -19,6 +19,7 @@ available_converters: Set[str] = set()
 try:
     from .converter_vex import VEXIRSBConverter
     import pyvex
+
     available_converters.add("vex")
 except ImportError as e:
     log.debug("Could not import VEXIRSBConverter")
@@ -27,6 +28,7 @@ except ImportError as e:
 try:
     from .converter_pcode import PCodeIRSBConverter
     from angr.engines import pcode
+
     available_converters.add("pcode")
 except ImportError as e:
     log.debug("Could not import PCodeIRSBConverter")
@@ -50,3 +52,22 @@ class IRSBConverter(Converter):
             return VEXIRSBConverter.convert(irsb, manager)
         else:
             raise ValueError("No converter available for %s" % type(irsb))
+
+
+__all__ = [
+    "available_converters",
+    "Block",
+    "Stmt",
+    "Expr",
+    "Assignment",
+    "Expression",
+    "Const",
+    "Tmp",
+    "Register",
+    "UnaryOp",
+    "BinaryOp",
+    "Manager",
+    "IRSBConverter",
+    *(["PCodeIRSBConverter"] if "pcode" in available_converters else []),
+    *(["VEXIRSBConverter"] if "vex" in available_converters else []),
+]

@@ -5,19 +5,18 @@ import time
 from time import sleep
 from typing import Optional
 
-
 from PySide6.QtCore import QEvent, QObject
 from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout
+
+from angrmanagement.plugins.base_plugin import BasePlugin
 
 try:
     from slacrs import Slacrs
     from slacrs.model import HumanFatigue
-except ImportError as ex:
-    Slacrs = None  # type: Optional[type]
-    HumanFatigue = None  # type: Optional[type]
+except ImportError:
+    Slacrs: Optional[type] = None
+    HumanFatigue: Optional[type] = None
 from tornado.platform.asyncio import AnyThreadEventLoopPolicy
-
-from ..base_plugin import BasePlugin
 
 #
 # Plugin to capture the User Mouse Movements.
@@ -28,9 +27,7 @@ from ..base_plugin import BasePlugin
 class LogFatiguePlugin(BasePlugin):
     def __init__(self, workspace):
         if not Slacrs:
-            raise Exception(
-                "Please install Slacrs to Initialize LogFatigue Plugin"
-            )
+            raise Exception("Please install Slacrs to Initialize LogFatigue Plugin")
         self._fatigue_flag = True
         super().__init__(workspace)
         self._fatigue = HumanFatigue()
@@ -79,9 +76,7 @@ class LogFatiguePlugin(BasePlugin):
                 y = event.pos().y()
                 old_y = event.oldPos().y()
 
-                self._fatigue.mouse_speed = int(
-                    math.sqrt((x - old_x) ** 2 + (y - old_y) ** 2)
-                )
+                self._fatigue.mouse_speed = int(math.sqrt((x - old_x) ** 2 + (y - old_y) ** 2))
             elif event.type() == QEvent.KeyPress:
                 timestamp = time.time()
                 i = 0

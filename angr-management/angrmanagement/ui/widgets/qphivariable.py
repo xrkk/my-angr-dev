@@ -1,10 +1,9 @@
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import QRectF, Qt
 
 from .qgraph_object import QCachedGraphicsItem
 
 
 class QPhiVariable(QCachedGraphicsItem):
-
     IDENT_LEFT_PADDING = 5
 
     def __init__(self, instance, disasm_view, phi_variable, config, parent=None):
@@ -45,7 +44,6 @@ class QPhiVariable(QCachedGraphicsItem):
     #
 
     def paint(self, painter, option, widget):  # pylint: disable=unused-argument
-
         if self.disasm_view.show_variable_identifier is False:
             # Phi variables are not displayed if variable identifies are hidden
             return
@@ -71,7 +69,7 @@ class QPhiVariable(QCachedGraphicsItem):
         painter.drawText(x, self._config.disasm_font_ascent, " = ")
         x += self._config.disasm_font_width * 3
         painter.setPen(Qt.darkGreen)
-        painter.drawText(x, self._config.disasm_font_ascent, '\u0278(')
+        painter.drawText(x, self._config.disasm_font_ascent, "\u0278(")
         x += self._config.disasm_font_width * 2
 
         for i, (subvar_ident, ident_width) in enumerate(zip(self._subvar_idents, self._subvar_ident_widths)):
@@ -84,7 +82,7 @@ class QPhiVariable(QCachedGraphicsItem):
                 x += 2 + self._config.disasm_font_width
 
         painter.setPen(Qt.darkGreen)
-        painter.drawText(x, self._config.disasm_font_ascent, ')')
+        painter.drawText(x, self._config.disasm_font_ascent, ")")
 
     def refresh(self):
         super().refresh()
@@ -102,7 +100,7 @@ class QPhiVariable(QCachedGraphicsItem):
         self._variable_ident = "<%s>" % ("Unk" if not self.phi.ident else self.phi.ident)
 
         # subvariables
-        self._subvar_names = [ ]
+        self._subvar_names = []
         self._subvar_idents = []
         for subvar in self.variables:
             name = "Unk" if not subvar.name else subvar.name
@@ -113,7 +111,6 @@ class QPhiVariable(QCachedGraphicsItem):
         self._update_size()
 
     def _update_size(self):
-
         if self.disasm_view.show_variable_identifier is False:
             # Phi variables are not displayed if variable identifies are hidden
             self._width = 0
@@ -124,19 +121,20 @@ class QPhiVariable(QCachedGraphicsItem):
         self._variable_ident_width = len(self._variable_ident) * self._config.disasm_font_width
 
         # Update widths of sub-variables
-        self._subvar_name_widths = [ ]
+        self._subvar_name_widths = []
         for name in self._subvar_names:
             self._subvar_name_widths.append(len(name) * self._config.disasm_font_width)
-        self._subvar_ident_widths = [ ]
+        self._subvar_ident_widths = []
         for ident in self._subvar_idents:
             self._subvar_ident_widths.append(len(ident) * self._config.disasm_font_width)
 
-        self._width = (self._variable_name_width +
-                       self._config.disasm_font_width * 5 +  # " = ", the phi sign, and the "("
-                       sum(self._subvar_ident_widths) +
-                       (len(self._subvar_ident_widths) - 1) * 2 * self._config.disasm_font_width +
-                       self._config.disasm_font_width * 1  # ")"
-                       )
+        self._width = (
+            self._variable_name_width
+            + self._config.disasm_font_width * 5
+            + sum(self._subvar_ident_widths)  # " = ", the phi sign, and the "("
+            + (len(self._subvar_ident_widths) - 1) * 2 * self._config.disasm_font_width
+            + self._config.disasm_font_width * 1  # ")"
+        )
         if self.disasm_view.show_variable_identifier:
             self._width += self.IDENT_LEFT_PADDING + self._variable_ident_width
 

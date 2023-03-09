@@ -1,31 +1,41 @@
 # pylint:disable=unused-argument
-import typing
-from typing import List, Optional, Tuple, TYPE_CHECKING
-import threading
-
 import asyncio
+import threading
+import typing
+from typing import TYPE_CHECKING, List, Optional, Tuple
+
+from PySide6.QtCore import QAbstractTableModel, Qt
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QTableView,
+    QVBoxLayout,
+)
 from tornado.platform.asyncio import AnyThreadEventLoopPolicy
 
-import PySide6
-from PySide6.QtWidgets import QDialog, QPushButton, QHBoxLayout, QVBoxLayout, QMessageBox, QTableView, \
-    QAbstractItemView, QHeaderView, QLabel
-from PySide6.QtCore import Qt, QAbstractTableModel
+from angrmanagement.logic.threads import gui_thread_schedule_async
+
+if TYPE_CHECKING:
+    import PySide6
+
+    from angrmanagement.ui.workspace import Workspace
 
 try:
     import slacrs
 except ImportError:
     slacrs = None
 
-from angrmanagement.logic.threads import gui_thread_schedule_async
-
-if TYPE_CHECKING:
-    from angrmanagement.ui.workspace import Workspace
-
 
 class TraceDescriptor:
     """
     Models a trace.
     """
+
     def __init__(self, trace_id: str, input_id: str, created_at, type_: str):
         self.trace_id = trace_id
         self.input_id = input_id
@@ -47,7 +57,7 @@ class QTraceTableModel(QAbstractTableModel):
 
     def __init__(self):
         super().__init__()
-        self._traces: List[TraceDescriptor] = [ ]
+        self._traces: List[TraceDescriptor] = []
 
     @property
     def traces(self):
@@ -59,13 +69,13 @@ class QTraceTableModel(QAbstractTableModel):
         self._traces = v
         self.endResetModel()
 
-    def rowCount(self, parent:PySide6.QtCore.QModelIndex=...) -> int:
+    def rowCount(self, parent: "PySide6.QtCore.QModelIndex" = ...) -> int:
         return len(self.traces)
 
-    def columnCount(self, parent:PySide6.QtCore.QModelIndex=...) -> int:
+    def columnCount(self, parent: "PySide6.QtCore.QModelIndex" = ...) -> int:
         return len(self.Headers)
 
-    def headerData(self, section:int, orientation:PySide6.QtCore.Qt.Orientation, role:int=...) -> typing.Any:
+    def headerData(self, section: int, orientation: "PySide6.QtCore.Qt.Orientation", role: int = ...) -> typing.Any:
         if role != Qt.DisplayRole:
             return None
 
@@ -73,7 +83,7 @@ class QTraceTableModel(QAbstractTableModel):
             return self.Headers[section]
         return None
 
-    def data(self, index:PySide6.QtCore.QModelIndex, role:int=...) -> typing.Any:
+    def data(self, index: "PySide6.QtCore.QModelIndex", role: int = ...) -> typing.Any:
         if not index.isValid():
             return None
         row = index.row()
@@ -119,6 +129,7 @@ class QTraceTableView(QTableView):
     """
     Implements a trace view for CHESS traces.
     """
+
     def __init__(self):
         super().__init__()
 
@@ -138,19 +149,22 @@ class QChessTraceListDialog(QDialog):
     """
     Implements a CHESS trace list dialog.
     """
-    def __init__(self, workspace: 'Workspace', parent=None):
+
+    def __init__(self, workspace: "Workspace", parent=None):
         super().__init__(parent)
 
         if slacrs is None:
-            QMessageBox.Critical(self,
-                                 "Slacrs is not installed",
-                                 "Cannot import slacrs. Please make sure slacrs is properly installed.",
-                                 QMessageBox.Ok)
+            QMessageBox.Critical(
+                self,
+                "Slacrs is not installed",
+                "Cannot import slacrs. Please make sure slacrs is properly installed.",
+                QMessageBox.Ok,
+            )
             self.close()
             return
 
         self.workspace = workspace
-        self.trace_ids: Optional[List[Tuple[str,str]]] = None  # input ID, trace ID
+        self.trace_ids: Optional[List[Tuple[str, str]]] = None  # input ID, trace ID
         self.setMinimumWidth(400)
 
         self._status_label: QLabel = None
@@ -169,7 +183,6 @@ class QChessTraceListDialog(QDialog):
         th.start()
 
     def _init_widgets(self):
-
         # table
         self._table = QTraceTableView()
 
@@ -198,6 +211,7 @@ class QChessTraceListDialog(QDialog):
 
     def _load_traces(self):
         from slacrs.model import Input, Trace  # pylint:disable=import-outside-toplevel,import-error
+
         asyncio.set_event_loop_policy(AnyThreadEventLoopPolicy())
 
         connector = self.workspace.plugins.get_plugin_instance_by_name("ChessConnector")
@@ -218,11 +232,9 @@ class QChessTraceListDialog(QDialog):
         if not target_image_id:
             return
 
-        traces: List[TraceDescriptor] = [ ]
+        traces: List[TraceDescriptor] = []
 
-        db_traces = session.query(Trace).join(Trace.input).filter(
-            Input.target_image_id == target_image_id
-        )
+        db_traces = session.query(Trace).join(Trace.input).filter(Input.target_image_id == target_image_id)
         for db_trace in db_traces:
             db_trace: Trace
             t = TraceDescriptor(db_trace.id, db_trace.input_id, db_trace.created_at, "block trace")
@@ -241,17 +253,15 @@ class QChessTraceListDialog(QDialog):
     #
 
     def _on_ok_button_clicked(self):
-
         selection_model = self._table.selectionModel()
         if not selection_model.hasSelection():
-            QMessageBox.warning(self,
-                                "No target is selected",
-                                "Please select a CHESS target to continue.",
-                                QMessageBox.Ok)
+            QMessageBox.warning(
+                self, "No target is selected", "Please select a CHESS target to continue.", QMessageBox.Ok
+            )
             return
 
         rows = selection_model.selectedRows()
-        self.trace_ids = [ ]
+        self.trace_ids = []
         for row in rows:
             trace = self._table.model.traces[row.row()]
             self.trace_ids.append((trace.input_id, trace.trace_id))

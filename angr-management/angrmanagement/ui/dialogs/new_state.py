@@ -1,16 +1,29 @@
 import os
-import typing
+from typing import List, Optional, Tuple
 
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QDialogButtonBox, QGridLayout, QComboBox, \
-    QLineEdit, QTextEdit, QTreeWidget, QTreeWidgetItem
-from PySide6.QtCore import Qt
 import angr
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QGridLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+)
+
+from angrmanagement.ui.dialogs.env_config import EnvConfig
+from angrmanagement.ui.dialogs.fs_mount import FilesystemMount
+from angrmanagement.ui.widgets import QStateComboBox
+from angrmanagement.utils.namegen import NameGenerator
 
 from .socket_config import SocketConfig
-from ..widgets import QStateComboBox
-from ...utils.namegen import NameGenerator
-from ...ui.dialogs.fs_mount import FilesystemMount
-from ...ui.dialogs.env_config import EnvConfig
+
 
 class StateMetadata(angr.SimStatePlugin):
     """
@@ -19,12 +32,12 @@ class StateMetadata(angr.SimStatePlugin):
 
     def __init__(self):
         super().__init__()
-        self.name = None                # the state's name
-        self.base_name = None           # the name of the base state this was created from
-        self.is_original = False         # is this the original instanciation of this name?
-        self.is_base = False             # is this state created with nothing else as a base?
+        self.name = None  # the state's name
+        self.base_name = None  # the name of the base state this was created from
+        self.is_original = False  # is this the original instantiation of this name?
+        self.is_base = False  # is this state created with nothing else as a base?
 
-    def copy(self, memo=None): #pylint: disable=unused-argument
+    def copy(self, memo=None):  # pylint: disable=unused-argument
         c = StateMetadata()
         c.name = self.name
         c.base_name = self.base_name
@@ -33,12 +46,12 @@ class StateMetadata(angr.SimStatePlugin):
         return c
 
 
-StateMetadata.register_default('gui_data')
+StateMetadata.register_default("gui_data")
 
 
 def is_option(o):
     for ch in o:
-        if ch not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_':
+        if ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_":
             return False
     return True
 
@@ -63,18 +76,18 @@ class NewState(QDialog):
         # Shall we push the new state to instance.stats and call states.am_event(src="new", state=self.state)
         self._push_to_instance = push_to_instance
 
-        self._name_edit = None  # type: QLineEdit
-        self._base_state_combo = None  # type: QStateComboBox
-        self._mode_combo = None  # type: QComboBox
-        self._editor = None  # type: QTextEdit
+        self._name_edit: Optional[QLineEdit] = None
+        self._base_state_combo: Optional[QStateComboBox] = None
+        self._mode_combo: Optional[QComboBox] = None
+        self._editor: Optional[QTextEdit] = None
         self._ok_button = None
 
-        self._args = None # type: typing.List[str]
-        self._env_config = [] # type: typing.List[(str,str)]
-        self._fs_config = None  # type: typing.List[(str,str)]
+        self._args: Optional[List[str]] = None
+        self._env_config: List[Tuple[str, str]] = []
+        self._fs_config: Optional[List[Tuple[str, str]]] = None
         self._sockets_config = None
 
-        self.setWindowTitle('New State')
+        self.setWindowTitle("New State")
 
         self.main_layout = QVBoxLayout()
 
@@ -102,12 +115,13 @@ class NewState(QDialog):
 
         def handle_name(txt):
             nonlocal validation_failures
-            key = {'name'}
+            key = {"name"}
             if txt and not any(s.gui_data.name == txt for s in self.instance.states):
                 validation_failures -= key
             else:
                 validation_failures |= key
             validation_update()
+
         name_box.textEdited.connect(handle_name)
 
         layout.addWidget(name_label, row, 0)
@@ -124,7 +138,7 @@ class NewState(QDialog):
 
         def handle_address(_):
             nonlocal validation_failures
-            key = {'addr'}
+            key = {"addr"}
             if parse_address() is not None:
                 validation_failures -= key
             else:
@@ -154,13 +168,13 @@ class NewState(QDialog):
         template_label.setText("Template")
 
         template_combo = QComboBox()
-        template_combo.addItem("Blank State", 'blank')
-        template_combo.addItem("Call state", 'call')
-        template_combo.addItem("Entry state", 'entry')
-        template_combo.addItem("Full-init state", 'full')
+        template_combo.addItem("Blank State", "blank")
+        template_combo.addItem("Call state", "call")
+        template_combo.addItem("Entry state", "entry")
+        template_combo.addItem("Full-init state", "full")
 
         def handle_template(_):
-            base_allowed = template_combo.currentData() in ('blank', 'call')
+            base_allowed = template_combo.currentData() in ("blank", "call")
             base_state_combo.setHidden(not base_allowed)
             base_state_label.setHidden(not base_allowed)
             args_allowed = template_combo.currentData() in ("entry",)
@@ -178,7 +192,7 @@ class NewState(QDialog):
         # base state
 
         base_state_label = QLabel(self)
-        base_state_label.setText('Base state')
+        base_state_label.setText("Base state")
 
         base_state_combo = QStateComboBox(self.instance, self)
         self._base_state_combo = base_state_combo
@@ -189,7 +203,7 @@ class NewState(QDialog):
 
         # args
         args_label = QLabel(self)
-        args_label.setText('Args')
+        args_label.setText("Args")
 
         args_edit = QTextEdit(self)
         args_edit.setAcceptRichText(False)
@@ -197,8 +211,9 @@ class NewState(QDialog):
         self._args_edit = args_edit
 
         def handle_args():
-            self._args = [self.instance.project.filename.encode() or b'dummy_filename'] + \
-                         [x.encode() for x in args_edit.toPlainText().split()]
+            self._args = [self.instance.project.filename.encode() or b"dummy_filename"] + [
+                x.encode() for x in args_edit.toPlainText().split()
+            ]
 
         args_edit.textChanged.connect(handle_args)
 
@@ -208,7 +223,7 @@ class NewState(QDialog):
 
         # env_config
         env_label = QLabel(self)
-        env_label.setText('Environment')
+        env_label.setText("Environment")
         env_button = QPushButton(self)
         env_button.setText("Change")
 
@@ -227,7 +242,7 @@ class NewState(QDialog):
 
         # fs_mount
         fs_label = QLabel(self)
-        fs_label.setText('Filesystem')
+        fs_label.setText("Filesystem")
         fs_button = QPushButton(self)
         fs_button.setText("Change")
 
@@ -257,7 +272,7 @@ class NewState(QDialog):
             socket_dialog = SocketConfig(socket_config=self._sockets_config, instance=self.instance)
             socket_dialog.exec_()
             self._sockets_config = socket_dialog.socket_config
-            #socket_button.setText("{} Items".format(len(self._sockets_config)))
+            # socket_button.setText("{} Items".format(len(self._sockets_config)))
 
         socket_button.clicked.connect(socket_edit_button)
 
@@ -280,6 +295,7 @@ class NewState(QDialog):
             self._options.update(angr.sim_options.modes[mode_combo.currentData()])
             for child in children_items:
                 child.setCheckState(0, Qt.Checked if child.text(0) in self._options else Qt.Unchecked)
+
         mode_combo.currentIndexChanged.connect(mode_changed)
         self._options.clear()
         self._options.update(angr.sim_options.modes[mode_combo.currentData()])
@@ -299,7 +315,7 @@ class NewState(QDialog):
         for name, members in angr.sim_options.__dict__.items():
             if not isinstance(members, set):
                 continue
-            if name == 'resilience_options':
+            if name == "resilience_options":
                 continue
             parent = QTreeWidgetItem(options_tree)
             parent.setText(0, name)
@@ -355,6 +371,7 @@ class NewState(QDialog):
         def do_filter(text):
             for child in children_items:
                 child.setHidden(text.upper() not in child.text(0))
+
         options_filter_box.textEdited.connect(do_filter)
 
         layout.addWidget(options_filter_label, row, 0)
@@ -365,6 +382,7 @@ class NewState(QDialog):
 
         buttons = QDialogButtonBox(parent=self)
         buttons.setStandardButtons(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
+
         def do_ok():
             name = name_box.text()
             template = template_combo.currentData()
@@ -372,20 +390,21 @@ class NewState(QDialog):
             base_state = base_state_combo.state
             mode = mode_combo.currentData()
             factory = self.instance.project.factory
-            if template in ('blank', 'call') and base_state is not None:
-                if template == 'blank':
+            if template in ("blank", "call") and base_state is not None:
+                if template == "blank":
                     self.state = factory.blank_state(addr=addr, base_state=base_state, options=self._options)
                 else:
                     self.state = factory.call_state(addr, base_state=base_state, options=self._options)
                 self.state.gui_data.base_name = base_state.gui_data.name
             else:
-                if template == 'blank':
+                if template == "blank":
                     self.state = factory.blank_state(addr=addr, mode=mode, options=self._options)
-                elif template == 'call':
+                elif template == "call":
                     self.state = factory.call_state(addr, mode=mode, options=self._options)
-                elif template == 'entry':
-                    self.state = factory.entry_state(mode=mode, options=self._options, args=self._args, \
-                        env=dict(self._env_config))
+                elif template == "entry":
+                    self.state = factory.entry_state(
+                        mode=mode, options=self._options, args=self._args, env=dict(self._env_config)
+                    )
                 else:
                     self.state = factory.full_init_state(mode=mode, options=self._options)
                 self.state.gui_data.base_name = name
@@ -417,6 +436,7 @@ class NewState(QDialog):
 
         ok_button = buttons.button(QDialogButtonBox.Ok)
         buttons.accepted.connect(do_ok)
+
         def validation_update():
             ok_button.setDisabled(bool(validation_failures))
 

@@ -1,30 +1,23 @@
-import hashlib
 import os
-import random
 import sys
-import string
 import unittest
 from time import sleep
 
-from PySide6.QtTest import QTest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
-
 import angr
-from angrmanagement.ui.main_window import MainWindow
-from angrmanagement.ui.dialogs.rename_label import RenameLabel
-from angrmanagement.ui.dialogs.rename_node import RenameNode
-
 from common import setUp, test_location
-
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 from slacrs import Slacrs
 from slacrs.model import HumanActivity, HumanActivityEnum
 
 from angrmanagement.config import Conf
 from angrmanagement.config.config_entry import ConfigurationEntry
+from angrmanagement.ui.dialogs.rename_label import RenameLabel
+from angrmanagement.ui.dialogs.rename_node import RenameNode
+from angrmanagement.ui.main_window import MainWindow
 
-
-Conf._entries['checrs_backend_str'] = ConfigurationEntry("checrs_backend_str", str, "", default_value="")
+Conf._entries["checrs_backend_str"] = ConfigurationEntry("checrs_backend_str", str, "", default_value="")
 Conf.checrs_backend_str = "sqlite:////tmp/testtest.sqlite"
 
 
@@ -34,7 +27,7 @@ class TestHumanActivities(unittest.TestCase):
 
     def tearDown(self):
         pass
-        os.remove(f"/tmp/testtest.sqlite")
+        os.remove("/tmp/testtest.sqlite")
 
     def _open_a_project(self):
         main = MainWindow(show=False)
@@ -53,12 +46,12 @@ class TestHumanActivities(unittest.TestCase):
     def test_rename_a_function_in_disasm_and_pseudocode_views(self):
         main = self._open_a_project()
 
-        func = main.workspace.main_instance.project.kb.functions['main']
+        func = main.workspace.main_instance.project.kb.functions["main"]
         self.assertIsNotNone(func)
 
         # decompile the function
         disasm_view = main.workspace._get_or_create_disassembly_view()
-        disasm_view._t_flow_graph_visible = True
+        disasm_view.display_disasm_graph()
         disasm_view.display_function(func)
         disasm_view.decompile_current_function()
         main.workspace.main_instance.join_all_jobs()
@@ -93,24 +86,28 @@ class TestHumanActivities(unittest.TestCase):
 
         sleep(5)
         self.session = Slacrs(database=Conf.checrs_backend_str).session()
-        function_rename = self.session.query(HumanActivity).filter(
-            HumanActivity.project_md5 == self.project_md5,
-            HumanActivity.category == HumanActivityEnum.FunctionRename,
-            HumanActivity.old_name == "main",
-            HumanActivity.new_name == "fdsa",
-        ).one()
+        function_rename = (
+            self.session.query(HumanActivity)
+            .filter(
+                HumanActivity.project_md5 == self.project_md5,
+                HumanActivity.category == HumanActivityEnum.FunctionRename,
+                HumanActivity.old_name == "main",
+                HumanActivity.new_name == "fdsa",
+            )
+            .one()
+        )
         self.session.close()
         self.assertIsNotNone(function_rename)
 
     def test_rename_a_variable_in_pseudocode_view(self):
         main = self._open_a_project()
 
-        func = main.workspace.main_instance.project.kb.functions['main']
+        func = main.workspace.main_instance.project.kb.functions["main"]
         self.assertIsNotNone(func)
 
         # decompile the function
         disasm_view = main.workspace._get_or_create_disassembly_view()
-        disasm_view._t_flow_graph_visible = True
+        disasm_view.display_disasm_graph()
         disasm_view.display_function(func)
         disasm_view.decompile_current_function()
         main.workspace.main_instance.join_all_jobs()
@@ -118,8 +115,10 @@ class TestHumanActivities(unittest.TestCase):
 
         # find an arbitrary node for a variable
         for _, item in pseudocode_view.codegen.map_pos_to_node.items():
-            if isinstance(item.obj, angr.analyses.decompiler.structured_codegen.c.CVariable) \
-                    and item.obj.unified_variable is not None:
+            if (
+                isinstance(item.obj, angr.analyses.decompiler.structured_codegen.c.CVariable)
+                and item.obj.unified_variable is not None
+            ):
                 variable_node = item.obj
                 break
         else:
@@ -135,21 +134,25 @@ class TestHumanActivities(unittest.TestCase):
 
         sleep(5)
         self.session = Slacrs(database=Conf.checrs_backend_str).session()
-        variable_rename = self.session.query(HumanActivity).filter(
-            HumanActivity.project_md5 == self.project_md5,
-            HumanActivity.new_name == "fdsa",
-        ).one()
+        variable_rename = (
+            self.session.query(HumanActivity)
+            .filter(
+                HumanActivity.project_md5 == self.project_md5,
+                HumanActivity.new_name == "fdsa",
+            )
+            .one()
+        )
         self.session.close()
         self.assertIsNotNone(variable_rename)
 
     def test_click_block(self):
         main_window = self._open_a_project()
-        func = main_window.workspace.main_instance.project.kb.functions['main']
+        func = main_window.workspace.main_instance.project.kb.functions["main"]
         self.assertIsNotNone(func)
 
         # display function main
         disasm_view = main_window.workspace._get_or_create_disassembly_view()
-        disasm_view._t_flow_graph_visible = True
+        disasm_view.display_disasm_graph()
         disasm_view.display_function(func)
 
         # get and click the first bbl of function main
@@ -162,21 +165,25 @@ class TestHumanActivities(unittest.TestCase):
         # assert that slacrs logged the information
         sleep(5)
         self.session = Slacrs(database=Conf.checrs_backend_str).session()
-        result = self.session.query(HumanActivity).filter(
-            HumanActivity.project_md5 == self.project_md5,
-            HumanActivity.addr == func.addr,
-        ).one()
+        result = (
+            self.session.query(HumanActivity)
+            .filter(
+                HumanActivity.project_md5 == self.project_md5,
+                HumanActivity.addr == func.addr,
+            )
+            .one()
+        )
         self.session.close()
         self.assertIsNotNone(result)
 
     def test_click_insn(self):
         main_window = self._open_a_project()
-        func = main_window.workspace.main_instance.project.kb.functions['main']
+        func = main_window.workspace.main_instance.project.kb.functions["main"]
         self.assertIsNotNone(func)
 
         # display function main
         disasm_view = main_window.workspace._get_or_create_disassembly_view()
-        disasm_view._t_flow_graph_visible = True
+        disasm_view.display_disasm_graph()
         disasm_view.display_function(func)
 
         # get and click the first bbl of function main
@@ -190,10 +197,14 @@ class TestHumanActivities(unittest.TestCase):
         # assert that slacrs logged the information
         sleep(5)
         self.session = Slacrs(database=Conf.checrs_backend_str).session()
-        result = self.session.query(HumanActivity).filter(
-            HumanActivity.project_md5 == self.project_md5,
-            HumanActivity.addr == insn.addr,
-        ).one()
+        result = (
+            self.session.query(HumanActivity)
+            .filter(
+                HumanActivity.project_md5 == self.project_md5,
+                HumanActivity.addr == insn.addr,
+            )
+            .one()
+        )
         self.session.close()
         self.assertIsNotNone(result)
 

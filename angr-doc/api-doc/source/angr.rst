@@ -165,7 +165,6 @@ Exploration Techniques
 .. automodule:: angr.exploration_techniques.oppologist
 .. automodule:: angr.exploration_techniques.loop_seer
 .. automodule:: angr.exploration_techniques.local_loop_seer
-.. automodule:: angr.exploration_techniques.cacher
 .. automodule:: angr.exploration_techniques.stochastic
 .. automodule:: angr.exploration_techniques.unique
 .. automodule:: angr.exploration_techniques.tech_builder
@@ -195,7 +194,7 @@ Simulation Engines
 .. automodule:: angr.engines.pcode.lifter
 .. automodule:: angr.engines.pcode.emulate
 .. automodule:: angr.engines.pcode.behavior
-.. automodule:: angr.engines.pcode.arch
+.. automodule:: angr.engines.pcode.cc
 
 Simulation Logging
 ------------------
@@ -215,7 +214,6 @@ Calling Conventions and Types
 .. automodule:: angr.calling_conventions
 .. automodule:: angr.sim_variable
 .. automodule:: angr.sim_type
-.. automodule:: angr.type_backend
 .. automodule:: angr.callable
 
 Knowledge Base
@@ -233,9 +231,10 @@ Knowledge Base
 .. automodule:: angr.knowledge_plugins.cfg.cfg_manager
 .. automodule:: angr.knowledge_plugins.cfg.cfg_node
 .. automodule:: angr.knowledge_plugins.cfg.indirect_jump
-.. automodule:: angr.knowledge_plugins.gotos
 .. automodule:: angr.knowledge_plugins.types
 .. automodule:: angr.knowledge_plugins.propagations
+.. automodule:: angr.knowledge_plugins.propagations.propagation_manager
+.. automodule:: angr.knowledge_plugins.propagations.propagation_model
 .. automodule:: angr.knowledge_plugins.comments
 .. automodule:: angr.knowledge_plugins.data
 .. automodule:: angr.knowledge_plugins.indirect_jumps
@@ -319,6 +318,7 @@ Analysis
 .. automodule:: angr.analyses.cfg.indirect_jump_resolvers.default_resolvers
 .. automodule:: angr.analyses.cfg.indirect_jump_resolvers.jumptable
 .. automodule:: angr.analyses.cfg.indirect_jump_resolvers.const_resolver
+.. automodule:: angr.analyses.cfg.indirect_jump_resolvers.propagator_utils
 .. automodule:: angr.analyses.cfg.indirect_jump_resolvers.resolver
 .. automodule:: angr.analyses.cfg.indirect_jump_resolvers
 .. automodule:: angr.analyses.cfg.cfg_utils
@@ -363,6 +363,8 @@ Analysis
 .. automodule:: angr.analyses.decompiler.empty_node_remover
 .. automodule:: angr.analyses.decompiler.expression_narrower
 .. automodule:: angr.analyses.decompiler.graph_region
+.. automodule:: angr.analyses.decompiler.goto_manager
+.. automodule:: angr.analyses.decompiler.jump_target_collector
 .. automodule:: angr.analyses.decompiler.jumptable_entry_condition_rewriter
 .. automodule:: angr.analyses.decompiler.optimization_passes
 .. automodule:: angr.analyses.decompiler.optimization_passes.const_derefs
@@ -372,6 +374,7 @@ Analysis
 .. automodule:: angr.analyses.decompiler.optimization_passes.base_ptr_save_simplifier
 .. automodule:: angr.analyses.decompiler.optimization_passes.div_simplifier
 .. automodule:: angr.analyses.decompiler.optimization_passes.ite_expr_converter
+.. automodule:: angr.analyses.decompiler.optimization_passes.lowered_switch_simplifier
 .. automodule:: angr.analyses.decompiler.optimization_passes.multi_simplifier
 .. automodule:: angr.analyses.decompiler.optimization_passes.mod_simplifier
 .. automodule:: angr.analyses.decompiler.optimization_passes.engine_base
@@ -392,7 +395,10 @@ Analysis
 .. automodule:: angr.analyses.decompiler.region_simplifiers.loop
 .. automodule:: angr.analyses.decompiler.region_simplifiers.node_address_finder
 .. automodule:: angr.analyses.decompiler.region_simplifiers.region_simplifier
+.. automodule:: angr.analyses.decompiler.region_simplifiers.switch_cluster_simplifier
+.. automodule:: angr.analyses.decompiler.region_simplifiers.switch_expr_simplifier
 .. automodule:: angr.analyses.decompiler.region_walker
+.. automodule:: angr.analyses.decompiler.redundant_label_remover
 .. automodule:: angr.analyses.decompiler.sequence_walker
 .. automodule:: angr.analyses.decompiler.structured_codegen
 .. automodule:: angr.analyses.decompiler.structured_codegen.base
@@ -413,6 +419,7 @@ Analysis
 .. automodule:: angr.analyses.propagator.engine_vex
 .. automodule:: angr.analyses.propagator.engine_ail
 .. automodule:: angr.analyses.propagator.outdated_definition_walker
+.. automodule:: angr.analyses.propagator.tmpvar_finder
 .. automodule:: angr.analyses.propagator.propagator
 .. automodule:: angr.analyses.propagator.prop_value
 .. automodule:: angr.analyses.propagator.top_checker_mixin

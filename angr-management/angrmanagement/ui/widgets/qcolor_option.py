@@ -1,11 +1,15 @@
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QFrame, QLabel, QColorDialog
+from typing import TYPE_CHECKING
 
-from ...data.object_container import ObjectContainer
+from PySide6.QtWidgets import QColorDialog, QFrame, QHBoxLayout, QLabel, QWidget
+
+from angrmanagement.data.object_container import ObjectContainer
+
+if TYPE_CHECKING:
+    from PySide6.QtGui import QColor
 
 
 class QColorOption(QWidget):
-    def __init__(self, color: QColor, label: str, parent=None):
+    def __init__(self, color: "QColor", label: str, parent=None):
         super().__init__(parent=parent)
 
         self.color = ObjectContainer(color, "The current color")
@@ -17,7 +21,7 @@ class QColorOption(QWidget):
         self.color.am_obj = color
         self.color.am_event()
 
-    def mouseReleaseEvent(self, event): # pylint:disable=unused-argument
+    def mouseReleaseEvent(self, event):  # pylint:disable=unused-argument
         dialog = QColorDialog()
         dialog.setCurrentColor(self.color.am_obj)
         dialog.exec()
@@ -30,9 +34,10 @@ class QColorOption(QWidget):
         frame.setFixedWidth(30)
         frame.setFixedHeight(15)
 
-        def update_color(**kwargs): # pylint:disable=unused-argument
-            r,g,b,a = self.color.getRgb()
+        def update_color(**kwargs):  # pylint:disable=unused-argument
+            r, g, b, a = self.color.getRgb()
             frame.setStyleSheet(f"background-color: rgba({r},{g},{b},{a});")
+
         update_color()
         self.color.am_subscribe(update_color)
 

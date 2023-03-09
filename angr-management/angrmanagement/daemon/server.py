@@ -1,21 +1,20 @@
 # pylint:disable=import-outside-toplevel,unused-argument
-import time
-import sys
 import subprocess
+import sys
 import threading
+import time
 from typing import Callable
 
 import rpyc
 from rpyc.utils.server import ThreadedServer
 
-from ..logic.singleton import SingleInstance, SingleInstanceException
-from ..utils.env import app_path
-
+from angrmanagement.logic.singleton import SingleInstance, SingleInstanceException
+from angrmanagement.utils.env import app_path
 
 DEFAULT_PORT = 64000
 
-CONNECTIONS = { }
-TargetIDtoCONN = { }
+CONNECTIONS = {}
+TargetIDtoCONN = {}
 
 
 class ManagementService(rpyc.Service):
@@ -33,8 +32,9 @@ class ManagementService(rpyc.Service):
         else:
             raise Exception(
                 "The specified target {} is not open in angr management. We have the following ones: {}.".format(
-                target_id,
-                str(TargetIDtoCONN)))
+                    target_id, str(TargetIDtoCONN)
+                )
+            )
         return conn
 
     def on_connect(self, conn):
@@ -50,19 +50,19 @@ class ManagementService(rpyc.Service):
         if bin_path is None:
             return
 
-        flags = { }
+        flags = {}
         if sys.platform.startswith("win"):
             DETACHED_PROCESS = 0x00000008
-            flags['creationflags'] = DETACHED_PROCESS
+            flags["creationflags"] = DETACHED_PROCESS
 
         apppath = app_path(pythonw=False, as_list=True)
         shell = sys.platform.startswith("win")
         # default to using daemon
         # if the user chooses to use angr URL scheme to load a binary, they are more likely to keep interacting with
         # this binary using angr URL scheme, which requires the angr management instance to run in with-daemon mode.
-        subprocess.Popen(apppath + ["-d", bin_path], shell=shell, stdin=None, stdout=None,
-                                stderr=None,
-                                close_fds=True, **flags)
+        subprocess.Popen(
+            apppath + ["-d", bin_path], shell=shell, stdin=None, stdout=None, stderr=None, close_fds=True, **flags
+        )
 
     def exposed_jumpto(self, addr, symbol, target_id: str):
         conn = self._get_conn(target_id)
@@ -112,21 +112,22 @@ def monitor_thread(server):
 
 
 def start_daemon(port=DEFAULT_PORT):
-
     try:
-        from ..logic import GlobalInfo
+        from angrmanagement.logic import GlobalInfo
+
         GlobalInfo.daemon_inst = SingleInstance()
     except SingleInstanceException:
         return
 
     # load plugins in headless mode
-    from ..plugins import PluginManager
+    from angrmanagement.plugins import PluginManager
+
     GlobalInfo.headless_plugin_manager = PluginManager(None)
     GlobalInfo.headless_plugin_manager.discover_and_initialize_plugins()
 
     # start the server
-    server = ThreadedServer(ManagementService, port=port, protocol_config={'allow_public_attrs': True})
-    threading.Thread(target=monitor_thread, args=(server, ), daemon=True).start()
+    server = ThreadedServer(ManagementService, port=port, protocol_config={"allow_public_attrs": True})
+    threading.Thread(target=monitor_thread, args=(server,), daemon=True).start()
     server.start()
 
 
@@ -146,21 +147,20 @@ def run_daemon_process():
     :return:
     """
 
-    flags = { }
+    flags = {}
     if sys.platform.startswith("win"):
         DETACHED_PROCESS = 0x00000008
-        flags['creationflags'] = DETACHED_PROCESS
+        flags["creationflags"] = DETACHED_PROCESS
 
     apppath = app_path(pythonw=True, as_list=True)
-    proc = subprocess.Popen(apppath + ["-D"], stdin=None, stdout=None, stderr=None,
-                            close_fds=True, **flags)
+    subprocess.Popen(apppath + ["-D"], stdin=None, stdout=None, stderr=None, close_fds=True, **flags)
 
 
 def daemon_conn(port=DEFAULT_PORT, service=None):
-    kwargs = { }
+    kwargs = {}
     if service is not None:
-        kwargs['service'] = service
-    kwargs['config'] = {'allow_public_attrs': True}
+        kwargs["service"] = service
+    kwargs["config"] = {"allow_public_attrs": True}
     conn = rpyc.connect("localhost", port, **kwargs)
     return conn
 

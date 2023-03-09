@@ -1,17 +1,16 @@
 import logging
 
-from PySide6.QtWidgets import QGraphicsItem
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPen
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtWidgets import QGraphicsItem
 
-from ...config import Conf
-from ...utils import locate_function
+from angrmanagement.config import Conf
+from angrmanagement.utils import locate_function
 
 _l = logging.getLogger(__name__)
 
 
 class QStateBlock(QGraphicsItem):
-
     HORIZONTAL_PADDING = 5
     VERTICAL_PADDING = 5
     LINE_MARGIN = 3
@@ -49,7 +48,6 @@ class QStateBlock(QGraphicsItem):
             return None
 
     def _init_widgets(self):
-
         addr = None
         if self.state.regs._ip.symbolic:
             self._label_str = str(self.state.regs._ip)
@@ -68,7 +66,7 @@ class QStateBlock(QGraphicsItem):
                 # is it a SimProcedure?
                 if self._instance.project.is_hooked(addr):
                     hooker = self._instance.project.hooked_by(addr)
-                    self._function_str = "SimProcedure " + hooker.__class__.__name__.split('.')[-1]
+                    self._function_str = "SimProcedure " + hooker.__class__.__name__.split(".")[-1]
                 else:
                     self._function_str = "Unknown"
             else:
@@ -79,7 +77,7 @@ class QStateBlock(QGraphicsItem):
                     self._function_str = f"{the_func.name}{offset:+x}"
         self._function_str = "Function: %s" % self._function_str
 
-    def mousePressEvent(self, event): #pylint: disable=no-self-use
+    def mousePressEvent(self, event):  # pylint: disable=no-self-use
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -103,7 +101,7 @@ class QStateBlock(QGraphicsItem):
 
         super().mouseDoubleClickEvent(event)
 
-    def paint(self, painter, option, widget): #pylint: disable=unused-argument
+    def paint(self, painter, option, widget):  # pylint: disable=unused-argument
         """
         Paint a state block on the scene.
 
@@ -112,15 +110,15 @@ class QStateBlock(QGraphicsItem):
         """
 
         painter.setFont(Conf.symexec_font)
-        normal_background = QColor(0xfa, 0xfa, 0xfa)
-        selected_background = QColor(0xcc, 0xcc, 0xcc)
+        normal_background = QColor(0xFA, 0xFA, 0xFA)
+        selected_background = QColor(0xCC, 0xCC, 0xCC)
 
         # The node background
         if self.selected:
             painter.setBrush(selected_background)
         else:
             painter.setBrush(normal_background)
-        painter.setPen(QPen(QColor(0xf0, 0xf0, 0xf0), 1.5))
+        painter.setPen(QPen(QColor(0xF0, 0xF0, 0xF0), 1.5))
         painter.drawRect(0, 0, self.width, self.height)
 
         x = 0
@@ -156,10 +154,11 @@ class QStateBlock(QGraphicsItem):
     #
 
     def _update_size(self):
-        width_candidates = [ self.HORIZONTAL_PADDING * 2 + len(self._label_str) * self._config.symexec_font_width,
-                             self.HORIZONTAL_PADDING * 2 + len(self._function_str) * self._config.symexec_font_width
-                             ]
-        height_candidates = [ 0 ]
+        width_candidates = [
+            self.HORIZONTAL_PADDING * 2 + len(self._label_str) * self._config.symexec_font_width,
+            self.HORIZONTAL_PADDING * 2 + len(self._function_str) * self._config.symexec_font_width,
+        ]
+        height_candidates = [0]
         self._width = max(width_candidates)
         self._height = max(height_candidates)
 

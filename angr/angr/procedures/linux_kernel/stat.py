@@ -1,7 +1,7 @@
 import angr
 
-class stat(angr.SimProcedure):
 
+class stat(angr.SimProcedure):
     def run(self, file_path, stat_buf):
         # this is a dummy for now
         stat = self.state.posix.fstat(0)
@@ -10,13 +10,14 @@ class stat(angr.SimProcedure):
         return 0
 
     def _store_amd64(self, stat_buf, stat):
-        store = lambda offset, val: self.state.memory.store(stat_buf + offset, val)
+        def store(offset, val):
+            return self.state.memory.store(stat_buf + offset, val)
 
         store(0x00, stat.st_dev)
         store(0x08, stat.st_ino)
         store(0x10, stat.st_nlink)
         store(0x18, stat.st_mode)
-        store(0x1c, stat.st_uid)
+        store(0x1C, stat.st_uid)
         store(0x20, stat.st_gid)
         store(0x24, self.state.solver.BVV(0, 32))
         store(0x28, stat.st_rdev)

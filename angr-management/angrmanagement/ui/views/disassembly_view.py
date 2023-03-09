@@ -1,47 +1,58 @@
-from collections import defaultdict
 import logging
-from typing import Union, Optional, Tuple, TYPE_CHECKING
+from collections import defaultdict
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 
-import PySide6
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QApplication, QMessageBox, QMenu
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QCursor, QAction
 from angr.block import Block
 from angr.knowledge_plugins.cfg import MemoryData
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QAction, QCursor
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QMenu, QMessageBox, QVBoxLayout
 
-from ...logic import GlobalInfo
-from ...data.instance import ObjectContainer
-from ...utils import locate_function
-from ...data.function_graph import FunctionGraph
-from ...data.highlight_region import SynchronizedHighlightRegion
-from ...logic.disassembly import JumpHistory, InfoDock
-from ..widgets import QDisassemblyGraph, QDisasmStatusBar, QLinearDisassembly, QFeatureMap,\
-    QLinearDisassemblyView, DisassemblyLevel
-from ..dialogs.dependson import DependsOn
-from ..dialogs.jumpto import JumpTo
-from ..dialogs.rename import RenameDialog
-from ..dialogs.rename_label import RenameLabel
-from ..dialogs.set_comment import SetComment
-from ..dialogs.new_state import NewState
-from ..dialogs.xref import XRefDialog
-from ..dialogs.hook import HookDialog
-from ..dialogs.func_doc import FuncDocDialog
-from ..menus.disasm_insn_context_menu import DisasmInsnContextMenu
-from ..menus.disasm_label_context_menu import DisasmLabelContextMenu
-from .view import SynchronizedView
-from ..widgets import QFindAddrAnnotation, QAvoidAddrAnnotation, QBlockAnnotations
-from ..widgets.qblock_code import QVariableObj
-from ...ui.widgets.qinst_annotation import QHookAnnotation, QBreakAnnotation
+from angrmanagement.data.function_graph import FunctionGraph
+from angrmanagement.data.highlight_region import SynchronizedHighlightRegion
+from angrmanagement.data.instance import ObjectContainer
+from angrmanagement.logic import GlobalInfo
+from angrmanagement.logic.commands import ViewCommand
+from angrmanagement.logic.disassembly import InfoDock, JumpHistory
+from angrmanagement.ui.dialogs.assemble_patch import AssemblePatchDialog
+from angrmanagement.ui.dialogs.dependson import DependsOn
+from angrmanagement.ui.dialogs.func_doc import FuncDocDialog
+from angrmanagement.ui.dialogs.hook import HookDialog
+from angrmanagement.ui.dialogs.jumpto import JumpTo
+from angrmanagement.ui.dialogs.new_state import NewState
+from angrmanagement.ui.dialogs.rename import RenameDialog
+from angrmanagement.ui.dialogs.rename_label import RenameLabel
+from angrmanagement.ui.dialogs.set_comment import SetComment
+from angrmanagement.ui.dialogs.xref import XRefDialog
+from angrmanagement.ui.menus.disasm_insn_context_menu import DisasmInsnContextMenu
+from angrmanagement.ui.menus.disasm_label_context_menu import DisasmLabelContextMenu
+from angrmanagement.ui.widgets import (
+    DisassemblyLevel,
+    QAvoidAddrAnnotation,
+    QBlockAnnotations,
+    QDisasmStatusBar,
+    QDisassemblyGraph,
+    QFindAddrAnnotation,
+    QLinearDisassembly,
+    QLinearDisassemblyView,
+)
+from angrmanagement.ui.widgets.qblock_code import QVariableObj
+from angrmanagement.ui.widgets.qinst_annotation import QBreakAnnotation, QHookAnnotation
+from angrmanagement.utils import locate_function
+
+from .view import SynchronizedView, ViewStatePublisherMixin
 
 if TYPE_CHECKING:
-    from angrmanagement.logic.disassembly.info_dock import OperandDescriptor
+    import PySide6
     from angr.knowledge_plugins import VariableManager
+
+    from angrmanagement.logic.disassembly.info_dock import OperandDescriptor
 
 
 _l = logging.getLogger(__name__)
 
 
-class DisassemblyView(SynchronizedView):
+class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
     """
     Disassembly View
     """
@@ -52,9 +63,9 @@ class DisassemblyView(SynchronizedView):
     disassembly_level_changed = Signal(DisassemblyLevel)
 
     def __init__(self, instance, *args, **kwargs):
-        super().__init__('disassembly', instance, *args, **kwargs)
+        super().__init__("disassembly", instance, *args, **kwargs)
 
-        self.base_caption = 'Disassembly'
+        self.base_caption = "Disassembly"
         self._disassembly_level = DisassemblyLevel.MachineCode
         self._show_minimap: bool = True
         self._show_address = True
@@ -64,22 +75,18 @@ class DisassemblyView(SynchronizedView):
         # whether we want to show exception edges and all nodes that are only reachable through exception edges
         self._show_exception_edges = True
 
-        self._linear_viewer = None  # type: Optional[QLinearDisassembly]
-        self._flow_graph = None  # type: Optional[QDisassemblyGraph]
         self._prefer_graph = True
+        self._current_view: Union[QLinearDisassembly, QDisassemblyGraph, None] = None
+
         self._statusbar = None
         self.jump_history: JumpHistory = JumpHistory()
         self.infodock = InfoDock(self)
-        self._variable_recovery_flavor = 'fast'
-        self.variable_manager = None  # type: Optional[VariableManager]
-        self._current_function = ObjectContainer(None, 'The currently selected function')
+        self._variable_recovery_flavor = "fast"
+        self.variable_manager: Optional[VariableManager] = None
+        self._current_function = ObjectContainer(None, "The currently selected function")
 
-        # For tests only
-        self._t_linear_viewer_visible: bool = False
-        self._t_flow_graph_visible: bool = False
-
-        self._insn_menu = None  # type: Optional[DisasmInsnContextMenu]
-        self._label_menu = None  # type: Optional[DisasmLabelContextMenu]
+        self._insn_menu: Optional[DisasmInsnContextMenu] = None
+        self._label_menu: Optional[DisasmLabelContextMenu] = None
 
         self._insn_addr_on_context_menu = None
         self._label_addr_on_context_menu = None
@@ -93,30 +100,63 @@ class DisassemblyView(SynchronizedView):
         self._init_menus()
         self._register_events()
 
+    @classmethod
+    def register_commands(cls, workspace):
+        """
+        Register commands that can be run for this view.
+        """
+        workspace.command_manager.register_commands(
+            [
+                ViewCommand("disassembly_view_" + action.__name__, "Disassembly: " + caption, action, cls, workspace)
+                for caption, action in [
+                    ("Comment", cls.popup_comment_dialog),
+                    ("Jump Back", cls.jump_back),
+                    ("Jump Forward", cls.jump_forward),
+                    ("Jump To", cls.popup_jumpto_dialog),
+                    ("Toggle Addresses", cls.toggle_show_address),
+                    ("Toggle Exception Edges", cls.toggle_show_exception_edges),
+                    ("Toggle Graph/Linear view", cls.toggle_disasm_view),
+                    ("Toggle Minimap", cls.toggle_show_minimap),
+                    ("Toggle Smart Highlighting", cls.toggle_smart_highlighting),
+                    ("Toggle Variable Identifiers", cls.toggle_show_variable_identifier),
+                    ("Toggle Variables", cls.toggle_show_variable),
+                    ("View AIL", cls.set_disassembly_level_ail),
+                    ("View Lifter IR", cls.set_disassembly_level_lifter_ir),
+                    ("View Machine Code", cls.set_disassembly_level_machine_code),
+                ]
+            ]
+        )
+
     @property
     def disassembly_level(self):
         return self._disassembly_level
 
-    def set_disassembly_level(self, level:DisassemblyLevel):
+    def set_disassembly_level(self, level: DisassemblyLevel):
         self._disassembly_level = level
         self._flow_graph.set_disassembly_level(level)
         self._linear_viewer.set_disassembly_level(level)
         self.disassembly_level_changed.emit(level)
         self.redraw_current_graph()
 
-    def reload(self):
+    def set_disassembly_level_ail(self):
+        self.set_disassembly_level(DisassemblyLevel.AIL)
 
+    def set_disassembly_level_lifter_ir(self):
+        self.set_disassembly_level(DisassemblyLevel.LifterIR)
+
+    def set_disassembly_level_machine_code(self):
+        self.set_disassembly_level(DisassemblyLevel.MachineCode)
+
+    def reload(self):
         old_infodock = self.infodock.copy()
 
         self.infodock.initialize()
-        self._feature_map.refresh()
 
         # Reload the current graph to make sure it gets the latest information, such as variables.
-        self.current_graph.reload(old_infodock=old_infodock)
+        self._current_view.reload(old_infodock=old_infodock)
 
     def refresh(self):
-        self.current_graph.refresh()
-        self._feature_map.refresh()
+        self._current_view.refresh()
 
     def save_image_to(self, path):
         if self._flow_graph is not None:
@@ -167,22 +207,19 @@ class DisassemblyView(SynchronizedView):
 
     @variable_recovery_flavor.setter
     def variable_recovery_flavor(self, v):
-        if v in ('fast', 'accurate'):
+        if v in ("fast", "accurate"):
             if v != self._variable_recovery_flavor:
                 self._variable_recovery_flavor = v
                 # TODO: Rerun the variable recovery analysis and update the current view
 
     @property
-    def current_graph(self) -> Union[QLinearDisassemblyView,QDisassemblyGraph]:
+    def current_graph(self) -> Union[QLinearDisassemblyView, QDisassemblyGraph]:
         """
         Return the current disassembly control, either linear viewer or flow graph.
 
         :return:    Linear viewer or flow graph.
         """
-        if self._linear_viewer.isVisible() or self._t_linear_viewer_visible:
-            return self._linear_viewer
-        else:
-            return self._flow_graph
+        return self._current_view
 
     @property
     def current_function(self) -> ObjectContainer:
@@ -279,10 +316,14 @@ class DisassemblyView(SynchronizedView):
 
         :return:    None
         """
-        self.current_graph.redraw()
+        self._current_view.redraw()
 
     def on_screen_changed(self):
-        self.current_graph.refresh()
+        self._current_view.refresh()
+
+    def _on_cfb_event(self, **kwargs):
+        if not kwargs:
+            self._linear_viewer.reload()
 
     #
     # UI
@@ -295,7 +336,7 @@ class DisassemblyView(SynchronizedView):
         menu.addSeparator()
         menu.addMenu(self.get_synchronize_with_submenu())
 
-    def contextMenuEvent(self, event: PySide6.QtGui.QContextMenuEvent):  # pylint: disable=unused-argument
+    def contextMenuEvent(self, event: "PySide6.QtGui.QContextMenuEvent"):  # pylint: disable=unused-argument
         """
         Display view context menu.
         """
@@ -304,21 +345,20 @@ class DisassemblyView(SynchronizedView):
         mnu.exec_(QCursor.pos())
 
     def instruction_context_menu(self, insn, pos):
-
         self._insn_addr_on_context_menu = insn.addr
 
         # pass in the instruction address
         self._insn_menu.insn_addr = insn.addr
         # pop up the menu
-        mnu = self._insn_menu.qmenu(extra_entries=list(self.instance.workspace.plugins.build_context_menu_insn(insn)),
-                                    cached=False)
+        mnu = self._insn_menu.qmenu(
+            extra_entries=list(self.instance.workspace.plugins.build_context_menu_insn(insn)), cached=False
+        )
         self.append_view_menu_actions(mnu)
         mnu.exec_(pos)
 
         self._insn_addr_on_context_menu = None
 
     def label_context_menu(self, addr: int, pos):
-
         self._label_addr_on_context_menu = addr
         self._label_menu.addr = addr
         mnu = self._label_menu.qmenu(cached=False)
@@ -332,11 +372,11 @@ class DisassemblyView(SynchronizedView):
         """
         obj = self.infodock.selected_qblock_code_obj
         if isinstance(obj, QVariableObj):
-            dlg = RenameDialog('Rename Variable', obj.obj.name, self)
+            dlg = RenameDialog("Rename Variable", obj.obj.name, self)
             dlg.exec_()
             if dlg.result is not None:
                 obj.obj.name = dlg.result
-                self.current_graph.refresh()
+                self._current_view.refresh()
 
     def get_context_menu_for_selected_object(self) -> Optional[QMenu]:
         """
@@ -344,7 +384,7 @@ class DisassemblyView(SynchronizedView):
         """
         obj = self.infodock.selected_qblock_code_obj
         if isinstance(obj, QVariableObj):
-            rename_act = QAction('Re&name', self)
+            rename_act = QAction("Re&name", self)
             rename_act.triggered.connect(self.rename_selected_object)
             mnu = QMenu()
             mnu.addActions([rename_act])
@@ -428,22 +468,21 @@ class DisassemblyView(SynchronizedView):
                 url = "http://"
                 ftype = "<>"
                 doc_tuple = (doc_string, url, ftype)
-            dialog = FuncDocDialog(self.instance,
-                                   addr=target, name=operand.text, doc_tuple=doc_tuple,
-                                   parent=self)
+            dialog = FuncDocDialog(self.instance, addr=target, name=operand.text, doc_tuple=doc_tuple, parent=self)
             dialog.show()
 
-    def popup_dependson_dialog(self, addr: Optional[int]=None, use_operand=False, func: bool=False):
+    def popup_dependson_dialog(self, addr: Optional[int] = None, use_operand=False, func: bool = False):
         if use_operand:
             r = self._flow_graph.get_selected_operand_info()
             if r is not None:
                 _, addr, operand = r
             else:
-                QMessageBox.critical(self,
-                                     "No operand",
-                                     "Please select an operand first.",
-                                     buttons=QMessageBox.Ok,
-                                     )
+                QMessageBox.critical(
+                    self,
+                    "No operand",
+                    "Please select an operand first.",
+                    buttons=QMessageBox.Ok,
+                )
                 return
         else:
             if addr is None:
@@ -489,17 +528,32 @@ class DisassemblyView(SynchronizedView):
                 self.popup_xref_dialog(addr=ins_addr, dst_addr=operand.constant_memory_value, async_=async_)
 
     def popup_xref_dialog(self, addr=None, variable=None, dst_addr=None, async_=True):
-
         if variable is not None:
-            dialog = XRefDialog(addr=addr, variable_manager=self.variable_manager, variable=variable,
-                                instance=self.instance, disassembly_view=self, parent=self)
+            dialog = XRefDialog(
+                addr=addr,
+                variable_manager=self.variable_manager,
+                variable=variable,
+                instance=self.instance,
+                disassembly_view=self,
+                parent=self,
+            )
         else:
-            dialog = XRefDialog(addr=addr, xrefs_manager=self.instance.project.kb.xrefs, dst_addr=dst_addr,
-                                instance=self.instance, disassembly_view=self, parent=self)
+            dialog = XRefDialog(
+                addr=addr,
+                xrefs_manager=self.instance.project.kb.xrefs,
+                dst_addr=dst_addr,
+                instance=self.instance,
+                disassembly_view=self,
+                parent=self,
+            )
         if async_:
             dialog.show()
         else:
             dialog.exec_()
+
+    def popup_patch_dialog(self):
+        dlg = AssemblePatchDialog(self._insn_addr_on_context_menu, self.instance)
+        dlg.exec_()
 
     #
     # Public methods
@@ -518,6 +572,7 @@ class DisassemblyView(SynchronizedView):
             self._prefer_graph = True
 
         self._linear_viewer.hide()
+        self._current_view = self._flow_graph
         self._flow_graph.show()
 
         if self.infodock.selected_insns:
@@ -535,6 +590,7 @@ class DisassemblyView(SynchronizedView):
             self._prefer_graph = False
 
         self._flow_graph.hide()
+        self._current_view = self._linear_viewer
         self._linear_viewer.show()
 
         if self.infodock.selected_insns:
@@ -557,7 +613,6 @@ class DisassemblyView(SynchronizedView):
         self._display_function(function)
 
     def decompile_current_function(self):
-
         if self._current_function.am_obj is not None:
             try:
                 curr_ins = next(iter(self.infodock.selected_insns))
@@ -566,63 +621,53 @@ class DisassemblyView(SynchronizedView):
 
             self.instance.workspace.decompile_function(self._current_function.am_obj, curr_ins=curr_ins)
 
-    def toggle_show_minimap(self, show:bool):
+    def toggle_show_minimap(self, show_minimap: Optional[bool] = None) -> None:
         """
         Toggle minimap display preference
         """
-        self._show_minimap = show
-        self.current_graph.refresh()
+        if show_minimap is None:
+            show_minimap = not self._show_minimap
+        self._show_minimap = show_minimap
+        self._current_view.refresh()
 
-    def toggle_smart_highlighting(self, enabled):
+    def toggle_smart_highlighting(self, enabled: Optional[bool] = None) -> None:
         """
         Toggle between the smart highlighting mode and the text-based highlighting mode.
-
-        :param bool enabled: Enable smart highlighting.
-        :return:             None
         """
-
+        if enabled is None:
+            enabled = not self.infodock.smart_highlighting
         self.infodock.smart_highlighting = enabled
-
         self._flow_graph.refresh()
         self._linear_viewer.refresh()
 
-    def toggle_show_address(self, show_address):
+    def toggle_show_address(self, show_address: Optional[bool] = None) -> None:
         """
         Toggle whether addresses are shown on disassembly graph.
-
-        :param bool show_address: Whether the address should be shown or not.
-        :return:                  None
         """
-
+        if show_address is None:
+            show_address = not self._show_address
         self._show_address = show_address
+        self._current_view.refresh()
 
-        self.current_graph.refresh()
-
-    def toggle_show_variable(self, show_variable):
+    def toggle_show_variable(self, show_variable: Optional[bool] = None) -> None:
         """
         Toggle whether variables are shown on disassembly graph.
-
-        :param bool show_variable: Whether the variable should be shown or not.
-        :return:                   None
         """
-
+        if show_variable is None:
+            show_variable = not self._show_variable
         self._show_variable = show_variable
+        self._current_view.refresh()
 
-        self.current_graph.refresh()
-
-    def toggle_show_variable_identifier(self, show_ident):
+    def toggle_show_variable_identifier(self, show_ident: Optional[bool] = None) -> None:
         """
         Toggle whether variable identifiers are shown on disassembly graph.
-
-        :param bool show_ident: Whether variable identifiers should be shown or not.
-        :return:                None
         """
-
+        if show_ident is None:
+            show_ident = not self._show_variable_ident
         self._show_variable_ident = show_ident
+        self._current_view.refresh()
 
-        self.current_graph.refresh()
-
-    def toggle_show_exception_edges(self, show_exception_edges):
+    def toggle_show_exception_edges(self, show_exception_edges: Optional[bool] = None) -> None:
         """
         Toggle whether exception edges and the nodes that are only reachable through exception edges should be shown
         or not.
@@ -641,7 +686,6 @@ class DisassemblyView(SynchronizedView):
                 self._flow_graph.reload()
 
     def jump_to(self, addr, src_ins_addr=None, use_animation=False):
-
         # Record the current instruction address first
         if src_ins_addr is not None:
             self.jump_history.record_address(src_ins_addr)
@@ -661,7 +705,7 @@ class DisassemblyView(SynchronizedView):
         if addr is not None:
             self._jump_to(addr, use_animation=False)
 
-    def jump_to_history_position(self, pos:int):
+    def jump_to_history_position(self, pos: int):
         addr = self.jump_history.step_position(pos)
         if addr is not None:
             self._jump_to(addr, use_animation=False)
@@ -669,9 +713,8 @@ class DisassemblyView(SynchronizedView):
     def select_label(self, label_addr):
         self.infodock.select_label(label_addr)
 
-    def rename_label(self, addr, new_name, is_func: bool=False, full_refresh: bool=False):
+    def rename_label(self, addr, new_name, is_func: bool = False, full_refresh: bool = False):
         if self._flow_graph.disasm is not None:
-
             is_renaming = False
 
             kb = self._flow_graph.disasm.kb
@@ -684,7 +727,7 @@ class DisassemblyView(SynchronizedView):
                     # restore to the default name
                     func.name = f"sub_{addr:x}"
             else:
-                if new_name == '':
+                if new_name == "":
                     if addr in kb.labels:
                         del kb.labels[addr]
                 else:
@@ -756,19 +799,15 @@ class DisassemblyView(SynchronizedView):
     def _init_widgets(self):
         self._linear_viewer = QLinearDisassembly(self.instance, self, parent=self)
         self._flow_graph = QDisassemblyGraph(self.instance, self, parent=self)
-        self._feature_map = QFeatureMap(self, parent=self)
         self._statusbar = QDisasmStatusBar(self, parent=self)
 
         vlayout = QVBoxLayout()
         vlayout.addWidget(self._statusbar)
-        vlayout.addWidget(self._feature_map)
         vlayout.addWidget(self._flow_graph)
         vlayout.addWidget(self._linear_viewer)
         vlayout.setSpacing(0)
         vlayout.setContentsMargins(0, 0, 0, 0)
 
-        self._feature_map.setMaximumHeight(25)
-        vlayout.setStretchFactor(self._feature_map, 0)
         vlayout.setStretchFactor(self._flow_graph, 1)
         vlayout.setStretchFactor(self._linear_viewer, 1)
         vlayout.setStretchFactor(self._statusbar, 0)
@@ -781,7 +820,6 @@ class DisassemblyView(SynchronizedView):
         self.setLayout(hlayout)
 
         self.display_disasm_graph()
-        # self.display_linear_viewer()
 
         self.instance.workspace.plugins.instrument_disassembly_view(self)
 
@@ -799,12 +837,9 @@ class DisassemblyView(SynchronizedView):
         self.infodock.hovered_edge.am_subscribe(self.redraw_current_graph)
         self.infodock.selected_labels.am_subscribe(self.redraw_current_graph)
         self.infodock.qblock_code_obj_selection_changed.connect(self.redraw_current_graph)
-        self._feature_map.addr.am_subscribe(self._on_feature_map_addr_changed)
         self.instance.workspace.current_screen.am_subscribe(self.on_screen_changed)
         self.instance.breakpoint_mgr.breakpoints.am_subscribe(self._on_breakpoints_updated)
-
-    def _on_feature_map_addr_changed(self):
-        self._jump_to(self._feature_map.addr.am_obj)
+        self.instance.cfb.am_subscribe(self._on_cfb_event)
 
     def _on_breakpoints_updated(self, **kwargs):  # pylint:disable=unused-argument
         self.refresh()
@@ -818,9 +853,9 @@ class DisassemblyView(SynchronizedView):
         self.infodock.hovered_edge.am_unsubscribe(self.redraw_current_graph)
         self.infodock.selected_labels.am_unsubscribe(self.redraw_current_graph)
         self.infodock.qblock_code_obj_selection_changed.disconnect(self.redraw_current_graph)
-        self._feature_map.addr.am_unsubscribe(self._on_feature_map_addr_changed)
         self.instance.workspace.current_screen.am_unsubscribe(self.on_screen_changed)
         self.instance.breakpoint_mgr.breakpoints.am_unsubscribe(self._on_breakpoints_updated)
+        self.instance.cfb.am_unsubscribe(self._on_cfb_event)
 
     def closeEvent(self, event):
         self._unregister_events()
@@ -847,28 +882,31 @@ class DisassemblyView(SynchronizedView):
         # clear existing selected instructions and operands
         self.infodock.clear_selection()
 
-        if self._flow_graph.isVisible() or self._t_flow_graph_visible:
+        if self._current_view is self._flow_graph:
             if self._flow_graph.function_graph is None or self._flow_graph.function_graph.function is not the_func:
                 # set function graph of a new function
-                self._flow_graph.function_graph = FunctionGraph(function=the_func,
-                                                                exception_edges=self.show_exception_edges,
-                                                                )
+                self._flow_graph.function_graph = FunctionGraph(
+                    function=the_func,
+                    exception_edges=self.show_exception_edges,
+                )
 
-        elif self._linear_viewer.isVisible() or self._t_linear_viewer_visible:
+        elif self._current_view is self._linear_viewer:
             self._linear_viewer.navigate_to_addr(the_func.addr)
 
-        view = self.instance.workspace.view_manager.first_view_in_category('console')
+        view = self.instance.workspace.view_manager.first_view_in_category("console")
         if view is not None:
-            view.push_namespace({
-                'func': the_func,
-                'function_': the_func,
-            })
+            view.push_namespace(
+                {
+                    "func": the_func,
+                    "function_": the_func,
+                }
+            )
 
     def _jump_to(self, addr, use_animation=False):
-        if self._prefer_graph and self.current_graph is self._linear_viewer:
+        if self._prefer_graph and self._current_view is self._linear_viewer:
             self.display_disasm_graph(prefer=False)
 
-        if self.current_graph is not self._linear_viewer:
+        if self._current_view is not self._linear_viewer:
             function = locate_function(self.instance, addr)
             if function is not None:
                 self._display_function(function)
@@ -900,11 +938,11 @@ class DisassemblyView(SynchronizedView):
     # Utils
     #
 
-    def _address_in_selection(self) -> Optional[Tuple[str,int]]:
+    def _address_in_selection(self) -> Optional[Tuple[str, int]]:
         if self._insn_addr_on_context_menu is not None:
             return "insn", self._insn_addr_on_context_menu
         if len(self.infodock.selected_operands) == 1:
-            selected_operand: 'OperandDescriptor' = next(iter(self.infodock.selected_operands.values()))
+            selected_operand: "OperandDescriptor" = next(iter(self.infodock.selected_operands.values()))
             if selected_operand.num_value is not None:
                 return "operand", selected_operand.num_value
         if len(self.infodock.selected_insns) == 1:

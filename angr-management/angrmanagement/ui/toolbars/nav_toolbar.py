@@ -1,13 +1,16 @@
 import os
-from typing import Callable, Any
+from typing import TYPE_CHECKING, Any, Callable
 
-from PySide6.QtCore import Signal, QSize
-from PySide6.QtGui import QMouseEvent, QIcon, QAction
-from PySide6.QtWidgets import QMenu, QToolButton, QToolBar, QStyle
+from PySide6.QtCore import QSize, Signal
+from PySide6.QtGui import QAction, QIcon, QMouseEvent
+from PySide6.QtWidgets import QMenu, QStyle, QToolBar, QToolButton
+
+from angrmanagement.config import IMG_LOCATION
 
 from .toolbar import Toolbar
-from ...logic.disassembly import JumpHistory
-from ...config import IMG_LOCATION
+
+if TYPE_CHECKING:
+    from angrmanagement.logic.disassembly import JumpHistory
 
 
 class NavToolButton(QToolButton):
@@ -18,7 +21,7 @@ class NavToolButton(QToolButton):
     triggered = Signal()
     triggeredFromMenu = Signal(int)
 
-    def __init__(self, jump_history:JumpHistory, direction_forward:bool=False, parent=None):
+    def __init__(self, jump_history: "JumpHistory", direction_forward: bool = False, parent=None):
         super().__init__(parent)
         self._dir_fwd = direction_forward
         self._jump_history = jump_history
@@ -26,11 +29,11 @@ class NavToolButton(QToolButton):
         self._init_menu()
 
         if direction_forward:
-            lbl = 'Forward'
-            ico = QIcon(os.path.join(IMG_LOCATION, 'toolbar-forward.png'))
+            lbl = "Forward"
+            ico = QIcon(os.path.join(IMG_LOCATION, "toolbar-forward.png"))
         else:
-            lbl = 'Back'
-            ico = QIcon(os.path.join(IMG_LOCATION, 'toolbar-previous.png'))
+            lbl = "Back"
+            ico = QIcon(os.path.join(IMG_LOCATION, "toolbar-previous.png"))
 
         a = QAction(ico, lbl, self)
         a.triggered.connect(self._on_button_activated)
@@ -39,7 +42,7 @@ class NavToolButton(QToolButton):
     def _on_button_activated(self):
         self.triggered.emit()
 
-    def _on_menu_action_activated(self, checked): # pylint:disable=unused-argument
+    def _on_menu_action_activated(self, checked):  # pylint:disable=unused-argument
         pos = self.sender().data()
         self.triggeredFromMenu.emit(pos)
 
@@ -51,7 +54,7 @@ class NavToolButton(QToolButton):
 
         actions = []
         for i, point in enumerate(self._jump_history.history):
-            a = QAction(f'{i}: {point:x}', self)
+            a = QAction(f"{i}: {point:x}", self)
             a.setData(i)
             a.setCheckable(True)
             a.setChecked(pos == i)
@@ -62,7 +65,7 @@ class NavToolButton(QToolButton):
         self._menu.addActions(actions)
         self.setMenu(self._menu)
 
-    def mousePressEvent(self, e:QMouseEvent):
+    def mousePressEvent(self, e: QMouseEvent):
         self._init_menu()
         super().mousePressEvent(e)
 
@@ -72,12 +75,16 @@ class NavToolbar(Toolbar):
     Navigation toolbar with forward, back, and menu-based navigation of a JumpHistory stack
     """
 
-    def __init__(self, jump_history:JumpHistory,
-                       back_triggered:Callable[[], Any],
-                       forward_triggered:Callable[[], Any],
-                       point_triggered:Callable[[int], Any],
-                       small_icon:bool, window):
-        super().__init__(window, 'Navigation')
+    def __init__(
+        self,
+        jump_history: "JumpHistory",
+        back_triggered: Callable[[], Any],
+        forward_triggered: Callable[[], Any],
+        point_triggered: Callable[[int], Any],
+        small_icon: bool,
+        window,
+    ):
+        super().__init__(window, "Navigation")
         self._jump_history = jump_history
         self._back_triggered = back_triggered
         self._forward_triggered = forward_triggered

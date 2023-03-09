@@ -1,28 +1,24 @@
 from collections import defaultdict
-from typing import TYPE_CHECKING, List, Dict, Any
-import logging
+from typing import TYPE_CHECKING, Any, Dict, List
 
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import QPointF, Qt
 
-from ...utils.edge import Edge
-from ...utils.tree_graph_layouter import TreeGraphLayouter
+from angrmanagement.utils.tree_graph_layouter import TreeGraphLayouter
+
 from .qgraph import QZoomableDraggableGraphicsView
 from .qgraph_arrow import QDepGraphArrow
 
 if TYPE_CHECKING:
-    from angrmanagement.ui.workspace import Workspace
     from angrmanagement.ui.views.dep_view import DependencyView
-
-
-_l = logging.getLogger(name=__name__)
+    from angrmanagement.ui.workspace import Workspace
+    from angrmanagement.utils.edge import Edge
 
 
 class QDependencyGraph(QZoomableDraggableGraphicsView):
-
     LEFT_PADDING = 2000
     TOP_PADDING = 2000
 
-    def __init__(self, workspace: 'Workspace', dep_view: 'DependencyView', parent=None):
+    def __init__(self, workspace: "Workspace", dep_view: "DependencyView", parent=None):
         super().__init__(parent=parent)
 
         self._workspace = workspace
@@ -30,10 +26,10 @@ class QDependencyGraph(QZoomableDraggableGraphicsView):
 
         self._graph = None
         self.blocks = set()
-        self._edges: List[Edge] = [ ]
-        self._arrows_by_src: Dict[Any,List[QDepGraphArrow]] = defaultdict(list)
-        self._arrows_by_dst: Dict[Any,List[QDepGraphArrow]] = defaultdict(list)
-        self._arrows: List[QDepGraphArrow] = [ ]
+        self._edges: List[Edge] = []
+        self._arrows_by_src: Dict[Any, List[QDepGraphArrow]] = defaultdict(list)
+        self._arrows_by_dst: Dict[Any, List[QDepGraphArrow]] = defaultdict(list)
+        self._arrows: List[QDepGraphArrow] = []
 
     @property
     def graph(self):

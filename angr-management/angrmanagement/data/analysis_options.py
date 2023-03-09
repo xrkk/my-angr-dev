@@ -1,8 +1,10 @@
-from typing import Mapping, Any, Sequence, Union, Optional
-import platform
 import multiprocessing
+import platform
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Union
 
-import angr
+if TYPE_CHECKING:
+    import angr
 
 
 def extract_first_paragraph_from_docstring(desc: str) -> str:
@@ -22,9 +24,9 @@ def extract_first_paragraph_from_docstring(desc: str) -> str:
             last_line = len(desc)
         desc = desc[first_line:last_line]
         num_whitespace_chars = len(desc[0]) - len(desc[0].lstrip())
-        desc = ' '.join(l[num_whitespace_chars:] for l in desc)
+        desc = " ".join(line[num_whitespace_chars:] for line in desc)
     else:
-        desc = ''
+        desc = ""
 
     return desc
 
@@ -34,9 +36,9 @@ class AnalysesConfiguration:
     Configuration for a sequence of analyses.
     """
 
-    def __init__(self, analyses: Sequence['AnalysisConfiguration'], instance):
+    def __init__(self, analyses: Sequence["AnalysisConfiguration"], instance):
         self.instance = instance
-        self.analyses: Sequence['AnalysisConfiguration'] = analyses
+        self.analyses: Sequence["AnalysisConfiguration"] = analyses
 
     def __len__(self):
         return len(self.analyses)
@@ -49,7 +51,7 @@ class AnalysesConfiguration:
             return self.analyses[key]
         return self.by_name(key)
 
-    def by_name(self, name: str) -> 'AnalysisConfiguration':
+    def by_name(self, name: str) -> "AnalysisConfiguration":
         for a in self.analyses:
             if a.name == name:
                 return a
@@ -65,9 +67,9 @@ class AnalysisConfiguration:
         self.instance = instance
         self.project: angr.Project = self.instance.project.am_obj
         self.enabled: bool = False
-        self.name: str = ''
-        self.display_name: str = ''
-        self.description: str = 'Description not available'
+        self.name: str = ""
+        self.display_name: str = ""
+        self.description: str = "Description not available"
         self.options: Mapping[str, AnalysisOption] = {}
 
     def __getitem__(self, key: str):
@@ -127,7 +129,7 @@ class BoolAnalysisOption(PrimitiveAnalysisOption):
     Boolean option for an analysis.
     """
 
-    def __init__(self, name: str, description: str, default: bool = False, tooltip: str = ''):
+    def __init__(self, name: str, description: str, default: bool = False, tooltip: str = ""):
         super().__init__(name, description, default, tooltip)
 
 
@@ -136,11 +138,38 @@ class IntAnalysisOption(PrimitiveAnalysisOption):
     Integer option for an analysis.
     """
 
-    def __init__(self, name: str, description: str, default: int = 0, tooltip: str = '', minimum: Optional[int] = None,
-                 maximum: Optional[int] = None):
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        default: int = 0,
+        tooltip: str = "",
+        minimum: Optional[int] = None,
+        maximum: Optional[int] = None,
+    ):
         super().__init__(name, description, default, tooltip)
         self.minimum_value = minimum
         self.maximum_value = maximum
+
+
+class ChoiceAnalysisOption(PrimitiveAnalysisOption):
+    """
+    A multi-value choice.
+    """
+
+    def __init__(self, name: str, description: str, choices: Mapping[Any, str], default: Any, tooltip: str = ""):
+        super().__init__(name, description, default, tooltip)
+        self.choices = choices
+
+
+class CFGForceScanMode(Enum):
+    """
+    CFG scanning mode options.
+    """
+
+    Disabled = 0
+    SmartScan = 1
+    CompleteScan = 2
 
 
 class CFGAnalysisConfiguration(AnalysisConfiguration):
@@ -150,16 +179,29 @@ class CFGAnalysisConfiguration(AnalysisConfiguration):
 
     def __init__(self, instance):
         super().__init__(instance)
-        self.name = 'cfg'
-        self.display_name = 'Control-Flow Graph Recovery'
+        self.name = "cfg"
+        self.display_name = "Control-Flow Graph Recovery"
         self.description = extract_first_paragraph_from_docstring(self.project.analyses.CFGFast.__doc__)
         self.enabled = True
-        self.options = {o.name: o for o in [
-            BoolAnalysisOption('resolve_indirect_jumps', 'Resolve indirect jumps', True),
-            BoolAnalysisOption('data_references', 'Collect cross-references and guess data types', True),
-            BoolAnalysisOption('cross_references', 'Perform deep analysis on cross-references (slow)'),
-            BoolAnalysisOption('skip_unmapped_addrs', 'Skip unmapped addresses', True),
-            ]}
+        self.options = {
+            o.name: o
+            for o in [
+                BoolAnalysisOption("resolve_indirect_jumps", "Resolve indirect jumps", True),
+                BoolAnalysisOption("data_references", "Collect cross-references and guess data types", True),
+                BoolAnalysisOption("cross_references", "Perform deep analysis on cross-references (slow)"),
+                BoolAnalysisOption("skip_unmapped_addrs", "Skip unmapped addresses", True),
+                ChoiceAnalysisOption(
+                    "scanning_mode",
+                    "Scan to maximize identified code blocks",
+                    {
+                        CFGForceScanMode.Disabled: "Disabled",
+                        CFGForceScanMode.SmartScan: "Smart Scan",
+                        CFGForceScanMode.CompleteScan: "Complete Scan",
+                    },
+                    CFGForceScanMode.SmartScan,
+                ),
+            ]
+        }
 
 
 class FlirtAnalysisConfiguration(AnalysisConfiguration):
@@ -169,8 +211,8 @@ class FlirtAnalysisConfiguration(AnalysisConfiguration):
 
     def __init__(self, instance):
         super().__init__(instance)
-        self.name = 'flirt'
-        self.display_name = 'Signature Matching'
+        self.name = "flirt"
+        self.display_name = "Signature Matching"
         self.description = self.project.analyses.Flirt.__doc__.strip()
         self.enabled = True
 
@@ -185,26 +227,35 @@ class VariableRecoveryConfiguration(AnalysisConfiguration):
 
     def __init__(self, instance):
         super().__init__(instance)
-        self.name = 'varec'
-        self.display_name = 'Complete Variable Recovery'
-        self.description = ("Perform a full-project variable recovery and calling-convention recovery analysis. "
-                            "Recommended for small- to medium-sized binaries. This analysis takes a long time to "
-                            "finish on large binaries. You can manually perform a variable recovery and "
-                            "calling-convention recovery analysis on an individual basis after loading the project.")
+        self.name = "varec"
+        self.display_name = "Complete Variable Recovery"
+        self.description = (
+            "Perform a full-project variable recovery and calling-convention recovery analysis. "
+            "Recommended for small- to medium-sized binaries. This analysis takes a long time to "
+            "finish on large binaries. You can manually perform a variable recovery and "
+            "calling-convention recovery analysis on an individual basis after loading the project."
+        )
         self.enabled = self.get_main_obj_size() <= self.MEDIUM_BINARY_SIZE
-        self.options = {o.name: o for o in [
-            IntAnalysisOption('workers',
-                              'Number of parallel workers',
-                              tooltip='0 to disable parallel analysis. Default to the number of available cores ' \
-                                      'minus one in the local system. Automatically default to 0 for small binaries ' \
-                                      'on all platforms, and small- to medium-sized binaries on Windows and MacOS ' \
-                                      '(to avoid the cost of spawning new angr-management processes).',
-                              default=self.get_default_workers(),
-                              minimum=0,
-                              ),
-            BoolAnalysisOption('skip_signature_matched_functions', 'Skip variable recovery for signature-matched '
-                                                                   'functions', True),
-            ]}
+        self.options = {
+            o.name: o
+            for o in [
+                IntAnalysisOption(
+                    "workers",
+                    "Number of parallel workers",
+                    tooltip="0 to disable parallel analysis. Default to the number of available cores "
+                    "minus one in the local system. Automatically default to 0 for small binaries "
+                    "on all platforms, and small- to medium-sized binaries on Windows and MacOS "
+                    "(to avoid the cost of spawning new angr-management processes).",
+                    default=self.get_default_workers(),
+                    minimum=0,
+                ),
+                BoolAnalysisOption(
+                    "skip_signature_matched_functions",
+                    "Skip variable recovery for signature-matched functions",
+                    True,
+                ),
+            ]
+        }
 
     def get_main_obj_size(self) -> int:
         main_obj_size = 0

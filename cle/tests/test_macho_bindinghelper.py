@@ -1,29 +1,24 @@
 #!/usr/bin/env python
 # Contributed September 2019 by Fraunhofer SIT (https://www.sit.fraunhofer.de/en/).
-import unittest
 import os
+import unittest
 
 import cle
-
-from cle.backends.macho.binding import BindingState, read_sleb, read_uleb
-
+from cle import CLEInvalidBinaryError, MachO
 from cle.backends.macho.binding import (
+    BindingState,
     n_opcode_done,
+    n_opcode_set_addend_sleb,
     n_opcode_set_dylib_ordinal_imm,
     n_opcode_set_dylib_ordinal_uleb,
-)
-from cle.backends.macho.binding import (
     n_opcode_set_dylib_special_imm,
     n_opcode_set_trailing_flags_imm,
     n_opcode_set_type_imm,
+    read_sleb,
+    read_uleb,
 )
-from cle.backends.macho.binding import n_opcode_set_addend_sleb
 
-from cle import CLEInvalidBinaryError, MachO
-
-TEST_BASE = os.path.join(
-    os.path.dirname(os.path.realpath(__file__)), os.path.join("..", "..", "binaries")
-)
+TEST_BASE = os.path.join(os.path.dirname(os.path.realpath(__file__)), os.path.join("..", "..", "binaries"))
 
 
 class TestBindingState(unittest.TestCase):
@@ -74,7 +69,8 @@ class TestBindingState(unittest.TestCase):
         self.uut_32.add_address_ov(3294967295, 1000100000)
         self.assertEqual(self.uut_32.address, 99999)
 
-        # TODO test_add_address_ov_32: we do probably do not expect negative numbers as second argument, but then the address will be negative... and it does not wrap around. Test is commented out.
+        # TODO test_add_address_ov_32: we do probably do not expect negative numbers as second argument,
+        # but then the address will be negative... and it does not wrap around. Test is commented out.
         self.uut_32.add_address_ov(10000, -10000)
         self.assertEqual(self.uut_32.address, 0)
 
@@ -98,7 +94,8 @@ class TestBindingState(unittest.TestCase):
         self.uut_64.add_address_ov(17000000000000000000, 1900000000000000000)
         self.assertEqual(self.uut_64.address, 453255926290448384)
 
-        # TODO test_add_address_ov_64: we do probably do not expect negative numbers as second argument, but then the address will be negative... and it does not wrap around. Test is commented out.
+        # TODO test_add_address_ov_64: we do probably do not expect negative numbers as second argument,
+        # but then the address will be negative... and it does not wrap around. Test is commented out.
         # self.uut_64.add_address_ov(123456, -10000000000)
         # self.assertEqual(self.uut_64.address, 18446744063709551616)
 
@@ -156,7 +153,6 @@ class TestLEB(unittest.TestCase):
 
 # noinspection PyTypeChecker
 class TestBindingHelper(unittest.TestCase):
-
     # Note: These tests will require mocking MachOBinary objects
 
     def setUp(self):
@@ -166,16 +162,12 @@ class TestBindingHelper(unittest.TestCase):
         pass
 
     def test_do_normal_bind(self):
-        self.skipTest(
-            "TODO"
-        )  # implement this after all submethods are tested for a complete run
+        self.skipTest("TODO")  # implement this after all submethods are tested for a complete run
         # the test data should exercise each case at least once and ensure that submethods interact
         # well i.e. that the aggregation produces correct results
 
     def test_do_lazy_bind(self):
-        self.skipTest(
-            "TODO"
-        )  # implement this after all submethods are tested for a complete run
+        self.skipTest("TODO")  # implement this after all submethods are tested for a complete run
         # the test data should exercise each case at least once and ensure that submethods interact
         # well i.e. that the aggregation produces correct results
 
@@ -286,8 +278,7 @@ class TestBindingHelper(unittest.TestCase):
         self.n_opcode_set_addend_sleb_helper(b"\xFF\x1F\xEE", 4095)
 
     def test_n_opcode_set_segment_and_offset_uleb(self):
-        # pylint: disable=unused-variable
-        s = BindingState(is_64=True)
+        BindingState(is_64=True)
         self.skipTest("TODO: The function needs a binary with segments to test")
 
     def test_n_opcode_add_addr_uleb(self):
@@ -312,9 +303,7 @@ class TestBindingHelper(unittest.TestCase):
         """
         # logging.basicConfig(filename="./test_bindinghelper_do_normal_bind_real_32.log", level=logging.DEBUG)
 
-        machofile = os.path.join(
-            TEST_BASE, "tests", "armhf", "FileProtection-05.armv7.macho"
-        )
+        machofile = os.path.join(TEST_BASE, "tests", "armhf", "FileProtection-05.armv7.macho")
         ld = cle.Loader(machofile, auto_load_libs=False)
         macho: MachO = ld.main_object
         macho.do_binding()
@@ -398,7 +387,7 @@ class TestBindingHelper(unittest.TestCase):
             "_CFStringGetCStringPtr": [0xC0D8],
         }
 
-        for (name, xrefs) in expected.items():
+        for name, xrefs in expected.items():
             found = False
             for sym in macho.get_symbol(name):
                 found = True
@@ -407,9 +396,7 @@ class TestBindingHelper(unittest.TestCase):
                 self.assertEqual(
                     a,
                     b,
-                    "Error: Differences for symbol {}: {} != {}: ".format(
-                        name, a, b
-                    ),
+                    f"Error: Differences for symbol {name}: {a} != {b}: ",
                 )
 
             if not found:
@@ -420,9 +407,7 @@ class TestBindingHelper(unittest.TestCase):
         Executes binding against a real binary - not optimal since it does not cover all possible opcodes but it is
         a start
         """
-        machofile = os.path.join(
-            TEST_BASE, "tests", "armhf", "FileProtection-05.arm64.macho"
-        )
+        machofile = os.path.join(TEST_BASE, "tests", "armhf", "FileProtection-05.arm64.macho")
         ld = cle.Loader(machofile, auto_load_libs=False)
         assert isinstance(ld.main_object, MachO)
         macho: MachO = ld.main_object
@@ -510,7 +495,7 @@ class TestBindingHelper(unittest.TestCase):
 
         executed = False
 
-        for (name, xrefs) in expected.items():
+        for name, xrefs in expected.items():
             found = False
             for sym in macho.get_symbol(name):
                 found = True
@@ -519,9 +504,7 @@ class TestBindingHelper(unittest.TestCase):
                 self.assertEqual(
                     a,
                     b,
-                    "Error: Differences for symbol {}: {} != {}: ".format(
-                        name, a, b
-                    ),
+                    f"Error: Differences for symbol {name}: {a} != {b}: ",
                 )
 
             if not found:

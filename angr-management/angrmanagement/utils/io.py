@@ -1,13 +1,12 @@
-import re
 import os
+import re
 import urllib.parse
 
 import requests
-
 from PySide6.QtWidgets import QFileDialog
 
-from ..config import Conf
-from ..errors import InvalidURLError, UnexpectedStatusCodeError
+from angrmanagement.config import Conf
+from angrmanagement.errors import InvalidURLError, UnexpectedStatusCodeError
 
 
 def isurl(uri):
@@ -22,7 +21,6 @@ def isurl(uri):
 
 
 def download_url(url, parent=None, to_file=True, file_path=None, use_proxies=True):
-
     if not isurl(url):
         raise TypeError("The given URL %s is not a valid URL.", url)
 
@@ -44,21 +42,16 @@ def download_url(url, parent=None, to_file=True, file_path=None, use_proxies=Tru
     if header.status_code != 200:
         raise UnexpectedStatusCodeError(header.status_code)
 
-    if 'content-disposition' in header.headers:
+    if "content-disposition" in header.headers:
         # update the base name
-        fnames = re.findall("filename=(.+)", header.headers['content-disposition'])
+        fnames = re.findall("filename=(.+)", header.headers["content-disposition"])
         if fnames:
             basename = fnames[0].strip('"')
 
     if to_file:
         # save the content to a file and then return the path
         if file_path is None:
-            filename, folder = QFileDialog.getSaveFileName(
-                parent,
-                "Download a file to...",
-                basename,
-                "Any file (*);"
-            )
+            filename, folder = QFileDialog.getSaveFileName(parent, "Download a file to...", basename, "Any file (*);")
             if filename and folder:
                 target_path = os.path.join(folder, filename)
             else:

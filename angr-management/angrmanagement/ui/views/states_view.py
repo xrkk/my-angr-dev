@@ -1,16 +1,17 @@
-from PySide6.QtWidgets import QHBoxLayout
 from PySide6.QtCore import QSize
+from PySide6.QtWidgets import QHBoxLayout
+
+from angrmanagement.ui.widgets.qstate_table import QStateTable
 
 from .view import BaseView
-from ..widgets.qstate_table import QStateTable
 
 
 class StatesView(BaseView):
     def __init__(self, instance, default_docking_position, *args, **kwargs):
-        super().__init__('states', instance, default_docking_position, *args, **kwargs)
+        super().__init__("states", instance, default_docking_position, *args, **kwargs)
 
-        self.base_caption = 'States'
-        self._state_table = None  # type: QStateTable
+        self.base_caption = "States"
+        self._state_table: QStateTable
 
         self._init_widgets()
 

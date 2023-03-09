@@ -1,5 +1,5 @@
 from PySide6.QtGui import Qt
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPlainTextEdit, QDialogButtonBox
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPlainTextEdit, QVBoxLayout
 
 
 class AsmOutput(QDialog):
@@ -14,7 +14,7 @@ class AsmOutput(QDialog):
 
         self._edit: QPlainTextEdit = None
 
-        self.setWindowTitle('Assembly code output')
+        self.setWindowTitle("Assembly code output")
 
         self.main_layout = QVBoxLayout()
 
@@ -31,11 +31,10 @@ class AsmOutput(QDialog):
     #
 
     def _init_widgets(self):
-
         # Assembly label
 
         asm_label = QLabel(self)
-        asm_label.setText('Assembly code')
+        asm_label.setText("Assembly code")
 
         edit = QPlainTextEdit()
         edit.setMinimumWidth(600)

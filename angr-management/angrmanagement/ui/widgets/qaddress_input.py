@@ -1,11 +1,10 @@
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import Callable, Optional
 
 from PySide6.QtWidgets import QLineEdit
 
 
 class QAddressInput(QLineEdit):
-    def __init__(self, textchanged_callback: Optional[Callable], instance, parent=None,
-                 default: Optional[str]=None):
+    def __init__(self, textchanged_callback: Optional[Callable], instance, parent=None, default: Optional[str] = None):
         super().__init__(parent)
 
         self.instance = instance

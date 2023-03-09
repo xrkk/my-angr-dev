@@ -1,34 +1,44 @@
+import logging
 import sys
 import time
-import logging
-from threading import Thread
 from queue import Queue
-from typing import List, Optional, Type, Union, Callable, TYPE_CHECKING
+from threading import Thread
+from typing import TYPE_CHECKING, Callable, List, Optional, Type, Union
 
 import angr
+from angr.analyses.disassembly import Instruction
 from angr.block import Block
 from angr.knowledge_base import KnowledgeBase
-from angr.analyses.disassembly import Instruction
 from angr.knowledge_plugins import Function
 from angr.misc.testing import is_testing
 from cle import SymbolType
 
-from .analysis_options import AnalysesConfiguration, CFGAnalysisConfiguration, FlirtAnalysisConfiguration, \
-    VariableRecoveryConfiguration
-from .jobs import VariableRecoveryJob, PrototypeFindingJob, CodeTaggingJob, FlirtSignatureRecognitionJob, \
-    CFGGenerationJob
-from .object_container import ObjectContainer
+from angrmanagement.data.breakpoint import Breakpoint, BreakpointManager, BreakpointType
+from angrmanagement.data.trace import Trace
+from angrmanagement.logic import GlobalInfo
+from angrmanagement.logic.debugger import DebuggerListManager, DebuggerManager
+from angrmanagement.logic.debugger.simgr import SimulationDebugger
+from angrmanagement.logic.threads import gui_thread_schedule, gui_thread_schedule_async
+from angrmanagement.ui.dialogs import AnalysisOptionsDialog
+
+from .analysis_options import (
+    AnalysesConfiguration,
+    CFGAnalysisConfiguration,
+    FlirtAnalysisConfiguration,
+    VariableRecoveryConfiguration,
+)
+from .jobs import (
+    CFGGenerationJob,
+    CodeTaggingJob,
+    FlirtSignatureRecognitionJob,
+    PrototypeFindingJob,
+    VariableRecoveryJob,
+)
 from .log import LogRecord, initialize
-from ..logic import GlobalInfo
-from ..logic.threads import gui_thread_schedule_async, gui_thread_schedule
-from ..logic.debugger import DebuggerListManager, DebuggerManager
-from ..logic.debugger.simgr import SimulationDebugger
-from ..data.trace import Trace
-from ..data.breakpoint import BreakpointManager, BreakpointType, Breakpoint
-from ..ui.dialogs import AnalysisOptionsDialog
+from .object_container import ObjectContainer
 
 if TYPE_CHECKING:
-    from ..ui.workspace import Workspace
+    from angrmanagement.ui.workspace import Workspace
 
 _l = logging.getLogger(__name__)
 
@@ -37,19 +47,24 @@ class Instance:
     """
     An object to give access to normal angr project objects like a Project, CFG, and other analyses.
     """
+
     project: ObjectContainer
     cfg: Union[angr.analyses.cfg.CFGBase, ObjectContainer]
     cfb: Union[angr.analyses.cfg.CFBlanket, ObjectContainer]
     log: Union[List[LogRecord], ObjectContainer]
 
     def __init__(self):
-        # pylint:disable=import-outside-toplevel)
+        # pylint:disable=import-outside-toplevel
         # delayed import
-        from ..ui.views.interaction_view import PlainTextProtocol, BackslashTextProtocol, ProtocolInteractor,\
-            SavedInteraction
+        from angrmanagement.ui.views.interaction_view import (
+            BackslashTextProtocol,
+            PlainTextProtocol,
+            ProtocolInteractor,
+            SavedInteraction,
+        )
 
         self._live = False
-        self.workspace: Optional['Workspace'] = None
+        self.workspace: Optional["Workspace"] = None
         self.variable_recovery_job: Optional[VariableRecoveryJob] = None
         self._analysis_configuration = None
 
@@ -66,21 +81,25 @@ class Instance:
         # where this binary is now - if it's loaded from a URL, then binary_path will be its temporary location on the
         # local machine
         self.binary_path = None
-        self.register_container('project', lambda: None, Optional[angr.Project], "The current angr project")
-        self.register_container('simgrs', lambda: [], List[angr.SimulationManager], 'Global simulation managers list')
-        self.register_container('states', lambda: [], List[angr.SimState], 'Global states list')
-        self.register_container('patches', lambda: None, None, 'Global patches update notifier') # dummy
-        self.register_container('cfg', lambda: None, Optional[angr.knowledge_plugins.cfg.CFGModel], "The current CFG")
-        self.register_container('cfb', lambda: None, Optional[angr.analyses.cfg.CFBlanket], "The current CFBlanket")
-        self.register_container('interactions', lambda: [], List[SavedInteraction], 'Saved program interactions')
+        self.register_container("project", lambda: None, Optional[angr.Project], "The current angr project")
+        self.register_container("simgrs", lambda: [], List[angr.SimulationManager], "Global simulation managers list")
+        self.register_container("states", lambda: [], List[angr.SimState], "Global states list")
+        self.register_container("patches", lambda: None, None, "Global patches update notifier")  # dummy
+        self.register_container("cfg", lambda: None, Optional[angr.knowledge_plugins.cfg.CFGModel], "The current CFG")
+        self.register_container("cfb", lambda: None, Optional[angr.analyses.cfg.CFBlanket], "The current CFBlanket")
+        self.register_container("interactions", lambda: [], List[SavedInteraction], "Saved program interactions")
         # TODO: the current setup will erase all loaded protocols on a new project load! do we want that?
-        self.register_container('interaction_protocols',
-                                lambda: [PlainTextProtocol, BackslashTextProtocol],
-                                List[Type[ProtocolInteractor]],
-                                'Available interaction protocols')
-        self.register_container('log', lambda: [], List[LogRecord], 'Saved log messages', logging_permitted=False)
-        self.register_container('current_trace', lambda: None, Type[Trace], 'Currently selected trace')
-        self.register_container('traces', lambda: [], List[Trace], 'Global traces list')
+        self.register_container(
+            "interaction_protocols",
+            lambda: [PlainTextProtocol, BackslashTextProtocol],
+            List[Type[ProtocolInteractor]],
+            "Available interaction protocols",
+        )
+        self.register_container("log", lambda: [], List[LogRecord], "Saved log messages", logging_permitted=False)
+        self.register_container("current_trace", lambda: None, Type[Trace], "Currently selected trace")
+        self.register_container("traces", lambda: [], List[Trace], "Global traces list")
+
+        self.register_container("active_view_state", lambda: None, "ViewState", "Currently focused view state")
 
         self.breakpoint_mgr = BreakpointManager()
         self.debugger_list_mgr = DebuggerListManager()
@@ -90,9 +109,9 @@ class Instance:
         self.project.am_subscribe(self.initialize)
 
         # Callbacks
-        self._insn_backcolor_callback = None  # type: Union[None, Callable[[int, bool], None]]   #  (addr, is_selected)
-        self._label_rename_callback = None  # type: Union[None, Callable[[int, str], None]]      #  (addr, new_name)
-        self._set_comment_callback = None  # type: Union[None, Callable[[int, str], None]]       #  (addr, comment_text)
+        self._insn_backcolor_callback: Optional[Callable[[int, bool], None]] = None  # (addr, is_selected)
+        self._label_rename_callback: Optional[Callable[[int, str], None]] = None  # (addr, new_name)
+        self._set_comment_callback: Optional[Callable[[int, str], None]] = None  # (addr, comment_text)
 
         # Setup logging
         initialize(self)
@@ -122,7 +141,7 @@ class Instance:
         return self.project.kb
 
     def __getattr__(self, k):
-        if k == 'extra_containers':
+        if k == "extra_containers":
             return {}
 
         try:
@@ -272,15 +291,15 @@ class Instance:
                 size = sym.size
             if not type_:
                 if sym.type == SymbolType.TYPE_FUNCTION:
-                    type_ = 'execute'
+                    type_ = "execute"
                 else:
-                    type_ = 'write'
+                    type_ = "write"
         elif type(obj) is Function:
             addr = obj.addr
             if not type_:
-                type_ = 'execute'
+                type_ = "execute"
         else:
-            _l.error('Unexpected target object type. Expected int | str | Function')
+            _l.error("Unexpected target object type. Expected int | str | Function")
             return
 
         if not size:
@@ -288,13 +307,12 @@ class Instance:
 
         bp_type_map = {
             None: BreakpointType.Execute,
-            'execute': BreakpointType.Execute,
-            'write': BreakpointType.Write,
-            'read': BreakpointType.Read,
+            "execute": BreakpointType.Execute,
+            "write": BreakpointType.Write,
+            "read": BreakpointType.Read,
         }
         if type_ not in bp_type_map:
-            _l.error("Unknown breakpoint type '%s'. Expected %s",
-                     type_, ' | '.join(bp_type_map.keys()))
+            _l.error("Unknown breakpoint type '%s'. Expected %s", type_, " | ".join(bp_type_map.keys()))
             return
 
         bp = Breakpoint(bp_type_map[type_], addr, size)
@@ -325,7 +343,9 @@ class Instance:
                 [
                     a(self)
                     for a in [CFGAnalysisConfiguration, FlirtAnalysisConfiguration, VariableRecoveryConfiguration]
-                ], self)
+                ],
+                self,
+            )
 
         if not self.workspace.main_window.shown_at_start:
             # If we are running headlessly (e.g. tests), just run with default configuration
@@ -339,8 +359,8 @@ class Instance:
             should_run = True
 
         if should_run:
-            if self._analysis_configuration['cfg'].enabled:
-                self.generate_cfg(self._analysis_configuration['cfg'].to_dict())
+            if self._analysis_configuration["cfg"].enabled:
+                self.generate_cfg(self._analysis_configuration["cfg"].to_dict())
 
     #
     # Private methods
@@ -354,7 +374,7 @@ class Instance:
         return t
 
     def _start_worker(self):
-        self.worker_thread = self._start_daemon_thread(self._worker, 'angr-management Worker Thread')
+        self.worker_thread = self._start_daemon_thread(self._worker, "angr-management Worker Thread")
 
     def _worker(self):
         while True:
@@ -365,7 +385,7 @@ class Instance:
                 gui_thread_schedule(self.workspace.main_window._progress_dialog.hide, args=())
 
             job = self._jobs_queue.get()
-            gui_thread_schedule_async(GlobalInfo.main_window.progress, args=("Working...", 0.0))
+            gui_thread_schedule_async(GlobalInfo.main_window.progress, args=("Working...", 0.0, True))
 
             if any(job.blocking for job in self.jobs):
                 if self.workspace.main_window.isVisible():
@@ -375,9 +395,10 @@ class Instance:
                 self.current_job = job
                 result = job.run(self)
                 self.current_job = None
-            except (Exception, KeyboardInterrupt) as e: # pylint: disable=broad-except
+            except (Exception, KeyboardInterrupt) as e:  # pylint: disable=broad-except
                 sys.last_traceback = e.__traceback__
                 self.current_job = None
+                _l.exception('Exception while running job "%s":', job.name)
                 self.workspace.log('Exception while running job "%s":' % job.name)
                 self.workspace.log(e)
                 self.workspace.log("Type %debug to debug it")
@@ -423,12 +444,9 @@ class Instance:
         if cfg_args is None:
             cfg_args = {}
 
-        cfg_job = CFGGenerationJob(
-            on_finish=self.on_cfg_generated,
-            **cfg_args
-        )
+        cfg_job = CFGGenerationJob(on_finish=self.on_cfg_generated, **cfg_args)
         self.add_job(cfg_job)
-        self._start_daemon_thread(self._refresh_cfg, 'Progressively Refreshing CFG', args=(cfg_job,))
+        self._start_daemon_thread(self._refresh_cfg, "Progressively Refreshing CFG", args=(cfg_job,))
 
     def _refresh_cfg(self, cfg_job):
         """
@@ -438,13 +456,19 @@ class Instance:
         while True:
             if not self.cfg.am_none:
                 if reloaded:
-                    gui_thread_schedule_async(self.workspace.refresh,
-                                              kwargs={'categories': ['disassembly', 'functions'],}
-                                              )
+                    gui_thread_schedule_async(
+                        self.workspace.refresh,
+                        kwargs={
+                            "categories": ["disassembly", "functions"],
+                        },
+                    )
                 else:
-                    gui_thread_schedule_async(self.workspace.reload,
-                                              kwargs={'categories': ['disassembly', 'functions'],}
-                                              )
+                    gui_thread_schedule_async(
+                        self.workspace.reload,
+                        kwargs={
+                            "categories": ["disassembly", "functions"],
+                        },
+                    )
                     reloaded = True
 
             time.sleep(0.3)
@@ -452,7 +476,7 @@ class Instance:
                 break
 
     def on_cfg_generated(self):
-        if self._analysis_configuration['flirt'].enabled:
+        if self._analysis_configuration["flirt"].enabled:
             self.add_job(
                 FlirtSignatureRecognitionJob(
                     on_finish=self._on_flirt_signature_recognized,
@@ -461,33 +485,25 @@ class Instance:
 
         # display the main function if it exists, otherwise display the function at the entry point
         if self.cfg is not None:
-            the_func = self.kb.functions.function(name='main')
+            the_func = self.kb.functions.function(name="main")
             if the_func is None:
                 the_func = self.kb.functions.function(addr=self.project.entry)
 
             if the_func is not None:
                 self.on_function_selected(the_func)
 
-            # Initialize the linear viewer
-            if len(self.workspace.view_manager.views_by_category['disassembly']) == 1:
-                view = self.workspace.view_manager.first_view_in_category('disassembly')
-            else:
-                view = self.workspace.view_manager.current_view_in_category('disassembly')
-            if view is not None:
-                view._linear_viewer.initialize()
-
             # Reload the pseudocode view
-            view = self.workspace.view_manager.first_view_in_category('pseudocode')
+            view = self.workspace.view_manager.first_view_in_category("pseudocode")
             if view is not None:
                 view.reload()
 
             # Reload the strings view
-            view = self.workspace.view_manager.first_view_in_category('strings')
+            view = self.workspace.view_manager.first_view_in_category("strings")
             if view is not None:
                 view.reload()
 
             # Clear the proximity view
-            view = self.workspace.view_manager.first_view_in_category('proximity')
+            view = self.workspace.view_manager.first_view_in_category("proximity")
             if view is not None:
                 view.clear()
 
@@ -505,13 +521,13 @@ class Instance:
             )
         )
 
-        if self._analysis_configuration['varec'].enabled:
-            options = self._analysis_configuration['varec'].to_dict()
+        if self._analysis_configuration["varec"].enabled:
+            options = self._analysis_configuration["varec"].to_dict()
             if is_testing:
                 # disable multiprocessing on angr CI
-                options['workers'] = 0
+                options["workers"] = 0
             self.variable_recovery_job = VariableRecoveryJob(
-                **self._analysis_configuration['varec'].to_dict(),
+                **self._analysis_configuration["varec"].to_dict(),
                 on_variable_recovered=self.on_variable_recovered,
             )
             # prioritize the current function in display
@@ -543,10 +559,10 @@ class Instance:
 
     def on_function_tagged(self):
         # reload disassembly view
-        if len(self.workspace.view_manager.views_by_category['disassembly']) == 1:
-            view = self.workspace.view_manager.first_view_in_category('disassembly')
+        if len(self.workspace.view_manager.views_by_category["disassembly"]) == 1:
+            view = self.workspace.view_manager.first_view_in_category("disassembly")
         else:
-            view = self.workspace.view_manager.current_view_in_category('disassembly')
+            view = self.workspace.view_manager.current_view_in_category("disassembly")
 
         if view is not None:
             if view.current_function.am_obj is not None:

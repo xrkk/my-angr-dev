@@ -4,16 +4,15 @@ import sys
 import threading
 import unittest
 
-from PySide6.QtTest import QTest
-from PySide6.QtCore import Qt
-
 import angr
 from angr.analyses.decompiler.structured_codegen.c import CFunction, CFunctionCall
+from common import start_main_window_and_event_loop, test_location
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+
+from angrmanagement.logic.threads import gui_thread_schedule
 from angrmanagement.ui.dialogs.rename_label import RenameLabel
 from angrmanagement.ui.dialogs.rename_node import RenameNode
-from angrmanagement.logic.threads import gui_thread_schedule
-
-from common import start_main_window_and_event_loop, test_location
 
 
 class TestRenameFunctions(unittest.TestCase):
@@ -28,7 +27,7 @@ class TestRenameFunctions(unittest.TestCase):
     def _test_rename_a_function_in_disasm_and_pseudocode_views(self):
         main = self.main
 
-        func = main.workspace.main_instance.project.kb.functions['main']
+        func = main.workspace.main_instance.project.kb.functions["main"]
         disasm_view = main.workspace._get_or_create_disassembly_view()
         pseudocode_view = main.workspace._get_or_create_pseudocode_view()
 
@@ -66,12 +65,12 @@ class TestRenameFunctions(unittest.TestCase):
         main.workspace.main_instance.project.am_event()
         main.workspace.main_instance.join_all_jobs()
 
-        func = main.workspace.main_instance.project.kb.functions['main']
+        func = main.workspace.main_instance.project.kb.functions["main"]
         self.assertIsNotNone(func)
 
         # decompile the function
         disasm_view = main.workspace._get_or_create_disassembly_view()
-        disasm_view._t_flow_graph_visible = True
+        disasm_view.display_disasm_graph()
         gui_thread_schedule(disasm_view.display_function, args=(func,))
         disasm_view.decompile_current_function()
         main.workspace.main_instance.join_all_jobs()
@@ -82,7 +81,7 @@ class TestRenameFunctions(unittest.TestCase):
     def _test_rename_a_callee_in_pseudocode_view(self):
         main = self.main
 
-        func = main.workspace.main_instance.project.kb.functions['authenticate']
+        func = main.workspace.main_instance.project.kb.functions["authenticate"]
         _ = main.workspace._get_or_create_disassembly_view()
         pseudocode_view = main.workspace._get_or_create_pseudocode_view()
 
@@ -109,12 +108,12 @@ class TestRenameFunctions(unittest.TestCase):
         main.workspace.main_instance.project.am_event()
         main.workspace.main_instance.join_all_jobs()
 
-        func = main.workspace.main_instance.project.kb.functions['main']
+        func = main.workspace.main_instance.project.kb.functions["main"]
         self.assertIsNotNone(func)
 
         # decompile the function
         disasm_view = main.workspace._get_or_create_disassembly_view()
-        disasm_view._t_flow_graph_visible = True
+        disasm_view.display_disasm_graph()
         gui_thread_schedule(disasm_view.display_function, args=(func,))
         disasm_view.decompile_current_function()
         main.workspace.main_instance.join_all_jobs()

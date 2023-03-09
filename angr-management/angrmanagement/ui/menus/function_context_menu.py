@@ -1,5 +1,7 @@
+from angrmanagement.logic import GlobalInfo
+
 from .menu import Menu
-from ...logic import GlobalInfo
+
 
 class FunctionContextMenu(Menu):
     def __init__(self, parent):
@@ -16,4 +18,7 @@ class FunctionContextMenu(Menu):
     def qmenu(self, extra_entries=None):
         if extra_entries is None:
             extra_entries = ()
-        return super().qmenu(extra_entries=list(GlobalInfo.main_window.workspace.plugins.build_context_menu_functions(self.funcs)) + list(extra_entries))
+        return super().qmenu(
+            extra_entries=list(GlobalInfo.main_window.workspace.plugins.build_context_menu_functions(self.funcs))
+            + list(extra_entries)
+        )

@@ -1,12 +1,11 @@
 # pylint:disable=missing-class-docstring,wrong-import-order,no-self-use
-import unittest
 import os
 import sys
 import threading
+import unittest
 
 import angr
-
-from common import test_location, start_main_window_and_event_loop
+from common import start_main_window_and_event_loop, test_location
 
 
 class TestWorkflow(unittest.TestCase):
@@ -26,5 +25,5 @@ class TestWorkflow(unittest.TestCase):
         main.workspace.main_instance.join_all_jobs()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main(argv=sys.argv)

@@ -1,6 +1,7 @@
 import logging
-from PySide6.QtWidgets import QHBoxLayout
+
 from PySide6.QtCore import QSize
+from PySide6.QtWidgets import QHBoxLayout
 from traitlets.config.configurable import MultipleInstanceError
 
 from .view import BaseView
@@ -14,9 +15,9 @@ class ConsoleView(BaseView):
     """
 
     def __init__(self, instance, default_docking_position, *args, **kwargs):
-        super().__init__('console', instance, default_docking_position, *args, **kwargs)
+        super().__init__("console", instance, default_docking_position, *args, **kwargs)
 
-        self.base_caption = 'Console'
+        self.base_caption = "Console"
         self._ipython_widget = None
 
         if self.instance.workspace.main_window.initialized:
@@ -31,19 +32,21 @@ class ConsoleView(BaseView):
         self.reload()
 
     def reload(self):
-
         if self._ipython_widget is None:
             return
 
-        import angr, claripy, cle # pylint: disable=import-outside-toplevel,multiple-imports
+        import angr  # pylint: disable=import-outside-toplevel,multiple-imports
+        import claripy
+        import cle
 
-        namespace = {'angr': angr,
-                     'claripy': claripy,
-                     'cle': cle,
-                     'workspace': self.instance.workspace,
-                     'instance': self.instance,
-                     'project': self.instance.project,
-                     }
+        namespace = {
+            "angr": angr,
+            "claripy": claripy,
+            "cle": cle,
+            "workspace": self.instance.workspace,
+            "instance": self.instance,
+            "project": self.instance.project,
+        }
         self._ipython_widget.push_namespace(namespace)
 
     def push_namespace(self, namespace):
@@ -64,25 +67,29 @@ class ConsoleView(BaseView):
         self._ipython_widget.input_buffer = text
 
     @staticmethod
-    def minimumSizeHint(*args, **kwargs): # pylint: disable=unused-argument
+    def minimumSizeHint(*args, **kwargs):  # pylint: disable=unused-argument
         return QSize(0, 50)
 
     def _init_widgets(self):
-
-        import angr, claripy, cle # pylint: disable=import-outside-toplevel,multiple-imports
+        import angr  # pylint: disable=import-outside-toplevel,multiple-imports
+        import claripy
+        import cle
 
         namespace = {
-            'angr': angr,
-            'claripy': claripy,
-            'cle': cle,
+            "angr": angr,
+            "claripy": claripy,
+            "cle": cle,
         }
 
-        from ..widgets.qipython_widget import QIPythonWidget  # pylint:disable=import-outside-toplevel
+        from angrmanagement.ui.widgets.qipython_widget import QIPythonWidget  # pylint:disable=import-outside-toplevel
+
         try:
             ipython_widget = QIPythonWidget(namespace=namespace)
         except MultipleInstanceError:
-            _l.warning("Fails to load the Console view since an IPython interpreter has already been loaded. "
-                       "You might be running angr Management with IPython.")
+            _l.warning(
+                "Fails to load the Console view since an IPython interpreter has already been loaded. "
+                "You might be running angr Management with IPython."
+            )
             return
 
         self._ipython_widget = ipython_widget
@@ -94,7 +101,7 @@ class ConsoleView(BaseView):
 
         self.setLayout(hlayout)
 
-    def command_executed(self,msg):
+    def command_executed(self, msg):
         if msg["msg_type"] == "execute_reply" and msg["content"]["status"] == "ok":
             view = self.instance.workspace.view_manager.first_view_in_category("disassembly")
             if view is not None:

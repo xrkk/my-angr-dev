@@ -1,16 +1,36 @@
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QListView, QStackedWidget, QWidget, \
-    QGroupBox, QLabel, QCheckBox, QPushButton, QLineEdit, QListWidgetItem, QScrollArea, QFrame, QComboBox, \
-    QSizePolicy, QDialogButtonBox
-from PySide6.QtCore import QSize
+from datetime import datetime
 
+from bidict import bidict
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListView,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from angrmanagement.config import Conf, save_config
+from angrmanagement.config.color_schemes import COLOR_SCHEMES
+from angrmanagement.config.config_manager import ENTRIES
+from angrmanagement.logic.url_scheme import AngrUrlScheme
+from angrmanagement.ui.css import refresh_theme
 from angrmanagement.ui.widgets.qcolor_option import QColorOption
 from angrmanagement.ui.widgets.qfont_option import QFontOption
-from angrmanagement.ui.css import refresh_theme
-from angrmanagement.config.config_manager import ENTRIES
-from angrmanagement.config.color_schemes import COLOR_SCHEMES
-from angrmanagement.config import Conf, save_config
-from angrmanagement.logic.url_scheme import AngrUrlScheme
 
 
 class Page(QWidget):
@@ -29,18 +49,18 @@ class Integration(Page):
     The integration page.
     """
 
-    NAME = 'OS Integration'
+    NAME = "OS Integration"
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self._url_scheme_chk = None  # type:QCheckBox
-        self._url_scheme_text = None  # type:QLineEdit
+        self._url_scheme_chk: QCheckBox
+        self._url_scheme_text: QLineEdit
 
         self._init_widgets()
         self._load_config()
 
     def _init_widgets(self):
-
         # os integration
         os_integration = QGroupBox("OS integration")
         self._url_scheme_chk = QCheckBox("Register angr URL scheme (angr://).")
@@ -158,6 +178,7 @@ class ThemeAndColors(Page):
         for ce, row in self._to_save.values():
             setattr(Conf, ce.name, row.color.am_obj)
 
+
 class Style(Page):
     """
     Preference pane for UI style choices
@@ -177,9 +198,17 @@ class Style(Page):
         log_format_lbl = QLabel("Log datetime Format String:")
         log_format_lbl.setSizePolicy(QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed))
         log_format_layout.addWidget(log_format_lbl)
-        self.log_format_entry = QLineEdit(self)
-        self.log_format_entry.setClearButtonEnabled(True)
-        self.log_format_entry.setText(Conf.log_timestamp_format)
+
+        self.log_format_entry = QComboBox(self)
+        fmt: str = Conf.log_timestamp_format
+        ts = datetime.now()
+        # pylint: disable=use-sequence-for-iteration
+        self._fmt_map = bidict({ts.strftime(i): i for i in {fmt, "%X", "%c"}})  # set also dedups
+        for i in self._fmt_map.keys():
+            self.log_format_entry.addItem(i)
+        # pylint: disable=unsubscriptable-object
+        self.log_format_entry.setCurrentText(self._fmt_map.inverse[fmt])
+        self.log_format_entry.setEditable(True)
         log_format_layout.addWidget(self.log_format_entry)
         page_layout.addLayout(log_format_layout)
 
@@ -199,11 +228,10 @@ class Style(Page):
 
         page_layout.addStretch()
 
-
     def save_config(self):
-        fmt = self.log_format_entry.text()
+        fmt = self.log_format_entry.currentText()
         if fmt:
-            Conf.log_timestamp_format = fmt
+            Conf.log_timestamp_format = self._fmt_map.get(fmt, fmt)
         for i in self._font_options:
             i.update()
 
@@ -218,12 +246,11 @@ class Preferences(QDialog):
 
         self.workspace = workspace
 
-        self._pages = [ ]
+        self._pages = []
 
         self._init_widgets()
 
     def _init_widgets(self):
-
         # contents
         contents = QListWidget()
         contents.setViewMode(QListView.IconMode)
@@ -233,7 +260,7 @@ class Preferences(QDialog):
         contents.setSpacing(12)
 
         def item_changed(item: QListWidgetItem):
-            pageno = item.data(1)  # type: Page
+            pageno: Page = item.data(1)
             pages.setCurrentIndex(pageno)
 
         contents.itemClicked.connect(item_changed)
@@ -252,7 +279,7 @@ class Preferences(QDialog):
         # buttons
         buttons = QDialogButtonBox(parent=self)
         buttons.setStandardButtons(QDialogButtonBox.StandardButton.Close | QDialogButtonBox.StandardButton.Ok)
-        buttons.button(QDialogButtonBox.Ok).setText('Save')
+        buttons.button(QDialogButtonBox.Ok).setText("Save")
         buttons.accepted.connect(self._on_ok_clicked)
         buttons.rejected.connect(self.close)
 

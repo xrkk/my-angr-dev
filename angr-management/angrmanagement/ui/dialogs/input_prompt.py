@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QDialogButtonBox
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout
 
 
 class InputPromptDialog(QDialog):
@@ -6,7 +6,7 @@ class InputPromptDialog(QDialog):
     A generic dialog to prompt for text input.
     """
 
-    def __init__(self, window_title: str, prompt_text: str, initial_input_text: str = '', parent=None):
+    def __init__(self, window_title: str, prompt_text: str, initial_input_text: str = "", parent=None):
         super().__init__(parent)
         self.prompt_text: str = prompt_text
         self.initial_input_text: str = initial_input_text
@@ -37,8 +37,7 @@ class InputPromptDialog(QDialog):
         self.main_layout.addLayout(prompt_input_lyt)
 
         buttons = QDialogButtonBox(parent=self)
-        buttons.setStandardButtons(QDialogButtonBox.StandardButton.Cancel
-                                   | QDialogButtonBox.StandardButton.Ok)
+        buttons.setStandardButtons(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
         buttons.accepted.connect(self._on_ok_clicked)
         buttons.rejected.connect(self.close)
         buttons_lyt = QHBoxLayout()

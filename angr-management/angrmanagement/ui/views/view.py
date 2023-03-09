@@ -1,14 +1,13 @@
-from typing import TYPE_CHECKING, Optional, Mapping, Sequence
+from typing import TYPE_CHECKING, List, Mapping, Optional, Sequence
 
-import PySide6.QtGui
+from PySide6.QtCore import QSize
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QFrame, QMenu
-from PySide6.QtCore import QSize
-
-from ...data.highlight_region import SynchronizedHighlightRegion
 
 if TYPE_CHECKING:
-    from angrmanagement.ui.workspace import Workspace
+    import PySide6.QtGui
+
+    from angrmanagement.data.highlight_region import SynchronizedHighlightRegion
     from angrmanagement.ui.workspace import Instance
 
 
@@ -24,7 +23,7 @@ class BaseView(QFrame):
     def __init__(self, category: str, instance, default_docking_position, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.instance: 'Instance' = instance
+        self.instance: Instance = instance
         self.category = category
         self.default_docking_position = default_docking_position
 
@@ -33,7 +32,7 @@ class BaseView(QFrame):
         self.width_hint = -1
         self.height_hint = -1
         self.index: int = 1
-        self.base_caption: str = 'View'
+        self.base_caption: str = "View"
 
     @property
     def function(self):
@@ -63,7 +62,7 @@ class BaseView(QFrame):
         self.old_width = event.oldSize().width()
         self.old_height = event.oldSize().height()
 
-    def closeEvent(self, event: PySide6.QtGui.QCloseEvent):
+    def closeEvent(self, event: "PySide6.QtGui.QCloseEvent"):
         self.instance.workspace.view_manager.remove_view(self)
         event.accept()
 
@@ -78,8 +77,35 @@ class BaseView(QFrame):
     def caption(self):
         s = self.base_caption
         if self.index > 1:
-            s += f'-{self.index}'
+            s += f"-{self.index}"
         return s
+
+
+class ViewState:
+    """
+    A basic view state to be published through ViewStatePublisherMixin.
+    """
+
+    def __init__(self, cursors: Optional[List[int]] = None):
+        self.cursors: List[int] = cursors or []
+
+
+class ViewStatePublisherMixin:
+    """
+    Views that wish to update the instance 'active' view state for common visualization use this mixin.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.published_view_state = ViewState()
+
+    def on_focused(self):
+        self.notify_view_state_updated()
+
+    def notify_view_state_updated(self):
+        if self.instance.workspace.view_manager.most_recently_focused_view is self:
+            self.instance.active_view_state.am_obj = self.published_view_state
+            self.instance.active_view_state.am_event()
 
 
 class SynchronizedViewState:
@@ -92,7 +118,7 @@ class SynchronizedViewState:
         self.cursor_address: Optional[int] = None
         self.highlight_regions: Mapping[SynchronizedView, Sequence[SynchronizedHighlightRegion]] = {}
 
-    def register_view(self, view: 'SynchronizedView'):
+    def register_view(self, view: "SynchronizedView"):
         """
         Register a synchronized view.
         """
@@ -100,7 +126,7 @@ class SynchronizedViewState:
         for v in self.views:
             v.on_synchronized_view_group_changed()
 
-    def unregister_view(self, view: 'SynchronizedView'):
+    def unregister_view(self, view: "SynchronizedView"):
         """
         Unregister a synchronized view.
         """
@@ -139,7 +165,7 @@ class SynchronizedView(BaseView):
         self.sync_state.register_view(self)
         self.sync_from_state()
 
-    def sync_with_view(self, view: 'SynchronizedView'):
+    def sync_with_view(self, view: "SynchronizedView"):
         """
         Synchronize with another view.
         """
@@ -174,7 +200,7 @@ class SynchronizedView(BaseView):
         finally:
             self._processing_synchronized_cursor_update = False
 
-    def set_synchronized_highlight_regions(self, regions: Sequence[SynchronizedHighlightRegion]):
+    def set_synchronized_highlight_regions(self, regions: Sequence["SynchronizedHighlightRegion"]):
         """
         Set synchronized highlight regions for this view.
         """
@@ -193,7 +219,7 @@ class SynchronizedView(BaseView):
         Handle view being added to or removed from the view synchronization group.
         """
 
-    def closeEvent(self, event: PySide6.QtGui.QCloseEvent):
+    def closeEvent(self, event: "PySide6.QtGui.QCloseEvent"):
         """
         View close event handler.
         """
@@ -205,15 +231,18 @@ class SynchronizedView(BaseView):
         Get submenu for 'Synchronize with' context menu.
         """
         mnu = QMenu("&Synchronize with", self)
-        groups = {v.sync_state for v in self.instance.workspace.view_manager.views
-                  if (v is not self) and isinstance(v, SynchronizedView)}
+        groups = {
+            v.sync_state
+            for v in self.instance.workspace.view_manager.views
+            if (v is not self) and isinstance(v, SynchronizedView)
+        }
         if len(groups) == 0:
-            act = QAction('None available', self)
+            act = QAction("None available", self)
             act.setEnabled(False)
             mnu.addAction(act)
         else:
             for group in groups:
-                act = QAction(', '.join([v.caption for v in group.views if v is not self]), self)
+                act = QAction(", ".join([v.caption for v in group.views if v is not self]), self)
                 act.setCheckable(True)
                 act.setChecked(group is self.sync_state)
                 act.toggled.connect(lambda checked, s=group: self.sync_with_state_object(s if checked else None))

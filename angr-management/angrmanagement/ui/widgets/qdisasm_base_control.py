@@ -1,11 +1,12 @@
-from typing import Optional, Tuple, TYPE_CHECKING
-from PySide6.QtCore import Qt
 from enum import Enum
+from typing import TYPE_CHECKING, Optional, Tuple
+
+from PySide6.QtCore import Qt
 
 if TYPE_CHECKING:
+    from angrmanagement.ui.views import DisassemblyView
     from angrmanagement.ui.widgets.qblock import QBlock
     from angrmanagement.ui.widgets.qoperand import QOperand
-    from angrmanagement.ui.views import DisassemblyView
 
 
 class DisassemblyLevel(Enum):
@@ -21,9 +22,9 @@ class QDisassemblyBaseControl:
 
     def __init__(self, instance, disasm_view, base_cls):
         self.instance = instance
-        self.disasm_view: 'DisassemblyView' = disasm_view
+        self.disasm_view: "DisassemblyView" = disasm_view
         self._base_cls = base_cls
-        self._insaddr_to_block = { }
+        self._insaddr_to_block = {}
         self._disassembly_level = disasm_view.disassembly_level
 
     @property
@@ -49,7 +50,7 @@ class QDisassemblyBaseControl:
     # Public methods
     #
 
-    def get_selected_operand_info(self) -> Optional[Tuple['QBlock',int,'QOperand']]:
+    def get_selected_operand_info(self) -> Optional[Tuple["QBlock", int, "QOperand"]]:
         if not self.infodock.selected_operands:
             return None
 
@@ -62,7 +63,7 @@ class QDisassemblyBaseControl:
 
         return None
 
-    def set_disassembly_level(self, level:DisassemblyLevel):
+    def set_disassembly_level(self, level: DisassemblyLevel):
         self._disassembly_level = level
         self.reload()
 
@@ -71,7 +72,6 @@ class QDisassemblyBaseControl:
     #
 
     def keyPressEvent(self, event):
-
         key = event.key()
 
         if key == Qt.Key_N:

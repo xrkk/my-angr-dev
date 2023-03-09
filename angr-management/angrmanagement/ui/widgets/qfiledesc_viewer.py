@@ -1,8 +1,8 @@
 import os
 import typing
-from PySide6.QtWidgets import QFileDialog, QFrame, QComboBox, QMessageBox, QPushButton, QVBoxLayout, QTextEdit
-from angr.storage.file import SimFileDescriptor
 
+from angr.storage.file import SimFileDescriptor
+from PySide6.QtWidgets import QComboBox, QFileDialog, QFrame, QPushButton, QTextEdit, QVBoxLayout
 
 if typing.TYPE_CHECKING:
     from angr.sim_state import SimState
@@ -13,6 +13,7 @@ class QFileDescriptorViewer(QFrame):
     embeded in `StateInspector`
     Display content of a file descriptor ( include stdin/stdout/stderr ) for the selected state.
     """
+
     STD = {
         0: "stdin",
         1: "stdout",
@@ -22,7 +23,7 @@ class QFileDescriptorViewer(QFrame):
     def __init__(self, state, parent, workspace):
         super().__init__(parent)
 
-        self._state = state  # type: SimState
+        self._state: SimState = state
         self.workspace = workspace
 
         self.select_fd = None
@@ -41,18 +42,15 @@ class QFileDescriptorViewer(QFrame):
         if self._state.am_none:
             return
         self._current_fd = fd
-        self.textedit.setPlainText(
-            self._state.posix.dumps(fd).decode(
-                "ascii", "ignore").replace("\x00", "\\x00")
-        )
+        self.textedit.setPlainText(self._state.posix.dumps(fd).decode("ascii", "ignore").replace("\x00", "\\x00"))
 
     def save_as(self):
         if self._state.am_none or self._current_fd is None:
             return
-        filename, folder = QFileDialog.getSaveFileName(self,"Save content to ...","","Any file (*);")
+        filename, folder = QFileDialog.getSaveFileName(self, "Save content to ...", "", "Any file (*);")
         if filename and folder:
             save_to = os.path.join(folder, filename)
-            open(save_to,"wb").write(self._state.posix.dumps(self._current_fd))
+            open(save_to, "wb").write(self._state.posix.dumps(self._current_fd))
 
     def _init_widgets(self):
         layout = QVBoxLayout()

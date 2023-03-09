@@ -1,7 +1,7 @@
 # This file is part of Mach-O Loader for CLE.
 # Contributed December 2016 by Fraunhofer SIT (https://www.sit.fraunhofer.de/en/).
 
-from .. import Segment
+from cle.backends.region import Segment
 
 
 class MachOSegment(Segment):
@@ -60,8 +60,5 @@ class MachOSegment(Segment):
 
     def __repr__(self):
         return "<{} | offset {:#x}, vaddr {:#x}, size {:#x}>".format(
-            self.segname if self.segname else "Unnamed",
-            self.offset,
-            self.vaddr,
-            self.memsize
+            self.segname if self.segname else "Unnamed", self.offset, self.vaddr, self.memsize
         )

@@ -1,17 +1,24 @@
-from typing import Dict, Optional, Set, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Optional, Set
 
 import networkx
-
-from PySide6.QtWidgets import QHBoxLayout
+from angr.analyses.proximity_graph import (
+    BaseProxiNode,
+    CallProxiNode,
+    FunctionProxiNode,
+    StringProxiNode,
+    VariableProxiNode,
+)
 from PySide6.QtCore import QSize
+from PySide6.QtWidgets import QHBoxLayout
 
 from angrmanagement.ui.views.view import BaseView
 from angrmanagement.ui.widgets.qproximity_graph import QProximityGraph
-from angrmanagement.ui.widgets.qproximitygraph_block import QProximityGraphCallBlock, QProximityGraphStringBlock, \
-    QProximityGraphFunctionBlock, QProximityGraphBlock
-
-from angr.analyses.proximity_graph import BaseProxiNode, FunctionProxiNode, StringProxiNode, CallProxiNode, \
-    VariableProxiNode
+from angrmanagement.ui.widgets.qproximitygraph_block import (
+    QProximityGraphBlock,
+    QProximityGraphCallBlock,
+    QProximityGraphFunctionBlock,
+    QProximityGraphStringBlock,
+)
 
 if TYPE_CHECKING:
     from angr.knowledge_plugins.functions import Function
@@ -23,11 +30,11 @@ class ProximityView(BaseView):
     """
 
     def __init__(self, instance, default_docking_position, *args, **kwargs):
-        super().__init__('proximity', instance, default_docking_position, *args, **kwargs)
+        super().__init__("proximity", instance, default_docking_position, *args, **kwargs)
 
-        self.base_caption = 'Proximity'
+        self.base_caption = "Proximity"
 
-        self._function: Optional['Function'] = None
+        self._function: Optional["Function"] = None
         self._expand_function_addrs: Set[int] = set()
 
         # UI widgets
@@ -127,7 +134,6 @@ class ProximityView(BaseView):
         return QSize(400, 800)
 
     def _init_widgets(self):
-
         self._graph_widget = QProximityGraph(self.instance, self)
 
         hlayout = QHBoxLayout()
@@ -146,8 +152,9 @@ class ProximityView(BaseView):
         self._unregister_events()
         super().closeEvent(event)
 
-    def _convert_node(self, node: BaseProxiNode,
-                      converted: Dict[BaseProxiNode, QProximityGraphBlock]) -> Optional[QProximityGraphBlock]:
+    def _convert_node(
+        self, node: BaseProxiNode, converted: Dict[BaseProxiNode, QProximityGraphBlock]
+    ) -> Optional[QProximityGraphBlock]:
         if node in converted:
             return converted[node]
 
@@ -167,7 +174,6 @@ class ProximityView(BaseView):
         return new_node
 
     def _create_ui_graph(self) -> networkx.DiGraph:
-
         g = networkx.DiGraph()
 
         converted = {}

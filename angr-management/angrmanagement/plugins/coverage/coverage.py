@@ -5,8 +5,8 @@ import math
 import threading
 import time
 
-from tornado.platform.asyncio import AnyThreadEventLoopPolicy
 from PySide6.QtGui import QColor
+from tornado.platform.asyncio import AnyThreadEventLoopPolicy
 
 from angrmanagement.config import Conf
 from angrmanagement.errors import UnexpectedStatusCodeError
@@ -16,12 +16,12 @@ from angrmanagement.utils.io import download_url
 
 from .parse_trace import trace_to_bb_addrs
 
-l = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 try:
     import slacrs.model
-except ImportError as ex:
-    l.error("You don't have slacrs module installed locally, CoveragePlugin going to have a bad time.")
+except ImportError:
+    log.error("You don't have slacrs module installed locally, CoveragePlugin going to have a bad time.")
 
 
 def generate_light_gradients(color, number, lightness=20):
@@ -33,9 +33,10 @@ def generate_light_gradients(color, number, lightness=20):
     to_return = [color]
     for _ in range(number):
         last_color = to_return[-1]
-        to_return.append(last_color.lighter(100+lightness))
+        to_return.append(last_color.lighter(100 + lightness))
     to_return.reverse()
     return to_return
+
 
 # TODO: This should really be a property of the target
 TRACE_BASE = 0x4000000000
@@ -78,8 +79,8 @@ class CoveragePlugin(BasePlugin):
         self.reset_coverage()
 
     MENU_BUTTONS = [
-        'Start Showing Coverage',
-        'Stop Showing Coverage',
+        "Start Showing Coverage",
+        "Stop Showing Coverage",
     ]
     START_SHOWING_COVERAGE = 0
     STOP_SHOWING_COVERAGE = 1
@@ -142,9 +143,9 @@ class CoveragePlugin(BasePlugin):
         fraction_covered = len(covered_bbls) / total_bbls
 
         gradient_number = math.ceil(fraction_covered * len(self.gradients))
-        return self.gradients[gradient_number-1]
+        return self.gradients[gradient_number - 1]
 
-    FUNC_COLUMNS = ('Fuzzing Coverage',)
+    FUNC_COLUMNS = ("Fuzzing Coverage",)
 
     def extract_func_column(self, func, idx):
         assert idx == 0
@@ -169,7 +170,7 @@ class CoveragePlugin(BasePlugin):
             self.bbl_coverage_hash = 0
 
     def update_coverage_from_list(self, trace_addrs):
-        l.info("Processing %d from the trace", len(trace_addrs))
+        log.info("Processing %d from the trace", len(trace_addrs))
         with self.coverage_lock:
             for addr in trace_addrs:
                 self.bbl_coverage.add(addr)
@@ -180,40 +181,42 @@ class CoveragePlugin(BasePlugin):
             gui_thread_schedule(self._refresh_gui)
 
     def update_coverage(self):
-        self.set_status("Retrieving fuzzing coverage information...", 0.)
+        self.set_status("Retrieving fuzzing coverage information...", 0.0)
         session = self.slacrs_instance.session()
         if session:
-            for idx, trace in enumerate(session.query(slacrs.model.Trace).filter(
-                    slacrs.model.Trace.input.has(target_image_id=self.connector.target_image_id)
-            ).order_by(slacrs.model.Trace.created_at)):
+            for idx, trace in enumerate(
+                session.query(slacrs.model.Trace)
+                .filter(slacrs.model.Trace.input.has(target_image_id=self.connector.target_image_id))
+                .order_by(slacrs.model.Trace.created_at)
+            ):
                 if not self.running:
                     break
-                self.set_status(f"Processing trace {idx}...", 50.)
+                self.set_status(f"Processing trace {idx}...", 50.0)
                 self.update_one_coverage(trace)
-        self.set_status("Fuzzing coverage updated", 100.)
+        self.set_status("Fuzzing coverage updated", 100.0)
 
     def update_one_coverage(self, trace):
         with self.coverage_lock:
             if trace.id in self.seen_traces:
-                l.info("Already seen trace %s, skipping", trace.id)
+                log.info("Already seen trace %s, skipping", trace.id)
                 return
 
-        l.info("Processing trace %s %s %s", trace.id, trace.input_id, trace.created_at)
+        log.info("Processing trace %s %s %s", trace.id, trace.input_id, trace.created_at)
 
         if not Conf.checrs_rest_endpoint_url:
-            l.error("Unable to fetch trace %d because there is no CHECRS REST endpoint.", trace.id)
+            log.error("Unable to fetch trace %d because there is no CHECRS REST endpoint.", trace.id)
             return
 
         url = f"{Conf.checrs_rest_endpoint_url}v1/targets/{self.connector.target_image_id}/seeds/{trace.input_id}/trace"
         try:
             trace_bytes = download_url(url, parent=self.workspace._main_window, to_file=False)
         except UnexpectedStatusCodeError:
-            l.exception("Unable to download %s.", url)
+            log.exception("Unable to download %s.", url)
             return
         try:
             parsed_trace = json.loads(trace_bytes)
         except json.JSONDecodeError:
-            l.exception("Unable to parse %s as JSON.", url)
+            log.exception("Unable to parse %s as JSON.", url)
             return
 
         bbl_addrs = trace_to_bb_addrs(parsed_trace, self.workspace.main_instance.project, TRACE_BASE)
@@ -221,7 +224,7 @@ class CoveragePlugin(BasePlugin):
 
         with self.coverage_lock:
             self.seen_traces.add(trace.id)
-        l.info("Done processing trace %s.", trace.id)
+        log.info("Done processing trace %s.", trace.id)
 
     def listen_for_events(self):
         asyncio.set_event_loop_policy(AnyThreadEventLoopPolicy())
@@ -247,7 +250,7 @@ class CoveragePlugin(BasePlugin):
                 self.reset_coverage()
                 self.update_coverage()
 
-            self.set_status("Retrieving fuzzing coverage information...", 0.)
+            self.set_status("Retrieving fuzzing coverage information...", 0.0)
             new_event_count = self.slacrs_instance.fetch_events()
             trace_idx = 0
             for idx in range(new_event_count):
@@ -263,7 +266,7 @@ class CoveragePlugin(BasePlugin):
                         trace_idx += 1
                         self.update_one_coverage(trace)
                 session.close()
-            self.set_status("Fuzzing coverage updated", 100.)
+            self.set_status("Fuzzing coverage updated", 100.0)
 
     def set_status(self, status: str, percentage: float):
         if self.workspace._main_window is not None:

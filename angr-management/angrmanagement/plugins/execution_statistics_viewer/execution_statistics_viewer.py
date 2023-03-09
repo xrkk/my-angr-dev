@@ -1,9 +1,10 @@
 from collections import defaultdict
 from typing import TYPE_CHECKING
+
 from PySide6.QtWidgets import QLabel
 
-from angrmanagement.plugins.base_plugin import BasePlugin
 from angrmanagement.logic.threads import gui_thread_schedule
+from angrmanagement.plugins.base_plugin import BasePlugin
 from angrmanagement.ui.widgets.qinst_annotation import QActiveCount, QPassthroughCount
 
 if TYPE_CHECKING:
@@ -16,6 +17,7 @@ class ExecutionStatisticsViewer(BasePlugin):
     return the result in build_qblock_annotations callback and show in the disassmbly view by
     fetch_qblock_annotations function.
     """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.passthrough_counts = defaultdict(int)
@@ -30,11 +32,11 @@ class ExecutionStatisticsViewer(BasePlugin):
         self._init_widgets()
 
     @property
-    def disasm_view(self) -> 'DisassemblyView':
+    def disasm_view(self) -> "DisassemblyView":
         return self.workspace.view_manager.first_view_in_category("disassembly")
 
     @property
-    def symexec_view(self) -> 'SymexecView':
+    def symexec_view(self) -> "SymexecView":
         return self.workspace.view_manager.first_view_in_category("symexec")
 
     def count_passthrough(self, simgr):
@@ -70,7 +72,7 @@ class ExecutionStatisticsViewer(BasePlugin):
             if s.history.jumpkind.startswith("Ijk_Sys"):
                 self.addr_to_active_states[s.history.jump_source].append(s)
 
-    def _on_simgr_selected(self, *args, src=None, **kwargs): #pylint: disable=unused-argument
+    def _on_simgr_selected(self, *args, src=None, **kwargs):  # pylint: disable=unused-argument
         """Listener for when a new simgr is selected in the symexec view"""
         if src in ["clicked", "from above"]:
             # The "from above" event is emitted when you create a new simgr via right click menu in disasm view

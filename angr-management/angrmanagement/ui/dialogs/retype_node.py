@@ -1,17 +1,15 @@
-from typing import Optional, Tuple, Dict, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
-from PySide6.QtGui import Qt
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDialogButtonBox, QLineEdit
-
-import pycparser
-
-from angr.sim_variable import SimVariable
-from angr.analyses.decompiler.structured_codegen.c import CVariable, CConstruct
 import angr
-
+import pycparser
+from angr.analyses.decompiler.structured_codegen.c import CConstruct, CVariable
+from angr.sim_variable import SimVariable
+from PySide6.QtGui import Qt
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 if TYPE_CHECKING:
     from angr.sim_type import SimType
+
     from angrmanagement.data.instance import Instance
     from angrmanagement.ui.views.code_view import CodeView
 
@@ -20,16 +18,16 @@ class TypeBox(QLineEdit):
     """
     Implements a line edit widget for inputting types.
     """
+
     def __init__(self, textchanged_callback, predefined_types=None, parent=None):
         super().__init__(parent)
 
         self._cvariable: Optional[CVariable] = None
         self._predefined_types = predefined_types
 
-
         self.textChanged.connect(textchanged_callback)
 
-    def set_type(self, type_: 'SimType', cvariable: CVariable=None):
+    def set_type(self, type_: "SimType", cvariable: CVariable = None):
         self._cvariable = cvariable
         if cvariable is not None and isinstance(cvariable.unified_variable, SimVariable):
             type_str = type_.c_repr(name=cvariable.unified_variable.name)
@@ -53,7 +51,7 @@ class TypeBox(QLineEdit):
             return parsed_type
         return None
 
-    def _is_valid_type_str(self, type_str: str) -> Tuple[bool,Optional['SimType']]:
+    def _is_valid_type_str(self, type_str: str) -> Tuple[bool, Optional["SimType"]]:
         """
         We accept two forms of type strings. The user can either specify a full variable declaration, like "char var",
         or only specify a type string, like "char". This method first attempts to parse the string as a variable
@@ -67,7 +65,7 @@ class TypeBox(QLineEdit):
         try:
             defns = angr.sim_type.parse_defns(declaration, predefined_types=self._predefined_types)
         except pycparser.c_parser.ParseError:
-            defns = { }
+            defns = {}
         if len(defns) == 1:
             return True, next(iter(defns.values()))
 
@@ -82,8 +80,16 @@ class RetypeNode(QDialog):
     """
     A dialog for retyping nodes.
     """
-    def __init__(self, instance: 'Instance', code_view: Optional['CodeView']=None, node: Optional[CConstruct]=None,
-                 node_type=None, variable=None, parent=None):
+
+    def __init__(
+        self,
+        instance: "Instance",
+        code_view: Optional["CodeView"] = None,
+        node: Optional[CConstruct] = None,
+        node_type=None,
+        variable=None,
+        parent=None,
+    ):
         super().__init__(parent)
 
         # initialization
@@ -99,7 +105,7 @@ class RetypeNode(QDialog):
         self._status_label = None
         self._ok_button: QPushButton = None
 
-        self.setWindowTitle('Specify a type')
+        self.setWindowTitle("Specify a type")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
         self.main_layout = QVBoxLayout()
@@ -112,23 +118,22 @@ class RetypeNode(QDialog):
     # Private methods
     #
 
-    def _get_predefined_types(self) -> Dict[Any,'SimType']:
+    def _get_predefined_types(self) -> Dict[Any, "SimType"]:
         # global types
         r = dict(self._instance.kb.types)
         # local types
         if not self._code_view.function.am_none:
             func_addr = self._code_view.function.addr
-            if (func_addr, 'pseudocode') in self._instance.kb.structured_code:
-                pseudocode_cache = self._instance.kb.structured_code[(func_addr, 'pseudocode')]
+            if (func_addr, "pseudocode") in self._instance.kb.structured_code:
+                pseudocode_cache = self._instance.kb.structured_code[(func_addr, "pseudocode")]
                 r.update(pseudocode_cache.local_types)
         return r
 
     def _init_widgets(self):
-
-        # type label
+        # Type label
 
         type_label = QLabel(self)
-        type_label.setText('New type')
+        type_label.setText("New type")
 
         type_box = TypeBox(self._on_type_changed, predefined_types=self._get_predefined_types(), parent=self)
         if self._node is not None:
@@ -169,12 +174,12 @@ class RetypeNode(QDialog):
 
         if self._type_box.type_str is None:
             # the variable name is invalid
-            self._status_label.setText('Invalid')
-            self._status_label.setProperty('class', 'status_invalid')
+            self._status_label.setText("Invalid")
+            self._status_label.setProperty("class", "status_invalid")
             self._ok_button.setEnabled(False)
         else:
-            self._status_label.setText('Valid')
-            self._status_label.setProperty('class', 'status_valid')
+            self._status_label.setText("Valid")
+            self._status_label.setProperty("class", "status_valid")
             self._ok_button.setEnabled(True)
 
         self._status_label.style().unpolish(self._status_label)

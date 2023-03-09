@@ -1,7 +1,7 @@
-from typing import Optional
 import itertools
+from typing import Optional
 
-from .block_objects import FunctionHeader, Variables, PhiVariable, Label
+from .block_objects import FunctionHeader, Label, PhiVariable, Variables
 
 
 def locate_function(inst, addr):
@@ -27,21 +27,20 @@ def locate_function(inst, addr):
 
 
 def get_label_text(addr, kb, function=None):
-
     if addr in kb.labels:
         return kb.labels[addr] + ":"
 
     # default case
     if function is not None and addr == function.addr:
-        s = [ ]
+        s = []
         if function.name:
             s.append("%s:" % function.name)
         else:
             s.append("sub_%x:" % function.addr)
         if function.is_simprocedure:
-            s.append('[SimProcedure]')
+            s.append("[SimProcedure]")
         if function.is_plt:
-            s.append('[PLT]')
+            s.append("[PLT]")
         return "\n".join(s)
     else:
         return "loc_%#x:" % addr
@@ -63,7 +62,7 @@ def get_block_objects(disasm, nodes, func_addr):
     block_addr = block_addrs[0]
     insn_addrs = list(itertools.chain.from_iterable(disasm.block_to_insn_addrs[addr] for addr in block_addrs))
 
-    lst = [ ]
+    lst = []
 
     variable_manager = disasm.kb.variables[func_addr]
 
@@ -78,7 +77,7 @@ def get_block_objects(disasm, nodes, func_addr):
 
         # stack variables
         # filter out all stack variables
-        variables = variable_manager.get_variables(sort='stack', collapse_same_ident=False)
+        variables = variable_manager.get_variables(sort="stack", collapse_same_ident=False)
         variables = sorted(variables, key=lambda v: v.offset)
         lst.append(Variables(variables))
 
@@ -92,8 +91,8 @@ def get_block_objects(disasm, nodes, func_addr):
     for insn_addr in insn_addrs:
         if insn_addr != func_addr and insn_addr in disasm.kb.labels:
             lst.append(Label(insn_addr, get_label_text(insn_addr, disasm.kb)))
-        lst.append(disasm.raw_result_map['instructions'][insn_addr])
-        lst.extend(disasm.raw_result_map['ir'][insn_addr])
+        lst.append(disasm.raw_result_map["instructions"][insn_addr])
+        lst.extend(disasm.raw_result_map["ir"][insn_addr])
 
     # initial label, if there is any
     # FIXME: all labels should be generated during CFG recovery, and this step should not be necessary.
@@ -131,8 +130,8 @@ def address_to_text(addr, kb):
 
     return "loc_%#x" % addr
 
-def get_out_branches_for_insn(out_branch_dict, ins_addr):
 
+def get_out_branches_for_insn(out_branch_dict, ins_addr):
     if ins_addr not in out_branch_dict:
         return None
 
@@ -166,17 +165,17 @@ def string_at_addr(cfg, addr, project, max_size=50):
 
     if mem_data.sort == "string":
         str_content = mem_data.content.decode("utf-8")
-    elif mem_data.sort == 'pointer-array':
+    elif mem_data.sort == "pointer-array":
         ptr = fast_memory_load_pointer(project, mem_data.address)
         try:
             next_level = cfg.memory_data[ptr]
         except KeyError:
             return None
 
-        if next_level.sort != 'string':
+        if next_level.sort != "string":
             return None
 
-        str_content = next_level.content.decode('utf-8')
+        str_content = next_level.content.decode("utf-8")
     else:
         return None
 
@@ -190,19 +189,18 @@ def string_at_addr(cfg, addr, project, max_size=50):
 
 
 def should_display_string_label(cfg, insn_addr, project):
-
-    if not insn_addr in cfg.insn_addr_to_memory_data:
+    if insn_addr not in cfg.insn_addr_to_memory_data:
         return False
 
     memory_data = cfg.insn_addr_to_memory_data[insn_addr]
-    if memory_data.sort == 'string':
+    if memory_data.sort == "string":
         return True
-    elif memory_data.sort == 'pointer-array' and memory_data.size == cfg.project.arch.bytes:
+    elif memory_data.sort == "pointer-array" and memory_data.size == cfg.project.arch.bytes:
         # load the pointer
         ptr = fast_memory_load_pointer(project, memory_data.address)
         try:
             # see if the pointer is pointing to a string
-            return cfg.memory_data[ptr].sort == 'string'
+            return cfg.memory_data[ptr].sort == "string"
         except KeyError:
             return False
 
@@ -224,7 +222,6 @@ def filter_string_for_display(s):
 
 
 def get_string_for_display(cfg, insn_addr, project, max_size=20) -> Optional[str]:
-
     str_content = None
 
     try:
@@ -234,12 +231,12 @@ def get_string_for_display(cfg, insn_addr, project, max_size=20) -> Optional[str
 
     if memory_data.sort == "string":
         str_content = memory_data.content.decode("utf-8")
-    elif memory_data.sort == 'pointer-array':
+    elif memory_data.sort == "pointer-array":
         ptr = fast_memory_load_pointer(project, memory_data.address)
         if ptr in cfg.memory_data:
             next_level = cfg.memory_data[ptr]
-            if next_level.sort == 'string':
-                str_content = next_level.content.decode('utf-8')
+            if next_level.sort == "string":
+                str_content = next_level.content.decode("utf-8")
 
     if str_content is not None:
         if len(str_content) > max_size:
@@ -248,6 +245,7 @@ def get_string_for_display(cfg, insn_addr, project, max_size=20) -> Optional[str
             return '"' + filter_string_for_display(str_content) + '"'
     else:
         return None
+
 
 def get_comment_for_display(kb, insn_addr):
     if insn_addr in kb.comments:

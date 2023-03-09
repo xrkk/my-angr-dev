@@ -1,18 +1,17 @@
 import os
-import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QFileDialog, QComboBox
-from angr.knowledge_plugins import Function
+from PySide6.QtWidgets import QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QPushButton
 
-from ..menus.disasm_options_menu import DisasmOptionsMenu
-from ..toolbars import NavToolbar
+from angrmanagement.ui.menus.disasm_options_menu import DisasmOptionsMenu
+from angrmanagement.ui.toolbars import NavToolbar
+
 from .qdisasm_base_control import DisassemblyLevel
 from .qdisasm_graph import QDisassemblyGraph
 from .qlinear_viewer import QLinearDisassembly
 
-
-_l = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from angr.knowledge_plugins import Function
 
 
 class QDisasmStatusBar(QFrame):
@@ -56,7 +55,9 @@ class QDisasmStatusBar(QFrame):
             self.disasm_view.jump_back,
             self.disasm_view.jump_forward,
             self.disasm_view.jump_to_history_position,
-            True, self)
+            True,
+            self,
+        )
 
         # current function
         self._function_label = QLabel()
@@ -78,16 +79,17 @@ class QDisasmStatusBar(QFrame):
 
         # options button
         option_btn = QPushButton()
-        option_btn.setText('Options')
+        option_btn.setText("Options")
         option_btn.setMenu(self._options_menu.qmenu())
 
         # Save image button
         saveimage_btn = QPushButton()
-        saveimage_btn.setText('Save image...')
+        saveimage_btn.setText("Save image...")
         saveimage_btn.clicked.connect(self._on_saveimage_btn_clicked)
 
         layout = QHBoxLayout()
         layout.setContentsMargins(3, 3, 3, 3)
+        layout.setSpacing(3)
 
         layout.addWidget(self._nav_toolbar.qtoolbar())
         layout.addWidget(self._function_label)
@@ -108,10 +110,10 @@ class QDisasmStatusBar(QFrame):
     # Private methods
     #
 
-    def _view_combo_changed(self, index:int):
+    def _view_combo_changed(self, index: int):
         {
             QLinearDisassembly: self.disasm_view.display_linear_viewer,
-            QDisassemblyGraph: self.disasm_view.display_disasm_graph
+            QDisassemblyGraph: self.disasm_view.display_disasm_graph,
         }[self._view_combo.itemData(index)]()
 
     def _update_view_combo(self):
@@ -119,7 +121,7 @@ class QDisasmStatusBar(QFrame):
         index = self._view_combo.findData(graph_type)
         self._view_combo.setCurrentIndex(index)
 
-    def _disasm_level_combo_changed(self, index:int):
+    def _disasm_level_combo_changed(self, index: int):
         new_level = self._disasm_level_combo.itemData(index)
         self.disasm_view.set_disassembly_level(new_level)
 
@@ -130,17 +132,13 @@ class QDisasmStatusBar(QFrame):
 
     def _update_function_label(self):
         if self._function:
-            s = f'{self._function.name} ({self._function.addr:x})'
+            s = f"{self._function.name} ({self._function.addr:x})"
         else:
-            s = ''
+            s = ""
         self._function_label.setText(s)
 
     def _on_saveimage_btn_clicked(self):
-
-        filename, folder = QFileDialog.getSaveFileName(self, 'Save image...',
-                                           '',
-                                           'PNG Files (*.png);;Bitmaps (*.bmp)'
-                                           )
+        filename, folder = QFileDialog.getSaveFileName(self, "Save image...", "", "PNG Files (*.png);;Bitmaps (*.bmp)")
         if not filename or not folder:
             return
 

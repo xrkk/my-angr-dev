@@ -1,16 +1,17 @@
 import logging
-
 from typing import TYPE_CHECKING, Optional
 
-from . import Backend
+from cle.address_translator import AT
+
 from .symbol import Symbol, SymbolType
-from ..address_translator import AT
 
 if TYPE_CHECKING:
     from typing import Any, List
 
+    from .backend import Backend
 
-l = logging.getLogger(name=__name__)
+
+log = logging.getLogger(name=__name__)
 
 
 class Relocation:
@@ -21,24 +22,28 @@ class Relocation:
     :ivar owner:            The binary this relocation was originaly found in, as a cle object
     :ivar symbol:           The Symbol object this relocation refers to
     :ivar relative_addr:    The address in owner this relocation would like to write to
-    :ivar resolvedby:       If the symbol this relocation refers to is an import symbol and that import has been resolved,
-                            this attribute holds the symbol from a different binary that was used to resolve the import.
+    :ivar resolvedby:       If the symbol this relocation refers to is an import symbol and that import has been
+                            resolved, this attribute holds the symbol from a different binary that was used to resolve
+                            the import.
     :ivar resolved:         Whether the application of this relocation was successful
     """
-    def __init__(self, owner: Backend, symbol: Symbol, relative_addr: int):
+
+    def __init__(self, owner: "Backend", symbol: Symbol, relative_addr: int):
         self.owner = owner
         self.arch = owner.arch
         self.symbol = symbol
         self.relative_addr = relative_addr
-        self.resolvedby = None  # type: Optional[Symbol]
-        self.resolved = False   # type: bool
+        self.resolvedby: Optional[Symbol] = None
+        self.resolved: bool = False
         self.resolvewith = None
         if self.symbol is not None and self.symbol.is_import:
             self.owner.imports[self.symbol.name] = self
 
     AUTO_HANDLE_NONE = False
 
-    def resolve_symbol(self, solist: "List[Any]", thumb=False, extern_object=None, **kwargs): # pylint: disable=unused-argument
+    def resolve_symbol(
+        self, solist: "List[Any]", thumb=False, extern_object=None, **kwargs
+    ):  # pylint: disable=unused-argument
         if self.resolved:
             return
 
@@ -84,7 +89,14 @@ class Relocation:
         self.resolved = True
         if self.symbol is not None:
             if obj is not None:
-                l.debug('%s from %s resolved by %s from %s at %#x', self.symbol.name, self.owner.provides, obj.name, obj.owner.provides, obj.rebased_addr)
+                log.debug(
+                    "%s from %s resolved by %s from %s at %#x",
+                    self.symbol.name,
+                    self.owner.provides,
+                    obj.name,
+                    obj.owner.provides,
+                    obj.rebased_addr,
+                )
             self.symbol.resolve(obj)
         else:
             if not self.AUTO_HANDLE_NONE:
@@ -106,8 +118,8 @@ class Relocation:
         return self.relative_addr
 
     @property
-    def value(self):    # pylint: disable=no-self-use
-        l.error('Value property of Relocation must be overridden by subclass!')
+    def value(self):  # pylint: disable=no-self-use
+        log.error("Value property of Relocation must be overridden by subclass!")
         return 0
 
     def relocate(self):
@@ -131,5 +143,5 @@ class Relocation:
     def owner_obj(self):
         if not Relocation._complained_owner:
             Relocation._complained_owner = True
-            l.critical("Deprecation warning: use relocation.owner instead of relocation.owner_obj")
+            log.critical("Deprecation warning: use relocation.owner instead of relocation.owner_obj")
         return self.owner

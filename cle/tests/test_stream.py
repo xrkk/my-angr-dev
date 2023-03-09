@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+
 import cle
 
 test_location = os.path.join(
@@ -23,18 +24,14 @@ def test_stream():
     )
 
     assert path_ld.main_object.entry == stream_ld.main_object.entry
-    assert [x for x in path_ld.shared_objects.keys() if x != "fauxware"] == list(
-        stream_ld.shared_objects.keys()
+    assert [x for x in path_ld.shared_objects.keys() if x != "fauxware"] == list(stream_ld.shared_objects.keys())
+    assert path_ld.memory.unpack_word(path_ld.main_object.entry) == stream_ld.memory.unpack_word(
+        stream_ld.main_object.entry
     )
-    assert path_ld.memory.unpack_word(
-        path_ld.main_object.entry
-    ) == stream_ld.memory.unpack_word(stream_ld.main_object.entry)
     strcmp_string = path_ld.describe_addr(path_ld.memory.unpack_word(0x804A000))
     assert "libc.so.6" in strcmp_string
     assert "strcmp" in strcmp_string
-    assert strcmp_string == stream_ld.describe_addr(
-        stream_ld.memory.unpack_word(0x804A000)
-    )
+    assert strcmp_string == stream_ld.describe_addr(stream_ld.memory.unpack_word(0x804A000))
 
 
 if __name__ == "__main__":

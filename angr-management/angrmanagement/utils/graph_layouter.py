@@ -2,7 +2,6 @@ from collections import defaultdict
 from typing import List
 
 import networkx
-
 from angr.analyses.cfg.cfg_utils import CFGUtils
 
 from .edge import Edge, EdgeSort
@@ -42,11 +41,11 @@ class EdgeRouter:
 
         self._prepare_edge_routing()
 
-        edges = [ ]
+        edges = []
 
         for src, dst, data in self._graph.edges(data=True):
             sort = None
-            if data.get('type', None) == 'exception':
+            if data.get("type", None) == "exception":
                 sort = EdgeSort.EXCEPTION_EDGE
             edge = self._route_edge(src, dst, sort)
             edges.append(edge)
@@ -66,7 +65,6 @@ class EdgeRouter:
         """
 
         MOVE_LEFT = 0
-        NO_MOVE = 1
         MOVE_RIGHT = 2
 
         # build the edge
@@ -81,7 +79,7 @@ class EdgeRouter:
         # start from the next row
         start_row += 1
 
-        start_idx = self._assign_edge_to(edge, 'vertical', start_col, start_row, 0)
+        start_idx = self._assign_edge_to(edge, "vertical", start_col, start_row, 0)
         edge.add_point(start_col, start_row, start_idx)
 
         if start_row < end_row:
@@ -114,18 +112,18 @@ class EdgeRouter:
                 max_col, min_col = start_col, col
                 move = MOVE_LEFT
 
-            idx = self._assign_edge_to(edge, 'horizontal', min_col, start_row, max_col - min_col)
+            idx = self._assign_edge_to(edge, "horizontal", min_col, start_row, max_col - min_col)
             edge.add_point(col, start_row, idx)
             edge.add_move(move)
         else:
             # there will be a horizontal edge even when the beginning column and the target column are the same, since
             # the two blocks may not be aligned.
-            _ = self._assign_edge_to(edge, 'horizontal', start_col, start_row, 1)
+            _ = self._assign_edge_to(edge, "horizontal", start_col, start_row, 1)
             # however, we do not need to add the point to the edge
 
         if start_row != end_row:
             # generate a line to move to the target row
-            idx = self._assign_edge_to(edge, 'vertical', col, min(start_row + 1, end_row), abs(end_row - start_row) + 1)
+            idx = self._assign_edge_to(edge, "vertical", col, min(start_row + 1, end_row), abs(end_row - start_row) + 1)
             edge.add_point(col, end_row, idx)
 
         if col != end_col:
@@ -136,13 +134,13 @@ class EdgeRouter:
             else:
                 max_col, min_col = col, end_col
                 move = MOVE_LEFT
-            idx = self._assign_edge_to(edge, 'horizontal', min_col, end_row, max_col - min_col)
+            idx = self._assign_edge_to(edge, "horizontal", min_col, end_row, max_col - min_col)
             edge.add_point(end_col, end_row, idx)
             edge.add_move(move)
 
             # move downwards
             # in a new grid, we need a new edge index
-            idx = self._assign_edge_to(edge, 'vertical', end_col, end_row, 0)
+            idx = self._assign_edge_to(edge, "vertical", end_col, end_row, 0)
             edge.add_point(end_col, end_row, idx)
 
         self._add_edge(edge)
@@ -157,7 +155,7 @@ class EdgeRouter:
         :return: None
         """
 
-        self._edge_valid = [ ]
+        self._edge_valid = []
         for col in range(self._max_col + 2):
             self._edge_valid.append([True] * (self._max_row + 1))
         for col, row in self._node_locations.values():
@@ -165,28 +163,27 @@ class EdgeRouter:
             self._edge_valid[col][row] = False
             self._edge_valid[col + 1][row] = False
 
-        self.vertical_edges = [ ]
-        self.horizontal_edges = [ ]
+        self.vertical_edges = []
+        self.horizontal_edges = []
 
         for col in range(self._max_col + 2):
-            v_edges = [ ]
-            h_edges = [ ]
+            v_edges = []
+            h_edges = []
             for row in range(self._max_row + 3):
-                v_edges.append({ })
-                h_edges.append({ })
+                v_edges.append({})
+                h_edges.append({})
             self.vertical_edges.append(v_edges)
             self.horizontal_edges.append(h_edges)
 
     def _assign_edge_to(self, edge, sort, col, row, blocks, index=None):
-
-        if sort == 'vertical':
+        if sort == "vertical":
             d = self.vertical_edges
-        elif sort == 'horizontal':
+        elif sort == "horizontal":
             d = self.horizontal_edges
         else:
             raise ValueError('_assign_edge_to(): Unsupported edge sort "%s".' % sort)
 
-        if sort == 'vertical':
+        if sort == "vertical":
             if index is None:
                 index = self._find_vertical_available_edge_index(col, row, row + blocks)
             for r in range(row, row + blocks + 1):
@@ -201,14 +198,12 @@ class EdgeRouter:
         return index
 
     def _edge_available(self, col, start_row, end_row):
-
         for i in range(start_row, end_row):
             if not self._edge_valid[col][i]:
                 return False
         return True
 
     def _first_unused_index(self, indices):
-
         # find the first unused index
         last_i = None
         for i in sorted(indices):
@@ -221,7 +216,6 @@ class EdgeRouter:
         return 0 if last_i is None else last_i + 1
 
     def _find_vertical_available_edge_index(self, col, start_row, end_row):
-
         # collect all used indices
         indices = set()
 
@@ -232,7 +226,6 @@ class EdgeRouter:
         return self._first_unused_index(indices)
 
     def _find_horizontal_available_edge_index(self, start_col, end_col, row):
-
         # collect all used indices
         indices = set()
 
@@ -254,7 +247,6 @@ class EdgeRouter:
         self._in_edges[edge.dst].append(edge)
 
     def _set_in_edge_indices(self):
-
         # assign in-edge indices
         for _, edges in self._in_edges.items():
             max_idx = None
@@ -271,7 +263,6 @@ class EdgeRouter:
                 edge.max_end_index = max_idx
 
     def _set_out_edge_indices(self):
-
         for _, edges in self._out_edges.items():
             max_idx = None
             if len(edges) == 2:
@@ -290,8 +281,17 @@ class GraphLayouter:
     Implements a pseudo layered graph layout (Sugiyama graph layout) algorithm.
     """
 
-    def __init__(self, graph, node_sizes, node_compare_key=None, node_sorter=None,
-                 x_margin=10, y_margin=5, row_margin=16, col_margin=16):
+    def __init__(
+        self,
+        graph,
+        node_sizes,
+        node_compare_key=None,
+        node_sorter=None,
+        x_margin=10,
+        y_margin=5,
+        row_margin=16,
+        col_margin=16,
+    ):
         self.graph = graph
         self._node_sizes = node_sizes
         self._node_compare_key = node_compare_key
@@ -314,20 +314,19 @@ class GraphLayouter:
         self._vertical_edges = None
         self._horizontal_edges = None
 
-        self._grid_max_vertical_id = { }
-        self._grid_max_horizontal_id = { }
-        self._row_to_nodes = { }
-        self._row_heights = [ ]
-        self._col_widths = [ ]
-        self._grid_coordinates = { }
+        self._grid_max_vertical_id = {}
+        self._grid_max_horizontal_id = {}
+        self._row_to_nodes = {}
+        self._row_heights = []
+        self._col_widths = []
+        self._grid_coordinates = {}
 
-        self.edges = [ ]  # type: List[Edge]
-        self.node_coordinates = { }
+        self.edges: List[Edge] = []
+        self.node_coordinates = {}
 
         self._layout()
 
     def _layout(self):
-
         self._initialize()
 
         # order the nodes
@@ -355,9 +354,9 @@ class GraphLayouter:
         self._calculate_coordinates()
 
     def _initialize(self):
-        self._cols = { }
-        self._rows = { }
-        self._locations = { }
+        self._cols = {}
+        self._rows = {}
+        self._locations = {}
 
     def _to_acyclic_graph(self, graph, ordered_nodes=None):
         """
@@ -403,12 +402,11 @@ class GraphLayouter:
         self._assign_columns(acyclic_graph)
 
     def _assign_rows(self, graph, acyclic_graph, ordered_nodes):
-
         row_to_nodes = defaultdict(list)
 
         global_max_row = 0
 
-        min_rows, max_rows = {}, {}
+        max_rows = {}
 
         """
         # assign min row ID top-down
@@ -470,7 +468,6 @@ class GraphLayouter:
         self._row_to_nodes = row_to_nodes
 
     def _assign_columns(self, acyclic_graph):
-
         global_max_col = 0
 
         # First iteration: assign column ID bottom-up
@@ -603,8 +600,8 @@ class GraphLayouter:
         :return: None
         """
 
-        self._row_heights = [ 0 ] * (self._max_row + 2)
-        self._col_widths = [ 0 ] * (self._max_col + 2)
+        self._row_heights = [0] * (self._max_row + 2)
+        self._col_widths = [0] * (self._max_col + 2)
 
         # update grid sizes based on nodes
         for node in self.graph.nodes():
@@ -669,7 +666,7 @@ class GraphLayouter:
         :return: None
         """
 
-        row_max_ids = { }
+        row_max_ids = {}
         for col, row in self._grid_max_horizontal_id.keys():
             if row not in row_max_ids:
                 row_max_ids[row] = self._grid_max_horizontal_id[(col, row)]
@@ -706,13 +703,13 @@ class GraphLayouter:
             grid_height = self._row_heights[row]
             node_width, node_height = self._node_sizes[node]
 
-            self.node_coordinates[node] = (grid_x + ((grid_a_width + grid_b_width) // 2 - node_width // 2),
-                                           grid_y + (grid_height // 2 - node_height // 2)
-                                           )
+            self.node_coordinates[node] = (
+                grid_x + ((grid_a_width + grid_b_width) // 2 - node_width // 2),
+                grid_y + (grid_height // 2 - node_height // 2),
+            )
 
         # edges
         for edge in self.edges:
-
             src_node_x, src_node_y = self.node_coordinates[edge.src]
             src_node_width, src_node_height = self._node_sizes[edge.src]
 
@@ -796,11 +793,9 @@ class GraphLayouter:
             edge.add_coordinate(*end_point)
 
     def _indexed_x(self, base_x, idx):
-
         return base_x + idx * self.x_margin
 
     def _indexed_y(self, base_y, idx):
-
         return base_y + idx * self.y_margin
 
     def _nointersecting_y(self, row, starting_col, ending_col, default=None):

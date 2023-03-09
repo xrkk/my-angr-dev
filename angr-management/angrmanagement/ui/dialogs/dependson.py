@@ -1,16 +1,27 @@
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton, QGroupBox, QRadioButton, QHBoxLayout, \
-    QVBoxLayout, QMessageBox, QWidget
+from angr.knowledge_plugins.key_definitions.constants import OP_AFTER, OP_BEFORE
+from PySide6.QtWidgets import (
+    QDialog,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QVBoxLayout,
+    QWidget,
+)
 
-from angr.knowledge_plugins import Function
-from angr.knowledge_plugins.key_definitions.constants import OP_BEFORE, OP_AFTER
+from angrmanagement.utils.func import function_prototype_str
 
-from ...utils.func import function_prototype_str
+if TYPE_CHECKING:
+    from angr.knowledge_plugins import Function
 
 
 class DependsOn(QDialog):
-    def __init__(self, addr: int, operand, instr=None, func: Optional[Function]=None, parent=None):
+    def __init__(self, addr: int, operand, instr=None, func: Optional["Function"] = None, parent=None):
         super().__init__(parent)
 
         self._addr = addr
@@ -20,8 +31,8 @@ class DependsOn(QDialog):
 
         # output
         self.location: Optional[int] = None
-        self.arg: Optional = None
-        self.reg: Optional = None
+        self.arg: Optional[Any] = None
+        self.reg: Optional[Any] = None
 
         # UI widgets
         self._instr_layout: QHBoxLayout = None
@@ -41,7 +52,6 @@ class DependsOn(QDialog):
         self._init_widgets()
 
     def _init_widgets(self):
-
         # the instruction
         instr_lbl = QLabel("Instruction")
         instr_box = QLineEdit("TODO")
@@ -169,11 +179,13 @@ class DependsOn(QDialog):
                 self.arg = int(self._arg_box.text())
             except ValueError:
                 # invalid argument index
-                QMessageBox(self).critical(self,
-                            "Invalid argument index",
-                            "The given function argument index \"%s\" is unsupported. Only integers are allowed." % self._arg_box.text(),
-                            buttons=QMessageBox.Ok,
-                            )
+                QMessageBox(self).critical(
+                    self,
+                    "Invalid argument index",
+                    'The given function argument index "%s" is unsupported. Only integers are allowed.'
+                    % self._arg_box.text(),
+                    buttons=QMessageBox.Ok,
+                )
                 return
         else:
             raise NotImplementedError()

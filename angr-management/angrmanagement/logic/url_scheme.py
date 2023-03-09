@@ -1,15 +1,14 @@
 import os
-import sys
-import subprocess
 import pathlib
+import subprocess
+import sys
 
 from PySide6.QtCore import QSettings
 
-from ..utils.env import app_path
+from angrmanagement.utils.env import app_path
 
 
 class AngrUrlScheme:
-
     URL_SCHEME = "angr"
     WIN_REG_PATH = "HKEY_CURRENT_USER\\Software\\Classes\\{}"
 
@@ -59,7 +58,6 @@ class AngrUrlScheme:
     #
 
     def _register_url_scheme_windows(self):
-
         app_path_ = app_path(pythonw=True)
 
         reg_path = self.WIN_REG_PATH.format(self.URL_SCHEME)
@@ -81,14 +79,12 @@ class AngrUrlScheme:
         reg.endGroup()
 
     def _unregister_url_scheme_windows(self):
-
         reg_path = self.WIN_REG_PATH.format(self.URL_SCHEME)
         reg = QSettings(reg_path, QSettings.NativeFormat)
 
         reg.remove("")
 
     def _is_url_scheme_registered_windows(self):
-
         reg_path = self.WIN_REG_PATH.format(self.URL_SCHEME)
         reg = QSettings(reg_path, QSettings.NativeFormat)
 
@@ -105,7 +101,6 @@ class AngrUrlScheme:
     #
 
     def _register_url_scheme_linux(self):
-
         cmd_0 = ["xdg-mime", "default", "angr.desktop", f"x-scheme-handler/{self.URL_SCHEME}"]
 
         # test if xdg-mime is available
@@ -130,23 +125,19 @@ Type=Application
         angr_desktop_base = os.path.dirname(angr_desktop_path)
         pathlib.Path(angr_desktop_base).mkdir(parents=True, exist_ok=True)
         with open(angr_desktop_path, "w") as f:
-            f.write(
-                angr_desktop.format(app_path=app_path(), url_scheme=self.URL_SCHEME)
-            )
+            f.write(angr_desktop.format(app_path=app_path(), url_scheme=self.URL_SCHEME))
 
         # register the scheme
         retcode = subprocess.call(cmd_0)
         if retcode != 0:
-            raise ValueError("Failed to setup the URL scheme. Command \"%s\" failed." % " ".join(cmd_0))
+            raise ValueError('Failed to setup the URL scheme. Command "%s" failed.' % " ".join(cmd_0))
 
     def _unregister_url_scheme_linux(self):
-
         angr_desktop_path = self._angr_desktop_path()
         if os.path.isfile(angr_desktop_path):
             os.unlink(angr_desktop_path)
 
     def _is_url_scheme_registered_linux(self):
-
         # angr.desktop
         angr_desktop_path = self._angr_desktop_path()
         if not os.path.isfile(angr_desktop_path):
@@ -158,9 +149,12 @@ Type=Application
             return False, None
 
         # xdg-mine query
-        proc = subprocess.Popen(["xdg-mime", "query", "default",
-            f"x-scheme-handler/{self.URL_SCHEME}"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.Popen(
+            ["xdg-mime", "query", "default", f"x-scheme-handler/{self.URL_SCHEME}"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
         stdout, _ = proc.communicate()
         if not stdout:
             return False, None
@@ -170,9 +164,9 @@ Type=Application
             data = f.read()
         lines = data.split("\n")
         cmdline = None
-        for l in lines:
-            if l.startswith("Exec="):
-                cmdline = l[5:]
+        for line in lines:
+            if line.startswith("Exec="):
+                cmdline = line[5:]
                 break
         if cmdline is None:
             return False, None

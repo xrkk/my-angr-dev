@@ -8,7 +8,6 @@ class EdgeSort:
 
 class Edge:
     def __init__(self, src, dst, sort=EdgeSort.DIRECT_JUMP):
-
         self.src = src
         self.dst = dst
 
@@ -17,9 +16,9 @@ class Edge:
         self.end_index = None
         self.max_end_index = None
 
-        self.points = [ ]
-        self.moves = [ ]
-        self.coordinates = [ ]
+        self.points = []
+        self.moves = []
+        self.coordinates = []
         self.sort = sort
 
     def add_point(self, col, row, index):

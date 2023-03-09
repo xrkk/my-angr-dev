@@ -4,11 +4,10 @@ import logging
 import os
 
 import archinfo
+
 import cle
 
-TEST_BASE = os.path.join(
-    os.path.dirname(os.path.realpath(__file__)), os.path.join("..", "..", "binaries")
-)
+TEST_BASE = os.path.join(os.path.dirname(os.path.realpath(__file__)), os.path.join("..", "..", "binaries"))
 
 
 def test_minidump():

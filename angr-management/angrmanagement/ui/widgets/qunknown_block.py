@@ -1,16 +1,16 @@
 from typing import List
 
-from PySide6.QtWidgets import QGraphicsSimpleTextItem
 from PySide6.QtCore import QRectF
+from PySide6.QtWidgets import QGraphicsSimpleTextItem
 
-from ...config import Conf
+from angrmanagement.config import Conf
+
 from .qgraph_object import QCachedGraphicsItem
 
 
 class QUnknownBlock(QCachedGraphicsItem):
-
     LINEAR_INSTRUCTION_OFFSET = 120
-    DEFAULT_TEXT = 'Unknown'
+    DEFAULT_TEXT = "Unknown"
 
     def __init__(self, workspace, addr, bytes_, parent=None):
         super().__init__(parent=parent)
@@ -34,8 +34,7 @@ class QUnknownBlock(QCachedGraphicsItem):
     # Public methods
     #
 
-    def paint(self, painter, option, widget): #pylint: disable=unused-argument
-
+    def paint(self, painter, option, widget):  # pylint: disable=unused-argument
         # painter.setRenderHints(
         #         QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         # painter.setFont(self._config.disasm_font)
@@ -56,7 +55,7 @@ class QUnknownBlock(QCachedGraphicsItem):
         self._addr_item.setFont(Conf.disasm_font)
 
         # Bytes
-        self._byte_lines = [ ]
+        self._byte_lines = []
         if self.bytes:
             line = ""
             for i, b in enumerate(self.bytes):
@@ -83,7 +82,6 @@ class QUnknownBlock(QCachedGraphicsItem):
         self._layout_items_and_update_size()
 
     def _layout_items_and_update_size(self):
-
         x, y = 0, 0
 
         # address

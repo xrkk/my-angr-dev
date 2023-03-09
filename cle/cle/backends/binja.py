@@ -1,33 +1,41 @@
 import logging
 
-from . import Backend, register_backend, Symbol, SymbolType
-from .relocation import Relocation
-from ..errors import CLEError
-from ..address_translator import AT
 import archinfo
 
-l = logging.getLogger(name=__name__)
+from cle.address_translator import AT
+from cle.errors import CLEError
+
+from .backend import Backend, register_backend
+from .relocation import Relocation
+from .symbol import Symbol, SymbolType
+
+log = logging.getLogger(name=__name__)
 
 try:
     import binaryninja as bn
 except ImportError:
     bn = None
-    l.debug("Unable to import binaryninja module")
-    BINJA_NOT_INSTALLED_STR = "Binary Ninja does not appear to be installed. Please ensure Binary Ninja \
-                               and its Python API are properly installed before using this backend."
+    log.debug("Unable to import binaryninja module")
+    BINJA_NOT_INSTALLED_STR = (
+        "Binary Ninja does not appear to be installed. Please ensure Binary Ninja "
+        "and its Python API are properly installed before using this backend."
+    )
 
 
 class BinjaSymbol(Symbol):
-    BINJA_FUNC_SYM_TYPES = [bn.SymbolType.ImportedFunctionSymbol,
-                            bn.SymbolType.FunctionSymbol,
-                            bn.SymbolType.ImportAddressSymbol] if bn else []
+    BINJA_FUNC_SYM_TYPES = (
+        [bn.SymbolType.ImportedFunctionSymbol, bn.SymbolType.FunctionSymbol, bn.SymbolType.ImportAddressSymbol]
+        if bn
+        else []
+    )
 
-    BINJA_DATA_SYM_TYPES = [bn.SymbolType.ImportedDataSymbol,
-                            bn.SymbolType.DataSymbol] if bn else []
+    BINJA_DATA_SYM_TYPES = [bn.SymbolType.ImportedDataSymbol, bn.SymbolType.DataSymbol] if bn else []
 
-    BINJA_IMPORT_TYPES = [bn.SymbolType.ImportedFunctionSymbol,
-                          bn.SymbolType.ImportAddressSymbol,
-                          bn.SymbolType.ImportedDataSymbol] if bn else []
+    BINJA_IMPORT_TYPES = (
+        [bn.SymbolType.ImportedFunctionSymbol, bn.SymbolType.ImportAddressSymbol, bn.SymbolType.ImportedDataSymbol]
+        if bn
+        else []
+    )
 
     def __init__(self, owner, sym):
         if not bn:
@@ -40,11 +48,7 @@ class BinjaSymbol(Symbol):
         else:
             symtype = SymbolType.TYPE_OTHER
 
-        super().__init__(owner,
-                                          sym.raw_name,
-                                          AT.from_rva(sym.address, owner).to_rva(),
-                                          owner.bv.address_size,
-                                          symtype)
+        super().__init__(owner, sym.raw_name, AT.from_rva(sym.address, owner).to_rva(), owner.bv.address_size, symtype)
 
         if sym.type in self.BINJA_IMPORT_TYPES:
             self.is_import = True
@@ -53,7 +57,6 @@ class BinjaSymbol(Symbol):
 
 
 class BinjaReloc(Relocation):
-
     @property
     def value(self):
         return self.relative_addr
@@ -64,18 +67,21 @@ class BinjaBin(Backend):
     Get information from binaries using Binary Ninja. Basing this on idabin.py, but will try to be more complete.
     TODO: add more features as Binary Ninja's feature set improves
     """
-    is_default = True # Tell CLE to automatically consider using the BinjaBin backend
-    BINJA_ARCH_MAP = {"aarch64": archinfo.ArchAArch64(endness='Iend_LE'),
-                      "armv7": archinfo.ArchARMEL(endness='Iend_LE'),
-                      "thumb2": archinfo.ArchARMEL(endness='Iend_LE'),
-                      "armv7eb": archinfo.ArchARMEL(endness='Iend_BE'),
-                      "thumb2eb": archinfo.ArchARMEL(endness='Iend_BE'),
-                      "mipsel32": archinfo.ArchMIPS32(endness='Iend_LE'),
-                      "mips32": archinfo.ArchMIPS32(endness='Iend_BE'),
-                      "ppc": archinfo.ArchPPC32(endness="Iend_BE"),
-                      "ppc_le": archinfo.ArchPPC32(endness="Iend_LE"),
-                      "x86": archinfo.ArchX86(),
-                      "x86_64": archinfo.ArchAMD64()}
+
+    is_default = True  # Tell CLE to automatically consider using the BinjaBin backend
+    BINJA_ARCH_MAP = {
+        "aarch64": archinfo.ArchAArch64(endness="Iend_LE"),
+        "armv7": archinfo.ArchARMEL(endness="Iend_LE"),
+        "thumb2": archinfo.ArchARMEL(endness="Iend_LE"),
+        "armv7eb": archinfo.ArchARMEL(endness="Iend_BE"),
+        "thumb2eb": archinfo.ArchARMEL(endness="Iend_BE"),
+        "mipsel32": archinfo.ArchMIPS32(endness="Iend_LE"),
+        "mips32": archinfo.ArchMIPS32(endness="Iend_BE"),
+        "ppc": archinfo.ArchPPC32(endness="Iend_BE"),
+        "ppc_le": archinfo.ArchPPC32(endness="Iend_LE"),
+        "x86": archinfo.ArchX86(),
+        "x86_64": archinfo.ArchAMD64(),
+    }
 
     def __init__(self, binary, *args, **kwargs):
         super().__init__(binary, *args, **kwargs)
@@ -83,18 +89,18 @@ class BinjaBin(Backend):
             raise CLEError(BINJA_NOT_INSTALLED_STR)
         # get_view_of_file can take a bndb or binary - wait for autoanalysis to complete
         self.bv = bn.BinaryViewType.get_view_of_file(binary, False)
-        l.info("Analyzing %s, this may take some time...", binary)
+        log.info("Analyzing %s, this may take some time...", binary)
         self.bv.update_analysis_and_wait()
-        l.info("Analysis complete")
+        log.info("Analysis complete")
         # Note may want to add option to kick off linear sweep
 
         try:
             self.set_arch(self.BINJA_ARCH_MAP[self.bv.arch.name])
         except KeyError:
-            l.error("Architecture %s is not supported.", self.bv.arch.name)
+            log.error("Architecture %s is not supported.", self.bv.arch.name)
 
         for seg in self.bv.segments:
-            l.info("Adding memory for segment at %x.", seg.start)
+            log.info("Adding memory for segment at %x.", seg.start)
             br = bn.BinaryReader(self.bv)
             br.seek(seg.start)
             data = br.read(len(seg))
@@ -107,7 +113,9 @@ class BinjaBin(Backend):
         # Since we're not trying to import and load dependencies directly, but want to run SimProcedures,
         # We should use the binaryninja.SymbolType.ImportedFunctionSymbol
         # Also this should be generalized to get data imports, too
-        self.raw_imports = {i.name: i.address for i in self.bv.get_symbols_of_type(bn.SymbolType.ImportedFunctionSymbol)}
+        self.raw_imports = {
+            i.name: i.address for i in self.bv.get_symbols_of_type(bn.SymbolType.ImportedFunctionSymbol)
+        }
         self._process_imports()
         self.exports = {}
         self.linking = "static" if len(self.raw_imports) == 0 else "dynamic"
@@ -115,17 +123,18 @@ class BinjaBin(Backend):
         # This is an ugly hack, but will have to use this for now until Binary Ninja exposes dependencies
         self.guess_simprocs = True
         self.guess_simprocs_hint = "nix" if self.bv.get_section_by_name(".plt") else "win"
-        l.warning("This backend is based on idabin.py.\n\
-                   You may encounter unexpected behavior if:\n\
-                   \tyour target depends on library data symbol imports, or\n\
-                   \tlibrary imports that don't have a guess-able SimProcedure\n\
-                   Good luck!")
-
+        log.warning(
+            "This backend is based on idabin.py.\n"
+            "You may encounter unexpected behavior if:\n"
+            "\tyour target depends on library data symbol imports, or\n"
+            "\tlibrary imports that don't have a guess-able SimProcedure\n"
+            "Good luck!"
+        )
 
     def _process_imports(self):
-        ''' Process self.raw_imports into list of Relocation objects '''
+        """Process self.raw_imports into list of Relocation objects"""
         if not self.raw_imports:
-            l.warning("No imports found - if this is a dynamically-linked binary, something probably went wrong.")
+            log.warning("No imports found - if this is a dynamically-linked binary, something probably went wrong.")
 
         for name, addr in self.raw_imports.items():
             BinjaReloc(self, self._symbol_cache[name], addr)
@@ -151,11 +160,11 @@ class BinjaBin(Backend):
             self.got_begin = got_sec.start
             self.got_end = got_sec.end
         except KeyError:
-            l.warning("No got section mapping found!")
+            log.warning("No got section mapping found!")
 
         # If we reach this point, we should have the addresses
         if self.got_begin is None or self.got_end is None:
-            l.warning("No section %s, is this a static binary ? (or stripped)", sec_name)
+            log.warning("No section %s, is this a static binary ? (or stripped)", sec_name)
             return False
         return True
 
@@ -233,7 +242,7 @@ class BinjaBin(Backend):
         Resolve import `name` with address `newaddr`. That is, update the GOT entry for `name` with `newaddr`.
         """
         if name not in self.imports:
-            l.warning("%s not in imports", name)
+            log.warning("%s not in imports", name)
             return
 
         addr = self.imports[name]

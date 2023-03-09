@@ -1,20 +1,23 @@
 import logging
 
-from . import Backend, register_backend
-from ..errors import CLEError
+from cle.errors import CLEError
+
+from .backend import Backend, register_backend
 
 try:
     import arpy
 except ImportError:
     arpy = None
 
-l = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
+
 
 class StaticArchive(Backend):
     @classmethod
     def is_compatible(cls, stream):
         stream.seek(0)
-        return stream.read(8) == b'!<arch>\n'
+        return stream.read(8) == b"!<arch>\n"
+
     is_default = True
 
     def __init__(self, *args, **kwargs):
@@ -39,7 +42,7 @@ class StaticArchive(Backend):
         if self.child_objects:
             self.arch = self.child_objects[0].arch
         else:
-            l.warning("Loaded empty static archive?")
+            log.warning("Loaded empty static archive?")
         self.has_memory = False
         self.pic = True
 
@@ -47,5 +50,5 @@ class StaticArchive(Backend):
         if self.loader.main_object is self:
             self.loader.main_object = None
 
-register_backend('AR', StaticArchive)
 
+register_backend("AR", StaticArchive)

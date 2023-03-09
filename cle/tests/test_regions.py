@@ -2,9 +2,8 @@ import os
 import unittest
 
 import cle
-from cle.backends import Section, Segment
 from cle.address_translator import AT
-
+from cle.backends import Section, Segment
 
 TESTS_BASE = os.path.join(
     os.path.dirname(os.path.realpath(__file__)),
@@ -57,7 +56,6 @@ groundtruth = {
 
 class TestRunSections(unittest.TestCase):
     def _run_sections(self, arch, filename, sections):
-
         binary_path = os.path.join(TESTS_BASE, arch, filename)
 
         ld = cle.Loader(binary_path, auto_load_libs=False)
@@ -66,9 +64,7 @@ class TestRunSections(unittest.TestCase):
         for i, section in enumerate(ld.main_object.sections):
             self.assertEqual(section.name, sections[i].name)
             self.assertEqual(section.offset, sections[i].offset)
-            self.assertEqual(
-                AT.from_mva(section.vaddr, ld.main_object).to_lva(), sections[i].vaddr
-            )
+            self.assertEqual(AT.from_mva(section.vaddr, ld.main_object).to_lva(), sections[i].vaddr)
             self.assertEqual(section.memsize, sections[i].memsize)
 
         # address lookups
@@ -78,9 +74,7 @@ class TestRunSections(unittest.TestCase):
         mapped_sections = [section for section in sections if section.vaddr != 0]
 
         for section in mapped_sections:
-            self.assertEqual(
-                ld.main_object.find_section_containing(section.vaddr).name, section.name
-            )
+            self.assertEqual(ld.main_object.find_section_containing(section.vaddr).name, section.name)
             self.assertEqual(
                 ld.main_object.sections.find_region_containing(section.vaddr).name,
                 section.name,
@@ -91,21 +85,15 @@ class TestRunSections(unittest.TestCase):
                     section.name,
                 )
                 self.assertEqual(
-                    ld.main_object.sections.find_region_containing(
-                        section.vaddr + 1
-                    ).name,
+                    ld.main_object.sections.find_region_containing(section.vaddr + 1).name,
                     section.name,
                 )
                 self.assertEqual(
-                    ld.main_object.find_section_containing(
-                        section.vaddr + section.memsize - 1
-                    ).name,
+                    ld.main_object.find_section_containing(section.vaddr + section.memsize - 1).name,
                     section.name,
                 )
                 self.assertEqual(
-                    ld.main_object.sections.find_region_containing(
-                        section.vaddr + section.memsize - 1
-                    ).name,
+                    ld.main_object.sections.find_region_containing(section.vaddr + section.memsize - 1).name,
                     section.name,
                 )
 
@@ -121,7 +109,6 @@ class TestRunSections(unittest.TestCase):
         self.assertIsNone(ld.main_object.find_section_containing(0xFFFFFFFF), None)
 
     def _run_segments(self, arch, filename, segments):
-
         binary_path = os.path.join(TESTS_BASE, arch, filename)
 
         ld = cle.Loader(binary_path, auto_load_libs=False)
@@ -154,21 +141,15 @@ class TestRunSections(unittest.TestCase):
                     segment.vaddr,
                 )
                 self.assertEqual(
-                    ld.main_object.segments.find_region_containing(
-                        segment.vaddr + 1
-                    ).vaddr,
+                    ld.main_object.segments.find_region_containing(segment.vaddr + 1).vaddr,
                     segment.vaddr,
                 )
                 self.assertEqual(
-                    ld.main_object.find_segment_containing(
-                        segment.vaddr + segment.memsize - 1
-                    ).vaddr,
+                    ld.main_object.find_segment_containing(segment.vaddr + segment.memsize - 1).vaddr,
                     segment.vaddr,
                 )
                 self.assertEqual(
-                    ld.main_object.segments.find_region_containing(
-                        segment.vaddr + segment.memsize - 1
-                    ).vaddr,
+                    ld.main_object.segments.find_region_containing(segment.vaddr + segment.memsize - 1).vaddr,
                     segment.vaddr,
                 )
 

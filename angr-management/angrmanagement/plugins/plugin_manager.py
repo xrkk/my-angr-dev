@@ -1,27 +1,29 @@
 # pylint:disable=unused-private-member
 import functools
-from typing import Optional, Type, Union, Dict, TYPE_CHECKING
 import logging
 import os
+from typing import TYPE_CHECKING, Dict, Optional, Type, Union
 
-from PySide6.QtGui import QColor
+from angrmanagement.config import Conf, save_config
+from angrmanagement.config.config_manager import ENTRIES
+from angrmanagement.daemon.client import DaemonClient
+from angrmanagement.daemon.url_handler import UrlActionBinaryAware, register_url_action
+from angrmanagement.ui.menus.menu import MenuEntry, MenuSeparator
+from angrmanagement.ui.toolbars.toolbar_action import ToolbarAction
 
-from ..config.config_manager import ENTRIES
-from ..ui.menus.menu import MenuEntry, MenuSeparator
-from ..ui.toolbars.toolbar import ToolbarAction
-from ..daemon.url_handler import register_url_action, UrlActionBinaryAware
-from ..daemon.client import DaemonClient
-from ..ui.widgets.qblock import QBlock
-from ..config import Conf, save_config
 from .base_plugin import BasePlugin
-from .plugin_description import PluginDescription
-from . import load_plugin_descriptions_from_dir, load_plugins_from_file
+from .load import load_plugin_descriptions_from_dir, load_plugins_from_file
 
 if TYPE_CHECKING:
-    from ..ui.workspace import Workspace
+    from PySide6.QtGui import QColor
+
+    from angrmanagement.ui.widgets.qblock import QBlock
+    from angrmanagement.ui.workspace import Workspace
+
+    from .plugin_description import PluginDescription
 
 
-l = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 class PluginManager:
@@ -41,17 +43,18 @@ class PluginManager:
     tied to the user's settings related to loading paths and activation. Presently this is split between MainWindow (the
     first-boot autoload part) and the LoadPlugins dialog (the extra loading and tweaking activation)
     """
-    def __init__(self, workspace: Optional['Workspace']):
+
+    def __init__(self, workspace: Optional["Workspace"]):
         self.workspace = workspace
         # should one or both of these be ObjectContainers? I think no since we should be synchronizing on models, not
         # views/controllers. not super clear... that's not a hard and fast rule
-        self.loaded_plugins: Dict[str,PluginDescription] = { }
-        self.active_plugins: Dict[str,BasePlugin] = { }
+        self.loaded_plugins: Dict[str, PluginDescription] = {}
+        self.active_plugins: Dict[str, BasePlugin] = {}
 
     def discover_and_initialize_plugins(self):
-        os.environ['AM_BUILTIN_PLUGINS'] = os.path.dirname(__file__)
-        enabled_plugins = [ plugin_.strip() for plugin_ in Conf.enabled_plugins.split(',') if plugin_.strip() ]
-        for search_dir in Conf.plugin_search_path.split(':'):
+        os.environ["AM_BUILTIN_PLUGINS"] = os.path.dirname(__file__)
+        enabled_plugins = [plugin_.strip() for plugin_ in Conf.enabled_plugins.split(",") if plugin_.strip()]
+        for search_dir in Conf.plugin_search_path.split(":"):
             search_dir = os.path.expanduser(search_dir)
             search_dir = os.path.expandvars(search_dir)
 
@@ -59,11 +62,12 @@ class PluginManager:
             dir_and_descs = load_plugin_descriptions_from_dir(search_dir)
             for _, desc in dir_and_descs:
                 if desc.shortname in self.loaded_plugins:
-                    l.warning("Plugin shortname conflict: %s and %s have the same shortname %s.",
-                              self.loaded_plugins[desc.shortname].plugin_file_path,
-                              desc.plugin_file_path,
-                              desc.shortname,
-                              )
+                    log.warning(
+                        "Plugin shortname conflict: %s and %s have the same shortname %s.",
+                        self.loaded_plugins[desc.shortname].plugin_file_path,
+                        desc.plugin_file_path,
+                        desc.shortname,
+                    )
                     continue
                 self.loaded_plugins[desc.shortname] = desc
 
@@ -76,15 +80,16 @@ class PluginManager:
                 plugin_conf_key = f"plugin_{desc.name}_enabled"
 
                 # see if the plugin is enabled or not
-                if (any((plugin in desc.name or plugin.lower() in desc.shortname.lower()) for plugin in enabled_plugins)
-                        and not (hasattr(Conf, plugin_conf_key) and getattr(Conf, plugin_conf_key) is False)):
+                if any(
+                    (plugin in desc.name or plugin.lower() in desc.shortname.lower()) for plugin in enabled_plugins
+                ) and not (hasattr(Conf, plugin_conf_key) and getattr(Conf, plugin_conf_key) is False):
                     # see if we can't load this plugin because headless mode
                     if self.workspace is None and desc.require_workspace:
                         if desc.has_url_actions:
                             basedir = os.path.join(os.path.dirname(desc.plugin_file_path))
                             for plugin_cls in load_plugins_from_file(os.path.join(basedir, desc.entrypoints[0])):
                                 if isinstance(plugin_cls, Exception):
-                                    l.warning("Exception occurred during plugin loading: %s", plugin_cls)
+                                    log.warning("Exception occurred during plugin loading: %s", plugin_cls)
                                 else:
                                     plugin_cls: Type[BasePlugin]
                                     for action in plugin_cls.URL_ACTIONS:
@@ -95,7 +100,7 @@ class PluginManager:
     def verify_plugin_class(self, plugin_cls: Type[BasePlugin]):
         if type(plugin_cls) is not type or not issubclass(plugin_cls, BasePlugin):
             raise TypeError("Cannot load a plugin which is not a BasePlugin subclass")
-        if hasattr(plugin_cls, '_%s__i_hold_this_abstraction_token' % plugin_cls.__name__):
+        if hasattr(plugin_cls, "_%s__i_hold_this_abstraction_token" % plugin_cls.__name__):
             raise TypeError("Cannot load an abstract plugin")
         if plugin_cls.REQUIRE_WORKSPACE and self.workspace is None:
             raise RuntimeError("Cannot load plugin %s in headless mode.")
@@ -105,7 +110,7 @@ class PluginManager:
         basedir = os.path.join(os.path.dirname(desc.plugin_file_path))
         for plugin_cls in load_plugins_from_file(os.path.join(basedir, desc.entrypoints[0])):
             if isinstance(plugin_cls, Exception):
-                l.warning("Exception occurred during plugin loading: %s", plugin_cls, exc_info=True)
+                log.warning("Exception occurred during plugin loading: %s", plugin_cls, exc_info=True)
             else:
                 self.activate_plugin(desc.shortname, plugin_cls)
 
@@ -126,9 +131,9 @@ class PluginManager:
                 self._register_toolbar_actions(plugin_cls, plugin)
                 self._register_menu_buttons(plugin_cls, plugin)
 
-                for dview in self.workspace.view_manager.views_by_category['disassembly']:
+                for dview in self.workspace.view_manager.views_by_category["disassembly"]:
                     plugin.instrument_disassembly_view(dview)
-                for cview in self.workspace.view_manager.views_by_category['pseudocode']:
+                for cview in self.workspace.view_manager.views_by_category["pseudocode"]:
                     plugin.instrument_code_view(cview)
 
                 self._register_url_actions(plugin_cls, plugin)
@@ -137,15 +142,14 @@ class PluginManager:
             for action in plugin_cls.URL_ACTIONS:
                 register_url_action(action, UrlActionBinaryAware)
 
-        except Exception: #pylint: disable=broad-except
-            l.warning("Plugin %s failed to activate:", plugin_cls.get_display_name(),
-                      exc_info=True)
+        except Exception:  # pylint: disable=broad-except
+            log.warning("Plugin %s failed to activate:", plugin_cls.get_display_name(), exc_info=True)
         else:
-            l.info("Activated plugin %s", plugin_cls.get_display_name())
+            log.info("Activated plugin %s", plugin_cls.get_display_name())
 
     def save_enabled_plugins_to_config(self):
         # pylint: disable=assigning-non-slot
-        Conf.enabled_plugins = ','.join(self.active_plugins.keys())
+        Conf.enabled_plugins = ",".join(self.active_plugins.keys())
         save_config()
 
     def _register_status_bar_widgets(self, plugin: BasePlugin) -> None:
@@ -158,9 +162,12 @@ class PluginManager:
 
     def _register_toolbar_actions(self, plugin_cls: Type[BasePlugin], plugin: BasePlugin) -> None:
         for idx, (icon, tooltip) in enumerate(plugin_cls.TOOLBAR_BUTTONS):
-            action = ToolbarAction(icon, 'plugin %s toolbar %d' % (plugin_cls, idx), tooltip,
-                                   functools.partial(self._dispatch_single, plugin, BasePlugin.handle_click_toolbar,
-                                                     False, idx))
+            action = ToolbarAction(
+                icon,
+                "plugin %s toolbar %d" % (plugin_cls, idx),
+                tooltip,
+                functools.partial(self._dispatch_single, plugin, BasePlugin.handle_click_toolbar, False, idx),
+            )
             plugin.__cached_toolbar_actions.append(action)
             self.workspace._main_window._file_toolbar.add(action)
 
@@ -168,22 +175,17 @@ class PluginManager:
         if plugin_cls.MENU_BUTTONS:
             self.workspace._main_window._plugin_menu.add(MenuSeparator())
         for idx, text in enumerate(plugin_cls.MENU_BUTTONS):
-            action = MenuEntry(text,
-                               functools.partial(self._dispatch_single, plugin, BasePlugin.handle_click_menu, False,
-                                                 idx))
+            action = MenuEntry(
+                text, functools.partial(self._dispatch_single, plugin, BasePlugin.handle_click_menu, False, idx)
+            )
             plugin.__cached_menu_actions.append(action)
             self.workspace._main_window._plugin_menu.add(action)
 
     def _register_url_actions(self, plugin_cls: Type[BasePlugin], plugin: BasePlugin) -> None:
         for action in plugin_cls.URL_ACTIONS:
-            DaemonClient.register_handler(action,
-                                          functools.partial(self._dispatch_single,
-                                                            plugin,
-                                                            BasePlugin.handle_url_action,
-                                                            False,
-                                                            action
-                                                            )
-                                          )
+            DaemonClient.register_handler(
+                action, functools.partial(self._dispatch_single, plugin, BasePlugin.handle_url_action, False, action)
+            )
 
     @staticmethod
     def _register_configuration_entries(plugin_cls: Type[BasePlugin]) -> None:
@@ -199,12 +201,11 @@ class PluginManager:
             Conf.reinterpet()
 
     def get_plugin_instance_by_name(self, shortname: str) -> Optional[BasePlugin]:
-        instances = \
-            [plugin for key, plugin in self.active_plugins.items() if key == shortname]
+        instances = [plugin for key, plugin in self.active_plugins.items() if key == shortname]
         if not instances:
             return None
         if len(instances) > 1:
-            l.error("Somehow there is more than one instance of %s active?", shortname)
+            log.error("Somehow there is more than one instance of %s active?", shortname)
         return instances[0]
 
     def get_plugin_instance(self, plugin_cls: Type[BasePlugin]) -> Optional[BasePlugin]:
@@ -212,7 +213,7 @@ class PluginManager:
         if len(instances) == 0:
             return None
         if len(instances) > 1:
-            l.error("Somehow there is more than one instance of %s active?", plugin_cls.get_display_name())
+            log.error("Somehow there is more than one instance of %s active?", plugin_cls.get_display_name())
         return instances[0]
 
     def deactivate_plugin_by_name(self, shortname: str):
@@ -239,9 +240,10 @@ class PluginManager:
         try:
             plugin.teardown()
 
-        except Exception: #pylint: disable=broad-except
-            l.warning("Plugin %s errored during removal. The UI may be unstable.", plugin.get_display_name(),
-                      exc_info=True)
+        except Exception:  # pylint: disable=broad-except
+            log.warning(
+                "Plugin %s errored during removal. The UI may be unstable.", plugin.get_display_name(), exc_info=True
+            )
 
         for key in list(self.active_plugins.keys()):
             if self.active_plugins[key] is plugin:
@@ -257,7 +259,7 @@ class PluginManager:
             if custom.__func__ is not func:
                 try:
                     res = custom(*args)
-                except Exception as e: #pylint: disable=broad-except
+                except Exception as e:  # pylint: disable=broad-except
                     self._handle_error(plugin, func, sensitive, e)
                 else:
                     yield res
@@ -268,7 +270,7 @@ class PluginManager:
             if custom.__func__ is not func:
                 try:
                     res = custom(*args)
-                except Exception as e: #pylint: disable=broad-except
+                except Exception as e:  # pylint: disable=broad-except
                     self._handle_error(plugin, func, sensitive, e)
                 else:
                     yield (plugin_shortname, plugin), res
@@ -277,7 +279,7 @@ class PluginManager:
         custom = getattr(plugin, func.__name__)
         try:
             return custom(*args)
-        except Exception as e:  #pylint: disable=broad-except
+        except Exception as e:  # pylint: disable=broad-except
             self._handle_error(plugin, func, sensitive, e)
             return None
 
@@ -288,19 +290,19 @@ class PluginManager:
             self.workspace.log("Deactivating %s for error during sensitive operation" % plugin.get_display_name())
             self.deactivate_plugin(plugin)
 
-    def color_insn(self, addr, selected) -> Optional[QColor]:
+    def color_insn(self, addr, selected) -> Optional["QColor"]:
         for res in self._dispatch(BasePlugin.color_insn, True, addr, selected):
             if res is not None:
                 return res
         return None
 
-    def color_block(self, addr) -> Optional[QColor]:
+    def color_block(self, addr) -> Optional["QColor"]:
         for res in self._dispatch(BasePlugin.color_block, True, addr):
             if res is not None:
                 return res
         return None
 
-    def color_func(self, func) -> Optional[QColor]:
+    def color_func(self, func) -> Optional["QColor"]:
         for res in self._dispatch(BasePlugin.color_func, True, func):
             if res is not None:
                 return res
@@ -338,7 +340,7 @@ class PluginManager:
         for _ in self._dispatch(BasePlugin.handle_raise_view, False, view):
             pass
 
-    def build_qblock_annotations(self, qblock: QBlock):
+    def build_qblock_annotations(self, qblock: "QBlock"):
         for res in self._dispatch(BasePlugin.build_qblock_annotations, False, qblock):
             yield from res
 
@@ -376,15 +378,15 @@ class PluginManager:
             else:
                 try:
                     return plugin.extract_func_column(func, idx)
-                except Exception as e: #pylint: disable=broad-except
+                except Exception as e:  # pylint: disable=broad-except
                     # this should really be a "sensitive" operation but like
                     self.workspace.log(e)
                     self.workspace.log("PLEASE FIX YOUR PLUGIN AHHHHHHHHHHHHHHHHH")
-                    return 0, ''
+                    return 0, ""
         raise IndexError("Not enough columns")
 
     def step_callback(self, simgr):
-        for _ in self._dispatch(BasePlugin.step_callback,True, simgr):
+        for _ in self._dispatch(BasePlugin.step_callback, True, simgr):
             pass
 
     def handle_stack_var_renamed(self, func, offset, old_name, new_name):

@@ -1,26 +1,27 @@
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtGui import QPainter, QCursor
-from PySide6.QtCore import Qt, QRectF
+from angr.calling_conventions import SimRegArg
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QCursor, QPainter
 from PySide6.QtWidgets import QApplication, QGraphicsSimpleTextItem
 
-from angr.sim_type import SimTypeFunction
-from angr.calling_conventions import SimRegArg
+from angrmanagement.config import Conf
+from angrmanagement.utils.func import type2str
 
-from ...utils.func import type2str
-from ...config import Conf
 from .qgraph_object import QCachedGraphicsItem
+
+if TYPE_CHECKING:
+    from angr.sim_type import SimTypeFunction
 
 
 class QFunctionHeader(QCachedGraphicsItem):
-
     def __init__(self, addr, name, prototype, args, config, disasm_view, workspace, infodock, parent=None):
         super().__init__(parent=parent)
 
         self.workspace = workspace
         self.addr = addr
         self.name = name
-        self.prototype = prototype  # type: SimTypeFunction
+        self.prototype: SimTypeFunction = prototype
         self.args = args
         self.infodock = infodock
 
@@ -44,8 +45,7 @@ class QFunctionHeader(QCachedGraphicsItem):
         pass
 
     def paint(self, painter, option, widget):
-        painter.setRenderHints(
-                QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        painter.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
 
         if self.infodock.is_label_selected(self.addr):
             highlight_color = Conf.disasm_view_label_highlight_color
@@ -70,9 +70,8 @@ class QFunctionHeader(QCachedGraphicsItem):
     #
 
     def _init_widgets(self):
-
         if self.args is not None:
-            self._arg_str_list = [ ]
+            self._arg_str_list = []
             for arg in self.args:
                 if isinstance(arg, SimRegArg):
                     self._arg_str_list.append(arg.reg_name)
@@ -98,7 +97,7 @@ class QFunctionHeader(QCachedGraphicsItem):
 
             proto_str = ""
 
-            # type of the return value
+            # Type of the return value
             rt = type2str(self.prototype.returnty)
             proto_str += rt
 
@@ -135,7 +134,7 @@ class QFunctionHeader(QCachedGraphicsItem):
 
         # arguments
         if self._arg_str_list is not None:
-            s = 'Args: (' + ", ".join(self._arg_str_list) + ")"
+            s = "Args: (" + ", ".join(self._arg_str_list) + ")"
             self._args_str_item = QGraphicsSimpleTextItem(s, self)
             self._args_str_item.setFont(self._config.code_font)
             self._args_str_item.setBrush(self._config.disasm_view_function_color)
@@ -143,7 +142,6 @@ class QFunctionHeader(QCachedGraphicsItem):
         self._layout_items_and_update_size()
 
     def _layout_items_and_update_size(self):
-
         x, y = 0, 0
 
         if self._function_name_item is not None:

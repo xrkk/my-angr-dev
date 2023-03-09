@@ -1,10 +1,10 @@
-import traceback
 import logging
+import traceback
 
-from ..utils.namegen import NameGenerator
+from angrmanagement.utils.namegen import NameGenerator
 
+log = logging.getLogger(__name__)
 
-l = logging.getLogger(__name__)
 
 class EventSentinel:
     def __init__(self, logging_permitted: bool = True):
@@ -21,7 +21,7 @@ class EventSentinel:
                 self.am_subscribers.remove(listener)
             except ValueError:
                 if self.am_logging_permitted:
-                    l.warning("Double-unsubscribe of %s from %s", listener, self)
+                    log.warning("Double-unsubscribe of %s from %s", listener, self)
                 else:
                     print("Double-unsubscribe of listener")  # No f-string in case str uses logging
                     traceback.print_exc()
@@ -32,7 +32,7 @@ class EventSentinel:
                 listener(**kwargs)
             except Exception:  # pylint: disable=broad-except
                 if self.am_logging_permitted:
-                    l.exception("Error raised from event of %s", self)
+                    log.exception("Error raised from event of %s", self)
                 else:
                     print("Error raised from event")  # No f-string in case str uses logging
                     traceback.print_exc()
@@ -45,7 +45,8 @@ class ObjectContainer(EventSentinel):
     the contents of the shared object are *not* synchronized between processes;
     only the kwargs passed to the am_event of EventSentinel are synchronized
     """
-    def __init__(self, obj, name=None, notes='', **kwargs):
+
+    def __init__(self, obj, name=None, notes="", **kwargs):
         super().__init__(**kwargs)
         self._am_obj = None
         self.am_obj = obj
@@ -70,16 +71,16 @@ class ObjectContainer(EventSentinel):
         return self._am_obj is None
 
     def __forwarder(self, **kwargs):
-        kwargs['forwarded'] = True
+        kwargs["forwarded"] = True
         self.am_event(**kwargs)
 
     def __getattr__(self, item):
-        if item.startswith('am_') or item.startswith('_am_'):
+        if item.startswith("am_") or item.startswith("_am_"):
             return object.__getattribute__(self, item)
         return getattr(self._am_obj, item)
 
     def __setattr__(self, key, value):
-        if key.startswith('am_') or key.startswith('_am_'):
+        if key.startswith("am_") or key.startswith("_am_"):
             return object.__setattr__(self, key, value)
         return setattr(self._am_obj, key, value)
 
@@ -90,7 +91,7 @@ class ObjectContainer(EventSentinel):
         self._am_obj[key] = value
 
     def __dir__(self):
-        return dir(self._am_obj) + list(self.__dict__) + list(EventSentinel.__dict__) + ['am_obj', 'am_full']
+        return dir(self._am_obj) + list(self.__dict__) + list(EventSentinel.__dict__) + ["am_obj", "am_full"]
 
     def __iter__(self):
         return iter(self._am_obj)
@@ -105,4 +106,4 @@ class ObjectContainer(EventSentinel):
         return not self == other
 
     def __repr__(self):
-        return f'(container: {self.am_name}){repr(self._am_obj)}'
+        return f"(container: {self.am_name}){repr(self._am_obj)}"

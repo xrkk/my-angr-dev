@@ -1,14 +1,13 @@
 import logging
 
 import networkx
-from PySide6.QtWidgets import QFrame, QHBoxLayout
 from PySide6.QtCore import QSize
+from PySide6.QtWidgets import QFrame, QHBoxLayout
 
-from .qsymexec_graph import QSymExecGraph
 from .qstate_block import QStateBlock
+from .qsymexec_graph import QSymExecGraph
 
-
-l = logging.getLogger('ui.widgets.qpathtree')
+log = logging.getLogger(__name__)
 
 
 class QPathTree(QFrame):
@@ -35,7 +34,7 @@ class QPathTree(QFrame):
         if self.simgr.am_none:
             return
 
-        states = [state for (stash, states) in self.simgr.stashes.items() if stash != 'pruned' for state in states]
+        states = [state for (stash, states) in self.simgr.stashes.items() if stash != "pruned" for state in states]
         hierarchy = self.simgr._hierarchy
 
         graph = self._generate_graph([state.history for state in states], hierarchy, self.symexec_view)
@@ -93,7 +92,6 @@ class QPathTree(QFrame):
 
     @staticmethod
     def _all_edges_gen(state_histories, hierarchy):
-
         # TODO: reduce duplication with above function
         work = set(state_histories)
         while len(work) > 0:
@@ -115,15 +113,14 @@ class QPathTree(QFrame):
                         working_history = parent_history
                 except KeyError:
                     # the parent history is not found in the path mapping
-                    l.error('Parent history %s is not found', parent_history)
+                    log.error("Parent history %s is not found", parent_history)
                     break
 
     @staticmethod
     def _generate_graph(state_histories, hierarchy, symexec_view):
-
         g = networkx.DiGraph()
 
-        history_to_block = { }
+        history_to_block = {}
 
         for state_history in state_histories:
             if state_history not in history_to_block:

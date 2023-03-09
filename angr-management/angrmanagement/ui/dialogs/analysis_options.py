@@ -1,16 +1,36 @@
 import os
-from typing import Optional, Sequence
-import logging
+from typing import TYPE_CHECKING, Optional, Sequence
 
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QFrame, QGroupBox, QHBoxLayout, \
-    QListWidgetItem, QListWidget, QDialogButtonBox, QLabel, QCheckBox, QSplitter, QWidget, QSpinBox
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QSpinBox,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
 
-from ...config import IMG_LOCATION
-from ...data.analysis_options import AnalysisOption, AnalysesConfiguration, BoolAnalysisOption, IntAnalysisOption
+from angrmanagement.config import IMG_LOCATION
+from angrmanagement.data.analysis_options import (
+    AnalysesConfiguration,
+    AnalysisOption,
+    BoolAnalysisOption,
+    ChoiceAnalysisOption,
+    IntAnalysisOption,
+)
 
-l = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from angrmanagement.ui.workspace import Workspace
 
 
 class AnalysisOptionWidgetMapper:
@@ -26,19 +46,22 @@ class AnalysisOptionWidgetMapper:
         raise NotImplementedError()
 
     @classmethod
-    def get_mapper_for_option(cls, option: AnalysisOption) -> 'AnalysisOptionWidgetMapper':
+    def get_mapper_for_option(cls, option: AnalysisOption) -> "AnalysisOptionWidgetMapper":
         if isinstance(option, BoolAnalysisOption):
             return BoolAnalysisOptionWidgetMapper(option)
         elif isinstance(option, IntAnalysisOption):
             return IntAnalysisOptionWidgetMapper(option)
+        elif isinstance(option, ChoiceAnalysisOption):
+            return ChoiceAnalysisOptionWidgetMapper(option)
         else:
-            raise ValueError('Mapper not implemented')
+            raise ValueError("Mapper not implemented")
 
 
 class BoolAnalysisOptionWidgetMapper(AnalysisOptionWidgetMapper):
     """
     Analysis option widget creation and event handling for boolean options.
     """
+
     option: BoolAnalysisOption
 
     def create_widget(self, parent=None) -> QCheckBox:
@@ -50,14 +73,15 @@ class BoolAnalysisOptionWidgetMapper(AnalysisOptionWidgetMapper):
         self.widget.stateChanged.connect(self._on_checkbox_changed)
         return self.widget
 
-    def _on_checkbox_changed(self, state):
-        self.option.value = (state == Qt.Checked)
+    def _on_checkbox_changed(self, _):
+        self.option.value = self.widget.isChecked()
 
 
 class IntAnalysisOptionWidgetMapper(AnalysisOptionWidgetMapper):
     """
     Analysis option widget creation and event handling for integer options.
     """
+
     option: IntAnalysisOption
 
     def create_widget(self, parent=None) -> QWidget:
@@ -88,17 +112,53 @@ class IntAnalysisOptionWidgetMapper(AnalysisOptionWidgetMapper):
         self.option.value = value
 
 
+class ChoiceAnalysisOptionWidgetMapper(AnalysisOptionWidgetMapper):
+    """
+    Analysis option widget creation and event handling for choice options.
+    """
+
+    option: ChoiceAnalysisOption
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.combobox = None
+
+    def create_widget(self, parent=None) -> QWidget:
+        self.combobox = QComboBox()
+        for data, txt in self.option.choices.items():
+            self.combobox.addItem(txt, data)
+        self.combobox.setCurrentIndex(self.combobox.findData(self.option.value))
+        self.combobox.currentIndexChanged.connect(self._on_combo_changed)
+
+        lbl = QLabel()
+        lbl.setText(self.option.display_name)
+        if self.option.tooltip:
+            lbl.setToolTip(self.option.tooltip)
+
+        layout = QHBoxLayout()
+        layout.addWidget(lbl)
+        layout.addStretch()
+        layout.addWidget(self.combobox)
+
+        self.widget = QWidget(parent)
+        self.widget.setLayout(layout)
+        return self.widget
+
+    def _on_combo_changed(self, index):
+        self.option.value = self.combobox.itemData(index)
+
+
 class AnalysisOptionsDialog(QDialog):
     """
     Dialog displaying available analyses and configuration options.
     """
 
-    def __init__(self, analyses: AnalysesConfiguration, workspace: 'Workspace', parent=None):
+    def __init__(self, analyses: AnalysesConfiguration, workspace: "Workspace", parent=None):
         super().__init__(parent)
-        self._workspace: 'Workspace' = workspace
+        self._workspace: "Workspace" = workspace
         self._analyses: AnalysesConfiguration = analyses
         self._mappers: Sequence[AnalysisOptionWidgetMapper] = []
-        self.setWindowTitle('Run Analysis')
+        self.setWindowTitle("Run Analysis")
         self._init_widgets()
 
     def sizeHint(self, *args, **kwargs):  # pylint: disable=unused-argument,no-self-use
@@ -118,7 +178,7 @@ class AnalysisOptionsDialog(QDialog):
         self._analysis_list = QListWidget()
         layout = QVBoxLayout()
         layout.addWidget(self._analysis_list)
-        analyses_gbox = QGroupBox('Available Analyses')
+        analyses_gbox = QGroupBox("Available Analyses")
         analyses_gbox.setLayout(layout)
 
         for analysis in self._analyses.analyses:
@@ -134,11 +194,11 @@ class AnalysisOptionsDialog(QDialog):
         self._analysis_description_label.setWordWrap(True)
         layout = QVBoxLayout()
         layout.addWidget(self._analysis_description_label)
-        description_gbox = QGroupBox('Description')
+        description_gbox = QGroupBox("Description")
         description_gbox.setLayout(layout)
 
         self._options_layout = QVBoxLayout()
-        options_gbox = QGroupBox('Options')
+        options_gbox = QGroupBox("Options")
         options_gbox.setLayout(self._options_layout)
 
         details_layout = QVBoxLayout()
@@ -169,8 +229,8 @@ class AnalysisOptionsDialog(QDialog):
         buttons = QDialogButtonBox(parent=self)
         buttons.setStandardButtons(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
         ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        ok_button.setText('&Run Analysis')
-        ok_button.setIcon(QIcon(os.path.join(IMG_LOCATION, 'run-icon.svg')))
+        ok_button.setText("&Run Analysis")
+        ok_button.setIcon(QIcon(os.path.join(IMG_LOCATION, "run-icon.svg")))
         buttons.accepted.connect(self._on_run_clicked)
         buttons.rejected.connect(self.reject)
         self.main_layout.addWidget(buttons)
@@ -202,7 +262,7 @@ class AnalysisOptionsDialog(QDialog):
                 self._options_layout.addWidget(widget)
                 self._mappers.append(mapper)
         else:
-            self._analysis_description_label.setText('Select analysis to view options.')
+            self._analysis_description_label.setText("Select analysis to view options.")
 
         self._options_layout.addStretch()
 
@@ -212,7 +272,7 @@ class AnalysisOptionsDialog(QDialog):
 
     def _on_item_changed(self, item):
         analysis = self._analyses[self._analysis_list.indexFromItem(item).row()]
-        analysis.enabled = (item.checkState() == Qt.Checked)
+        analysis.enabled = item.checkState() == Qt.Checked
         self._update_item_details()
 
     def _on_run_clicked(self):

@@ -1,25 +1,25 @@
 # pylint:disable=global-statement,missing-class-docstring,no-self-use,unspecified-encoding
-import os
-import sys
-import subprocess
 import logging
+import os
+import subprocess
+import sys
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 import tomlkit
 import tomlkit.exceptions
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 from xdg import BaseDirectory
-from PySide6.QtWidgets import QApplication
-from PySide6.QtWidgets import QMessageBox, QFileDialog
 
-from angrmanagement.plugins import BasePlugin
-from angrmanagement.daemon.url_handler import UrlActionBase, register_url_action
 from angrmanagement.daemon.server import register_server_exposed_method
+from angrmanagement.daemon.url_handler import UrlActionBase, register_url_action
+from angrmanagement.plugins import BasePlugin
 
 _l = logging.getLogger(name=__name__)
 
 # we probably want to put this feature into angr management
 _app = None
+
 
 def tmp_app():
     global _app
@@ -29,14 +29,9 @@ def tmp_app():
 
 
 class UrlActionOpenSourceFile(UrlActionBase):
-
-    def __init__(self,
-                 target_uuid: str,
-                 challenge_name: str,
-                 source_file: str,
-                 line_number: str,
-                 position: str,
-                 editor: str):
+    def __init__(
+        self, target_uuid: str, challenge_name: str, source_file: str, line_number: str, position: str, editor: str
+    ):
         super().__init__()
 
         self.target_uuid = target_uuid
@@ -61,12 +56,12 @@ class UrlActionOpenSourceFile(UrlActionBase):
     @classmethod
     def _from_params(cls, params):
         return cls(
-            cls._one_param(params, 'target_uuid'),
-            cls._one_param(params, 'challenge_name'),
-            cls._one_param(params, 'source_file'),
-            cls._one_param(params, 'line_number'),
-            cls._one_param(params, 'position'),
-            cls._one_param(params, 'editor'),
+            cls._one_param(params, "target_uuid"),
+            cls._one_param(params, "challenge_name"),
+            cls._one_param(params, "source_file"),
+            cls._one_param(params, "line_number"),
+            cls._one_param(params, "position"),
+            cls._one_param(params, "editor"),
         )
 
 
@@ -80,34 +75,34 @@ class ChessUrlHandler(BasePlugin):
         self._register_url_handlers()
 
     def _register_url_handlers(self):
-        register_url_action('open_source_file', UrlActionOpenSourceFile)
+        register_url_action("open_source_file", UrlActionOpenSourceFile)
         register_server_exposed_method("open_source_file", self.exposed_open_source_file)
 
     def _get_rootdir_config_path(self) -> str:
-        am_root = BaseDirectory.save_config_path('angr-management')
+        am_root = BaseDirectory.save_config_path("angr-management")
         if am_root is not None:
             rootdirs_path = os.path.join(am_root, "challenge_rootdirs.toml")
             return rootdirs_path
         raise ValueError("Cannot get the configuration file root directory for angr-management.")
 
-    def _get_rootdir(self, target_uuid: str, challenge_name: str,
-                     source_file: str) -> Tuple[Optional[str],Optional[str]]:
+    def _get_rootdir(
+        self, target_uuid: str, challenge_name: str, source_file: str
+    ) -> Tuple[Optional[str], Optional[str]]:
         rootdirs_path = self._get_rootdir_config_path()
         # load it if it exists
-        entries = { }
+        entries = {}
         if os.path.isfile(rootdirs_path):
             with open(rootdirs_path) as f:
                 try:
                     entries = tomlkit.load(f)
                 except tomlkit.exceptions.ParseError:
-                    _l.error("Cannot decode rootdirs file %s. Ignore existing content.",
-                             rootdirs_path)
+                    _l.error("Cannot decode rootdirs file %s. Ignore existing content.", rootdirs_path)
 
         dir_path = None
-        if 'uuid_to_rootdir' in entries:
-            if target_uuid in entries['uuid_to_rootdir']:
+        if "uuid_to_rootdir" in entries:
+            if target_uuid in entries["uuid_to_rootdir"]:
                 # yes there is already one
-                dir_path = entries['uuid_to_rootdir'][target_uuid].value
+                dir_path = entries["uuid_to_rootdir"][target_uuid].value
             else:
                 dir_path = None
 
@@ -161,21 +156,20 @@ class ChessUrlHandler(BasePlugin):
     def _save_rootdir(self, target_uuid: str, challenge_name: str, root_dir: str):
         rootdirs_path = self._get_rootdir_config_path()
         # load it
-        entries = { }
+        entries = {}
         if os.path.isfile(rootdirs_path):
             with open(rootdirs_path) as f:
                 try:
                     entries = tomlkit.load(f)
                 except tomlkit.exceptions.ParseError:
-                    _l.error("Cannot decode rootdirs file %s. Ignore existing content.",
-                             rootdirs_path)
+                    _l.error("Cannot decode rootdirs file %s. Ignore existing content.", rootdirs_path)
 
-        if 'uuid_to_challenge' not in entries:
-            entries['uuid_to_challenge'] = { }
-        if 'uuid_to_rootdir' not in entries:
-            entries['uuid_to_rootdir'] = { }
-        entries['uuid_to_challenge'][target_uuid] = challenge_name
-        entries['uuid_to_rootdir'][target_uuid] = root_dir
+        if "uuid_to_challenge" not in entries:
+            entries["uuid_to_challenge"] = {}
+        if "uuid_to_rootdir" not in entries:
+            entries["uuid_to_rootdir"] = {}
+        entries["uuid_to_challenge"][target_uuid] = challenge_name
+        entries["uuid_to_rootdir"][target_uuid] = root_dir
 
         # store it
         with open(rootdirs_path, "w") as f:
@@ -206,8 +200,9 @@ class ChessUrlHandler(BasePlugin):
 
         return None
 
-    def exposed_open_source_file(self, target_uuid: str, challenge_name: str, source_file: str, line_number: int,
-                                 position: int, editor: str) -> None:
+    def exposed_open_source_file(
+        self, target_uuid: str, challenge_name: str, source_file: str, line_number: int, position: int, editor: str
+    ) -> None:
         # Find the root directory of the challenge
         # if this is the first time we see a challenge name, ask the user to specify the challenge root directory
         root_dir, file_path = self._get_rootdir(target_uuid, challenge_name, source_file)
@@ -230,11 +225,7 @@ class ChessUrlHandler(BasePlugin):
                 subprocess.Popen(cmd_line, close_fds=True)
             else:
                 tmp_app()
-                QMessageBox.critical(
-                    None,
-                    "VSCode is not found",
-                    "Cannot find the executable for VS Code."
-                )
+                QMessageBox.critical(None, "VSCode is not found", "Cannot find the executable for VS Code.")
                 return
 
         elif editor == "am":

@@ -1,31 +1,40 @@
 # pylint:disable=unused-argument
-import typing
-from typing import List, Optional, TYPE_CHECKING
-import threading
-
 import asyncio
-from tornado.platform.asyncio import AnyThreadEventLoopPolicy
+import threading
+import typing
+from typing import TYPE_CHECKING, List, Optional
 
 import PySide6
-from PySide6.QtWidgets import QDialog, QPushButton, QHBoxLayout, QVBoxLayout, QMessageBox, QTableView, \
-    QAbstractItemView, QHeaderView, QLabel
-from PySide6.QtCore import Qt, QAbstractTableModel
-
-try:
-    import slacrs
-except ImportError:
-    slacrs = None
+from PySide6.QtCore import QAbstractTableModel, Qt
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QTableView,
+    QVBoxLayout,
+)
+from tornado.platform.asyncio import AnyThreadEventLoopPolicy
 
 from angrmanagement.logic.threads import gui_thread_schedule_async
 
 if TYPE_CHECKING:
     from angrmanagement.ui.workspace import Workspace
 
+try:
+    import slacrs
+except ImportError:
+    slacrs = None
+
 
 class ChessTarget:
     """
     Models a CHESS challenge target.
     """
+
     def __init__(self, description: str, target_id: str, challenge_name: str, image_id: str):
         self.description = description
         self.target_id = target_id
@@ -45,7 +54,7 @@ class QTargetSelectorTableModel(QAbstractTableModel):
 
     def __init__(self):
         super().__init__()
-        self._targets: List[ChessTarget] = [ ]
+        self._targets: List[ChessTarget] = []
 
     @property
     def targets(self):
@@ -57,13 +66,13 @@ class QTargetSelectorTableModel(QAbstractTableModel):
         self._targets = v
         self.endResetModel()
 
-    def rowCount(self, parent:PySide6.QtCore.QModelIndex=...) -> int:
+    def rowCount(self, parent: PySide6.QtCore.QModelIndex = ...) -> int:
         return len(self.targets)
 
-    def columnCount(self, parent:PySide6.QtCore.QModelIndex=...) -> int:
+    def columnCount(self, parent: PySide6.QtCore.QModelIndex = ...) -> int:
         return len(self.Headers)
 
-    def headerData(self, section:int, orientation:PySide6.QtCore.Qt.Orientation, role:int=...) -> typing.Any:
+    def headerData(self, section: int, orientation: PySide6.QtCore.Qt.Orientation, role: int = ...) -> typing.Any:
         if role != Qt.DisplayRole:
             return None
 
@@ -71,7 +80,7 @@ class QTargetSelectorTableModel(QAbstractTableModel):
             return self.Headers[section]
         return None
 
-    def data(self, index:PySide6.QtCore.QModelIndex, role:int=...) -> typing.Any:
+    def data(self, index: PySide6.QtCore.QModelIndex, role: int = ...) -> typing.Any:
         if not index.isValid():
             return None
         row = index.row()
@@ -111,6 +120,7 @@ class QTargetSelectorTableView(QTableView):
     """
     Implements a table view for targets.
     """
+
     def __init__(self):
         super().__init__()
 
@@ -129,14 +139,17 @@ class QTargetSelectorDialog(QDialog):
     """
     Implements a CHESS target selector dialog.
     """
-    def __init__(self, workspace: 'Workspace', parent=None):
+
+    def __init__(self, workspace: "Workspace", parent=None):
         super().__init__(parent)
 
         if slacrs is None:
-            QMessageBox.Critical(self,
-                                 "Slacrs is not installed",
-                                 "Cannot import slacrs. Please make sure slacrs is properly installed.",
-                                 QMessageBox.Ok)
+            QMessageBox.Critical(
+                self,
+                "Slacrs is not installed",
+                "Cannot import slacrs. Please make sure slacrs is properly installed.",
+                QMessageBox.Ok,
+            )
             self.close()
             return
 
@@ -160,7 +173,6 @@ class QTargetSelectorDialog(QDialog):
         th.start()
 
     def _init_widgets(self):
-
         # table
         self._table = QTargetSelectorTableView()
 
@@ -188,7 +200,8 @@ class QTargetSelectorDialog(QDialog):
         self.setLayout(layout)
 
     def _load_targets(self):
-        from slacrs.model import Target, Challenge  # pylint:disable=import-outside-toplevel,import-error
+        from slacrs.model import Challenge, Target  # pylint:disable=import-outside-toplevel,import-error
+
         asyncio.set_event_loop_policy(AnyThreadEventLoopPolicy())
 
         connector = self.workspace.plugins.get_plugin_instance_by_name("ChessConnector")
@@ -201,12 +214,10 @@ class QTargetSelectorDialog(QDialog):
             return
         session = slacrs_instance.session()
         db_targets = session.query(Target)
-        targets: List[ChessTarget] = [ ]
+        targets: List[ChessTarget] = []
 
         for db_target in db_targets:
-            db_challenge = session.query(Challenge).filter(
-                Challenge.id == db_target.challenge_id
-            ).first()
+            db_challenge = session.query(Challenge).filter(Challenge.id == db_target.challenge_id).first()
             t = ChessTarget(db_target.description, db_target.id, db_challenge.name, db_target.images[0].id)
             targets.append(t)
 
@@ -223,13 +234,11 @@ class QTargetSelectorDialog(QDialog):
     #
 
     def _on_ok_button_clicked(self):
-
         selection_model = self._table.selectionModel()
         if not selection_model.hasSelection():
-            QMessageBox.warning(self,
-                                "No target is selected",
-                                "Please select a CHESS target to continue.",
-                                QMessageBox.Ok)
+            QMessageBox.warning(
+                self, "No target is selected", "Please select a CHESS target to continue.", QMessageBox.Ok
+            )
             return
 
         rows = selection_model.selectedRows()

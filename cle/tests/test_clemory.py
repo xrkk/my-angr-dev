@@ -5,7 +5,7 @@ import cffi
 import cle
 
 
-def test_cclemory(): # pylint: disable=no-member
+def test_cclemory():  # pylint: disable=no-member
     # This is a test case for C-backed Clemory.
 
     clemory = cle.Clemory(None, root=True)
@@ -108,7 +108,7 @@ def test_clemory_contains():
     clemory.add_backer(40, b"A" * 30)
     assert clemory.min_addr == 0
     assert clemory.max_addr == 70
-    assert clemory.consecutive == False
+    assert clemory.consecutive is False
 
     # Add another one to make it consecutive
     clemory.add_backer(30, b"C" * 10)

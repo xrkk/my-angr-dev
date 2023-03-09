@@ -1,14 +1,14 @@
 import os
-import pyvex
+
 import angr
 import archinfo
-from pyvex.lifting import register
-from pyvex.lifting.util import *
-import pyvex.lifting
 
-test_location = str(
-    os.path.join(os.path.dirname(os.path.realpath(__file__)), "../../binaries/tests")
-)
+import pyvex
+import pyvex.lifting
+from pyvex.lifting import register
+from pyvex.lifting.util import GymratLifter, Instruction, Type
+
+test_location = str(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../../binaries/tests"))
 
 
 class Instruction_IMAGINARY(Instruction):
@@ -46,12 +46,7 @@ def test_basic():
 def test_embedded():
     b = pyvex.block.IRSB(b"\x50" * 3 + b"\x0f\x0b" + b"\x50" * 6, 1, archinfo.ArchX86())
     for i, stmt in enumerate(b.statements):
-        if (
-            type(stmt) is pyvex.stmt.IMark
-            and stmt.addr == 0x4
-            and stmt.len == 2
-            and stmt.delta == 0
-        ):
+        if type(stmt) is pyvex.stmt.IMark and stmt.addr == 0x4 and stmt.len == 2 and stmt.delta == 0:
             imaginary_trans_stmt = b.statements[i + 1]
             assert type(imaginary_trans_stmt) is pyvex.stmt.WrTmp
             addexpr = imaginary_trans_stmt.data
@@ -73,7 +68,7 @@ class Instruction_MSR(Instruction):
     def compute_result(self):
         a = self.constant(10, Type.int_27)
         b = self.constant(20, Type.int_27)
-        c = a + b
+        a + b
 
 
 class Instruction_CPSIEI(Instruction):
@@ -83,7 +78,7 @@ class Instruction_CPSIEI(Instruction):
     def compute_result(self):
         a = self.constant(10, Type.int_27)
         b = self.constant(20, Type.int_27)
-        c = a + b
+        a + b
 
 
 class Instruction_CPSIEF(Instruction):
@@ -93,7 +88,7 @@ class Instruction_CPSIEF(Instruction):
     def compute_result(self):
         a = self.constant(10, Type.int_27)
         b = self.constant(20, Type.int_27)
-        c = a + b
+        a + b
 
 
 class CortexSpotter(GymratLifter):
@@ -118,11 +113,7 @@ def test_full_binary():
 
 
 def test_tmrs():
-    test_location = str(
-        os.path.join(
-            os.path.dirname(os.path.realpath(__file__)), "../../binaries/tests"
-        )
-    )
+    test_location = str(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../../binaries/tests"))
     p = angr.Project(
         os.path.join(test_location, "armel", "helloworld"),
         arch="ARMEL",
@@ -137,11 +128,7 @@ def test_tmrs():
 
 
 def test_tmsr():
-    test_location = str(
-        os.path.join(
-            os.path.dirname(os.path.realpath(__file__)), "../../binaries/tests"
-        )
-    )
+    test_location = str(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../../binaries/tests"))
     p = angr.Project(
         os.path.join(test_location, "armel", "helloworld"),
         arch="ARMEL",

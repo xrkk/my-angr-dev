@@ -1,27 +1,26 @@
-from typing import List, Optional
-import logging
-
-import PySide6
-from PySide6.QtGui import QPainter, QCursor, QBrush
-from PySide6.QtCore import Qt, QRectF
-from PySide6.QtWidgets import QApplication, QGraphicsSceneMouseEvent, QGraphicsSimpleTextItem
+from typing import TYPE_CHECKING, List, Optional
 
 from angr.analyses.disassembly import Value
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QBrush, QCursor, QPainter
+from PySide6.QtWidgets import QApplication, QGraphicsSceneMouseEvent, QGraphicsSimpleTextItem
+
+from angrmanagement.utils import get_comment_for_display, get_string_for_display, should_display_string_label
+
 from .qgraph_object import QCachedGraphicsItem
 from .qoperand import QOperand
-from ...utils import should_display_string_label, get_string_for_display, get_comment_for_display
 
-_l = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    import PySide6
 
 
 class QInstruction(QCachedGraphicsItem):
-
     GRAPH_ADDR_SPACING = 20
     GRAPH_MNEMONIC_SPACING = 10
     GRAPH_OPERAND_SPACING = 2
     GRAPH_COMMENT_STRING_SPACING = 10
 
-    INTERSPERSE_ARGS = ', '
+    INTERSPERSE_ARGS = ", "
 
     LINEAR_INSTRUCTION_OFFSET = 120
     COMMENT_PREFIX = "// "
@@ -45,8 +44,8 @@ class QInstruction(QCachedGraphicsItem):
         self._mnemonic = None
         self._addr_item: QGraphicsSimpleTextItem = None
         self._mnemonic_item: QGraphicsSimpleTextItem = None
-        self._operands: List[QOperand] = [ ]
-        self._commas: List[QGraphicsSimpleTextItem] = [ ]
+        self._operands: List[QOperand] = []
+        self._commas: List[QGraphicsSimpleTextItem] = []
         self._string = None
         self._string_item: Optional[QGraphicsSimpleTextItem] = None
         self._comment = None
@@ -57,19 +56,29 @@ class QInstruction(QCachedGraphicsItem):
 
         self._init_widgets()
 
-    def contextMenuEvent(self, event:PySide6.QtWidgets.QGraphicsSceneContextMenuEvent) -> None:
+    def contextMenuEvent(self, event: "PySide6.QtWidgets.QGraphicsSceneContextMenuEvent") -> None:
         pass
+
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent):
+        self.infodock.unselect_all_instructions()
+        self.infodock.toggle_instruction_selection(self.addr, insn_pos=self.scenePos(), unique=True)
+        self.disasm_view._insn_addr_on_context_menu = self.addr
+        self.disasm_view._insn_menu.insn_addr = self.addr
+        self.disasm_view.popup_patch_dialog()
+        event.accept()
 
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent):
         if self.instance.workspace.plugins.handle_click_insn(self, event):
             # stop handling this event if the event has been handled by a plugin
             event.accept()
-        elif event.button() == Qt.LeftButton and QApplication.keyboardModifiers() in (Qt.NoModifier, Qt.ControlModifier):
+        elif event.button() == Qt.LeftButton and QApplication.keyboardModifiers() in (
+            Qt.NoModifier,
+            Qt.ControlModifier,
+        ):
             # toggle selection
             self.infodock.toggle_instruction_selection(
-                self.addr,
-                insn_pos=self.scenePos(),
-                unique=QApplication.keyboardModifiers() != Qt.ControlModifier)
+                self.addr, insn_pos=self.scenePos(), unique=QApplication.keyboardModifiers() != Qt.ControlModifier
+            )
             event.accept()
         elif event.button() == Qt.RightButton and QApplication.keyboardModifiers() == Qt.NoModifier:
             if self.addr not in self.infodock.selected_insns:
@@ -91,6 +100,11 @@ class QInstruction(QCachedGraphicsItem):
 
         if self.selected:
             return self._config.disasm_view_node_instruction_selected_background_color
+
+        if not self.instance.patches.am_none:
+            patches = self.instance.patches.get_all_patches(self.insn.addr, self.insn.size)
+            if len(patches):
+                return Qt.darkYellow
 
         return None  # None here means transparent, reusing the block color
 
@@ -132,9 +146,7 @@ class QInstruction(QCachedGraphicsItem):
             self._comment = get_comment_for_display(self.instance.kb, self.insn.addr)
 
     def paint(self, painter, option, widget):  # pylint: disable=unused-argument
-
-        painter.setRenderHints(
-            QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        painter.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
 
         # background color
         backcolor = self._calc_backcolor()
@@ -151,7 +163,6 @@ class QInstruction(QCachedGraphicsItem):
     #
 
     def _init_widgets(self):
-
         self.load_comment()
         self._operands.clear()
 
@@ -171,8 +182,8 @@ class QInstruction(QCachedGraphicsItem):
 
         # operands
         for i, operand in enumerate(self.insn.operands):
-            is_branch_target = self.insn.type in ('branch', 'call') and i == self.insn.branch_target_operand
-            is_indirect_branch = self.insn.branch_type == 'indirect'
+            is_branch_target = self.insn.type in ("branch", "call") and i == self.insn.branch_target_operand
+            is_indirect_branch = self.insn.branch_type == "indirect"
             branch_targets = None
             if is_branch_target:
                 if self.out_branch is not None:
@@ -181,9 +192,21 @@ class QInstruction(QCachedGraphicsItem):
                     # it does not create multiple branches. e.g., a call instruction
                     if len(operand.children) == 1 and type(operand.children[0]) is Value:
                         branch_targets = (operand.children[0].val,)
-            qoperand = QOperand(self.instance, self.func_addr, self.disasm_view, self.disasm, self.infodock,
-                                self.insn, operand, i, is_branch_target, is_indirect_branch, branch_targets,
-                                self._config, parent=self)
+            qoperand = QOperand(
+                self.instance,
+                self.func_addr,
+                self.disasm_view,
+                self.disasm,
+                self.infodock,
+                self.insn,
+                operand,
+                i,
+                is_branch_target,
+                is_indirect_branch,
+                branch_targets,
+                self._config,
+                parent=self,
+            )
             self._operands.append(qoperand)
 
         # all commas
@@ -195,8 +218,7 @@ class QInstruction(QCachedGraphicsItem):
 
         if should_display_string_label(self.instance.cfg, self.insn.addr, self.instance.project):
             # yes we should display a string label
-            self._string = get_string_for_display(self.instance.cfg, self.insn.addr,
-                                                  self.instance.project)
+            self._string = get_string_for_display(self.instance.cfg, self.insn.addr, self.instance.project)
             if self._string is None:
                 self._string = "<Unknown>"
 
@@ -205,7 +227,6 @@ class QInstruction(QCachedGraphicsItem):
         self._layout_items_and_update_size()
 
     def _init_comments_or_string(self):
-
         # remove existing comments or strings
         if self._comment_items:
             for comm in self._comment_items:
@@ -219,8 +240,8 @@ class QInstruction(QCachedGraphicsItem):
         # comment or string - comments have precedence
         if self._comment:
             self._string_item = None
-            lines = self._comment.split('\n')
-            self._comment_items = [ ]
+            lines = self._comment.split("\n")
+            self._comment_items = []
             for line in lines:
                 comment = QGraphicsSimpleTextItem(self.COMMENT_PREFIX + line, self)
                 comment.setFont(self._config.disasm_font)
@@ -233,7 +254,6 @@ class QInstruction(QCachedGraphicsItem):
             self._string_item.setBrush(Qt.gray)  # TODO: Expose it as a setting in Config
 
     def _layout_items_and_update_size(self):
-
         x, y = 0, 0
 
         # address

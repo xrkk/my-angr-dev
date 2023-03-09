@@ -1,9 +1,9 @@
-from logging.handlers import QueueListener, QueueHandler
-from multiprocessing import Queue
-from datetime import datetime
-from typing import Optional
-import logging
 import atexit
+import logging
+from datetime import datetime
+from logging.handlers import QueueHandler, QueueListener
+from multiprocessing import Queue
+from typing import Optional
 
 from angr.utils.mp import Initializer
 
@@ -37,7 +37,12 @@ class LogRecord:
     Stores a log record.
     """
 
-    __slots__ = ('level', 'timestamp', 'source', 'content', )
+    __slots__ = (
+        "level",
+        "timestamp",
+        "source",
+        "content",
+    )
 
     def __init__(self, level, unix_timestamp, source, content):
         self.timestamp = LogTimeStamp(unix_timestamp)
