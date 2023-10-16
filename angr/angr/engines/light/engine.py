@@ -9,6 +9,7 @@ import pyvex
 import claripy
 import archinfo
 
+from ...misc.ux import once
 from ...engines.vex.claripy.datalayer import value as claripy_value
 from ...engines.vex.claripy.irop import UnsupportedIROpError, SimOperationError, vexop_to_simop
 from ...code_location import CodeLocation
@@ -17,6 +18,10 @@ from ..engine import SimEngine
 
 
 class SimEngineLightMixin:
+    """
+    A mixin base class for engines meant to perform static analysis
+    """
+
     def __init__(self, *args, logger=None, **kwargs):
         self.arch: Optional[archinfo.Arch] = None
         self.l = logger
@@ -40,13 +45,15 @@ class SimEngineLightMixin:
         """
         raise NotImplementedError()
 
-    def sp_offset(self, offset: int):
-        base = claripy.BVS("SpOffset", self.arch.bits, explicit_name=True)
+    @staticmethod
+    def sp_offset(bits: int, offset: int):
+        base = claripy.BVS("SpOffset", bits, explicit_name=True)
         if offset:
             base += offset
         return base
 
-    def extract_offset_to_sp(self, spoffset_expr: claripy.ast.Base) -> Optional[int]:
+    @staticmethod
+    def extract_offset_to_sp(spoffset_expr: claripy.ast.Base) -> Optional[int]:
         """
         Extract the offset to the original stack pointer.
 
@@ -72,6 +79,10 @@ class SimEngineLight(
     SimEngineLightMixin,
     SimEngine,
 ):
+    """
+    A full-featured engine base class, suitable for static analysis
+    """
+
     def __init__(self):
         logger = logging.getLogger(self.__module__ + "." + self.__class__.__name__)
         super().__init__(logger=logger)
@@ -104,31 +115,21 @@ class SimEngineLight(
     # Helper methods
     #
 
-    @property
-    def _context(self) -> Optional[Tuple[int]]:
-        if self._call_stack is None:
-            # contextless mode
-            return None
-
-        if not self._call_stack:
-            # contextful but the callstack is empty
-            return ()
-
-        # Convert to Tuple to make `context` hashable if not None
-        call_stack_addresses = tuple(self._call_stack)
-        return call_stack_addresses
-
-    def _codeloc(self, block_only=False):
+    def _codeloc(self, block_only=False, context=None):
         return CodeLocation(
             self.block.addr,
             None if block_only else self.stmt_idx,
             ins_addr=None if block_only else self.ins_addr,
-            context=self._context,
+            context=context,
         )
 
 
 # noinspection PyPep8Naming
 class SimEngineLightVEXMixin(SimEngineLightMixin):
+    """
+    A mixin for doing static analysis on VEX
+    """
+
     def _process(self, state, successors, *args, block, whitelist=None, **kwargs):  # pylint:disable=arguments-differ
         # initialize local variables
         self.tmps = {}
@@ -173,7 +174,9 @@ class SimEngineLightVEXMixin(SimEngineLightMixin):
             self.stmt_idx = DEFAULT_STATEMENT
             handler = "_handle_function"
             if hasattr(self, handler):
-                func_addr = self._expr(self.block.vex.next)
+                func_addr = (
+                    self.block.vex.next if isinstance(self.block.vex.next, int) else self._expr(self.block.vex.next)
+                )
                 if func_addr is not None:
                     getattr(self, handler)(func_addr)
                 else:
@@ -206,6 +209,9 @@ class SimEngineLightVEXMixin(SimEngineLightMixin):
             return
         self.tmps[tmp] = data
 
+    def _handle_Dirty(self, stmt):
+        self.l.error("Unimplemented Dirty node for current architecture.")
+
     def _handle_Put(self, stmt):
         raise NotImplementedError("Please implement the Put handler with your own logic.")
 
@@ -230,7 +236,7 @@ class SimEngineLightVEXMixin(SimEngineLightMixin):
             self.l.error("Unsupported expression type %s.", type(expr).__name__)
         return None
 
-    def _handle_Triop(self, expr: pyvex.IRExpr.Triop):
+    def _handle_Triop(self, expr: pyvex.IRExpr.Triop):  # pylint: disable=useless-return
         self.l.error("Unsupported Triop %s.", expr.op)
         return None
 
@@ -366,7 +372,8 @@ class SimEngineLightVEXMixin(SimEngineLightMixin):
                 return getattr(self, handler)(expr, vector_size, vector_count)
             return getattr(self, handler)(expr)
         else:
-            self.l.error("Unsupported Binop %s.", expr.op)
+            if once(expr.op):
+                self.l.warning("Unsupported Binop %s.", expr.op)
 
         return None
 
@@ -778,6 +785,10 @@ class SimEngineLightVEXMixin(SimEngineLightMixin):
 
 # noinspection PyPep8Naming
 class SimEngineLightAILMixin(SimEngineLightMixin):
+    """
+    A mixin for doing static analysis on AIL
+    """
+
     def _process(
         self, state, successors, *args, block=None, whitelist=None, **kwargs
     ):  # pylint:disable=arguments-differ
@@ -830,10 +841,13 @@ class SimEngineLightAILMixin(SimEngineLightMixin):
     # Helper methods
     #
 
-    def _codeloc(self):
-        # noinspection PyUnresolvedReferences
+    def _codeloc(self, block_only=False, context=None):
         return CodeLocation(
-            self.block.addr, self.stmt_idx, ins_addr=self.ins_addr, context=self._context, block_idx=self.block.idx
+            self.block.addr,
+            None if block_only else self.stmt_idx,
+            ins_addr=None if block_only else self.ins_addr,
+            context=context,
+            block_idx=self.block.idx,
         )
 
     #

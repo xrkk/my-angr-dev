@@ -1,14 +1,17 @@
+import enum
 from datetime import datetime
+from itertools import chain
 
 from bidict import bidict
-from PySide6.QtCore import QSize
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -31,6 +34,7 @@ from angrmanagement.logic.url_scheme import AngrUrlScheme
 from angrmanagement.ui.css import refresh_theme
 from angrmanagement.ui.widgets.qcolor_option import QColorOption
 from angrmanagement.ui.widgets.qfont_option import QFontOption
+from angrmanagement.utils.layout import add_to_grid
 
 
 class Page(QWidget):
@@ -39,7 +43,7 @@ class Page(QWidget):
     """
 
     def save_config(self):
-        raise NotImplementedError()
+        raise NotImplementedError
 
     NAME = NotImplemented
 
@@ -115,7 +119,8 @@ class ThemeAndColors(Page):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
 
-        self._to_save = {}
+        self._colors_to_save = {}
+        self._conf_to_save = {}
         self._schemes_combo: QComboBox = None
 
         self._init_widgets()
@@ -130,7 +135,7 @@ class ThemeAndColors(Page):
 
         self._schemes_combo = QComboBox(self)
         current_theme_idx = 0
-        for idx, name in enumerate(["Current"] + list(sorted(COLOR_SCHEMES))):
+        for idx, name in enumerate(["Current"] + sorted(COLOR_SCHEMES)):
             if name == Conf.theme_name:
                 current_theme_idx = idx
             self._schemes_combo.addItem(name)
@@ -144,11 +149,12 @@ class ThemeAndColors(Page):
 
         edit_colors_layout = QVBoxLayout()
         for ce in ENTRIES:
-            if ce.type_ is not QColor:
-                continue
-            row = QColorOption(getattr(Conf, ce.name), ce.name)
-            edit_colors_layout.addWidget(row)
-            self._to_save[ce.name] = (ce, row)
+            if ce.type_ is QColor:
+                row = QColorOption(getattr(Conf, ce.name), ce.name)
+                edit_colors_layout.addWidget(row)
+                self._colors_to_save[ce.name] = (ce, row)
+            elif issubclass(ce.type_, enum.Enum):
+                self._conf_to_save[ce.name] = ce.value
 
         frame = QFrame()
         frame.setLayout(edit_colors_layout)
@@ -165,8 +171,11 @@ class ThemeAndColors(Page):
 
     def _load_color_scheme(self, name):
         for prop, value in COLOR_SCHEMES[name].items():
-            row = self._to_save[prop][1]
-            row.set_color(value)
+            if prop in self._colors_to_save:
+                row = self._colors_to_save[prop][1]
+                row.set_color(value)
+            if prop in self._conf_to_save:
+                self._conf_to_save[prop] = value
 
     def _on_load_scheme_clicked(self):
         self._load_color_scheme(self._schemes_combo.currentText())
@@ -175,8 +184,10 @@ class ThemeAndColors(Page):
     def save_config(self):
         # pylint: disable=assigning-non-slot
         Conf.theme_name = self._schemes_combo.currentText()
-        for ce, row in self._to_save.values():
+        for ce, row in self._colors_to_save.values():
             setattr(Conf, ce.name, row.color.am_obj)
+        for name, value in self._conf_to_save.items():
+            setattr(Conf, name, value)
 
 
 class Style(Page):
@@ -202,9 +213,11 @@ class Style(Page):
         self.log_format_entry = QComboBox(self)
         fmt: str = Conf.log_timestamp_format
         ts = datetime.now()
-        # pylint: disable=use-sequence-for-iteration
-        self._fmt_map = bidict({ts.strftime(i): i for i in {fmt, "%X", "%c"}})  # set also dedups
-        for i in self._fmt_map.keys():
+        self._fmt_map = bidict({ts.strftime(i): i for i in [fmt, "%X", "%c"]})
+        # fmt must be in _fmt_map.inverse for this to work
+        if fmt not in self._fmt_map.inverse:
+            fmt = self._fmt_map[ts.strftime(fmt)]
+        for i in self._fmt_map:
             self.log_format_entry.addItem(i)
         # pylint: disable=unsubscriptable-object
         self.log_format_entry.setCurrentText(self._fmt_map.inverse[fmt])
@@ -213,18 +226,19 @@ class Style(Page):
         page_layout.addLayout(log_format_layout)
 
         # Font options
-        self._font_options = [
-            QFontOption("Application Font", "ui_default_font", self),
-            # TODO: other app fonts, things which set them respect updates to them in Conf
-            # QFontOption("Tab View Font", "tabular_view_font", self),
-            # QFontOption("Disassembly Font", "disasm_font", self),
-            # QFontOption("SymExc Font", "symexec_font", self),
-            # QFontOption("Code Font", "code_font", self),
+        fonts_group_box = QGroupBox("Fonts")
+        fonts_layout = QGridLayout()
+        fonts_group_box.setLayout(fonts_layout)
+        page_layout.addWidget(fonts_group_box)
+        entries = [
+            ("Application Font", "ui_default_font"),
+            ("Tabular View Font", "tabular_view_font"),
+            ("Disassembly Font", "disasm_font"),
+            ("SymExc Font", "symexec_font"),
+            ("Code Font", "code_font"),
         ]
-        font_layout = QVBoxLayout()
-        for i in self._font_options:
-            font_layout.addWidget(i)
-        page_layout.addLayout(font_layout)
+        self._fonts_widgets = [(QLabel(f"{name}:"), QFontOption(key, self)) for name, key in entries]
+        add_to_grid(fonts_layout, 2, chain(*self._fonts_widgets))
 
         page_layout.addStretch()
 
@@ -232,8 +246,8 @@ class Style(Page):
         fmt = self.log_format_entry.currentText()
         if fmt:
             Conf.log_timestamp_format = self._fmt_map.get(fmt, fmt)
-        for i in self._font_options:
-            i.update()
+        for _, font_picker in self._fonts_widgets:
+            font_picker.update()
 
 
 class Preferences(QDialog):
@@ -253,11 +267,10 @@ class Preferences(QDialog):
     def _init_widgets(self):
         # contents
         contents = QListWidget()
-        contents.setViewMode(QListView.IconMode)
-        contents.setIconSize(QSize(96, 84))
+        contents.setViewMode(QListView.ListMode)
         contents.setMovement(QListView.Static)
-        contents.setMaximumWidth(128)
-        contents.setSpacing(12)
+        # set the width to match the width of the content
+        contents.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
 
         def item_changed(item: QListWidgetItem):
             pageno: Page = item.data(1)

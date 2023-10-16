@@ -1,4 +1,5 @@
 # pylint:disable=no-member
+from typing import Optional
 from ...protos import cfg_pb2
 from ...serializable import Serializable
 
@@ -37,26 +38,50 @@ _IDX_TO_SORT = {v: k for k, v in _SORT_TO_IDX.items()}
 class MemoryData(Serializable):
     """
     MemoryData describes the syntactic content of a single address of memory.
+
+    `reference_size` reflects the size of `content`. It can be different from `size`, which is the actual size of the
+    memory data item in memory. The intended way to get the actual content in memory is `self.content[:self.size]`.
     """
 
     __slots__ = (
         "addr",
         "size",
+        "reference_size",
         "sort",
         "max_size",
         "pointer_addr",
         "content",
     )
 
-    def __init__(self, address, size, sort, pointer_addr=None, max_size=None):
-        self.addr = address
-        self.size = size
-        self.sort = sort
+    def __init__(
+        self,
+        address: int,
+        size: int,
+        sort: Optional[str],  # temporary type
+        pointer_addr: Optional[int] = None,
+        max_size: Optional[int] = None,
+        reference_size: Optional[int] = None,
+    ):
+        self.addr: int = address
+        self.size: int = size
+        self.reference_size: int = reference_size
+        self.sort: Optional[str] = sort
 
-        self.max_size = max_size
-        self.pointer_addr = pointer_addr
+        self.max_size: Optional[int] = max_size
+        self.pointer_addr: Optional[int] = pointer_addr
 
-        self.content = None  # optional
+        self.content: Optional[bytes] = None  # temporary annotation
+
+    def __eq__(self, other: "MemoryData"):
+        return (
+            self.addr == other.addr
+            and self.size == other.size
+            and self.reference_size == other.reference_size
+            and self.sort == other.sort
+            and self.max_size == other.max_size
+            and self.pointer_addr == other.pointer_addr
+            and self.content == other.content
+        )
 
     @property
     def address(self):
@@ -88,11 +113,15 @@ class MemoryData(Serializable):
         """
 
         if self.sort == MemoryDataSort.String:
-            self.content = loader.memory.load(self.addr, self.size)
+            self.content = loader.memory.load(
+                self.addr, self.reference_size if self.reference_size is not None else self.size
+            )
             if self.content.endswith(b"\x00"):
                 self.content = self.content.strip(b"\x00")
         elif self.sort == MemoryDataSort.UnicodeString:
-            self.content = loader.memory.load(self.addr, self.size)
+            self.content = loader.memory.load(
+                self.addr, self.reference_size if self.reference_size is not None else self.size
+            )
             while self.content.endswith(b"\x00\x00"):
                 self.content = self.content[:-2]
         else:
@@ -110,11 +139,19 @@ class MemoryData(Serializable):
     def serialize_to_cmessage(self):
         cmsg = self._get_cmsg()
         cmsg.ea = self.addr
-        cmsg.size = self.size if self.size is not None else 0
+        if self.size is not None:
+            cmsg.size = self.size
+        if self.reference_size is not None:
+            cmsg.reference_size = self.reference_size
         cmsg.type = _SORT_TO_IDX[self.sort]
         return cmsg
 
     @classmethod
     def parse_from_cmessage(cls, cmsg, **kwargs):
-        md = cls(cmsg.ea, cmsg.size, _IDX_TO_SORT[cmsg.type])
+        md = cls(
+            cmsg.ea,
+            cmsg.size if cmsg.HasField("size") else None,
+            _IDX_TO_SORT[cmsg.type],
+            reference_size=cmsg.reference_size if cmsg.HasField("reference_size") else None,
+        )
         return md

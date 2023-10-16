@@ -1,17 +1,17 @@
-# pylint:disable=abstract-method
+# pylint:disable=abstract-method,ungrouped-imports
 
 from typing import Set, List, Optional, TYPE_CHECKING
 import logging
 
 import pyvex
 
+from angr.analyses import ForwardAnalysis, visitors
 from ..utils.constants import is_alignment_mask
 from ..analyses import AnalysesHub
 from ..knowledge_plugins import Function
 from ..block import BlockNode
 from ..errors import SimTranslationError
 from .analysis import Analysis
-from .forward_analysis import ForwardAnalysis, FunctionGraphVisitor, SingleNodeGraphVisitor
 
 try:
     import pypcode
@@ -299,9 +299,9 @@ class StackPointerTracker(Analysis, ForwardAnalysis):
                 # Make a copy before normalizing the function
                 func = func.copy()
                 func.normalize()
-            graph_visitor = FunctionGraphVisitor(func)
+            graph_visitor = visitors.FunctionGraphVisitor(func)
         elif block is not None:
-            graph_visitor = SingleNodeGraphVisitor(block)
+            graph_visitor = visitors.SingleNodeGraphVisitor(block)
         else:
             raise ValueError("StackPointerTracker must work on either a function or a single block.")
 
@@ -531,10 +531,13 @@ class StackPointerTracker(Analysis, ForwardAnalysis):
             elif self.track_mem and type(stmt) is pyvex.IRStmt.Store:
                 state.store(resolve_expr(stmt.addr), resolve_expr(stmt.data))
             elif type(stmt) is pyvex.IRStmt.Put:
+                if exit_observed and stmt.offset == self.project.arch.sp_offset:
+                    return
                 state.put(stmt.offset, resolve_expr(stmt.data))
             else:
                 raise CouldNotResolveException()
 
+        exit_observed = False
         for stmt in vex_block.statements:
             if type(stmt) is pyvex.IRStmt.IMark:
                 if curr_stmt_start_addr is not None:
@@ -542,6 +545,12 @@ class StackPointerTracker(Analysis, ForwardAnalysis):
                     self._set_post_state(curr_stmt_start_addr, state.freeze())
                 curr_stmt_start_addr = stmt.addr + stmt.delta
                 self._set_pre_state(curr_stmt_start_addr, state.freeze())
+            elif (
+                type(stmt) is pyvex.IRStmt.Exit
+                and curr_stmt_start_addr in vex_block.instruction_addresses
+                and vex_block.instruction_addresses.index(curr_stmt_start_addr) == vex_block.instructions - 1
+            ):
+                exit_observed = True
             else:
                 try:
                     resolve_stmt(stmt)

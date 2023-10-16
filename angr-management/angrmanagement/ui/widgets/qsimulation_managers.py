@@ -26,13 +26,14 @@ if TYPE_CHECKING:
 
 
 class QSimulationManagers(QFrame):
-    def __init__(self, instance: "Instance", simgr, state, parent=None):
+    def __init__(self, workspace, instance: "Instance", simgr, state, parent=None):
         """
         :param instance:                The data source for this project
         :param object parent:           The parent widget.
         """
         super().__init__(parent)
 
+        self.workspace = workspace
         self.instance = instance
         self.simgrs = instance.simgrs
         self.simgr = simgr
@@ -243,7 +244,7 @@ class QSimulationManagers(QFrame):
         if not self.simgr.am_none:
             self.instance.add_job(
                 SimgrStepJob.create(
-                    self.simgr.am_obj, until_branch=False, step_callback=self.instance.workspace.plugins.step_callback
+                    self.simgr.am_obj, until_branch=False, step_callback=self.workspace.plugins.step_callback
                 )
             )
 
@@ -251,7 +252,7 @@ class QSimulationManagers(QFrame):
         if not self.simgr.am_none:
             self.instance.add_job(
                 SimgrStepJob.create(
-                    self.simgr.am_obj, until_branch=True, step_callback=self.instance.workspace.plugins.step_callback
+                    self.simgr.am_obj, until_branch=True, step_callback=self.workspace.plugins.step_callback
                 )
             )
 
@@ -259,7 +260,7 @@ class QSimulationManagers(QFrame):
         if not self.simgr.am_none:
 
             def _step_callback(simgr):
-                self.instance.workspace.plugins.step_callback(simgr)
+                self.workspace.plugins.step_callback(simgr)
                 if self._oneactive_checkbox.isChecked():
                     self._filter_actives(simgr, events=False)
                 gui_thread_schedule(lambda: self.simgr.am_event(src="post_step"))
@@ -273,10 +274,7 @@ class QSimulationManagers(QFrame):
 
     def _on_simgr_selection(self):
         i = self._simgrs_list.currentIndex()
-        if i != -1:
-            simgr = self.simgrs[i]
-        else:
-            simgr = None
+        simgr = self.simgrs[i] if i != -1 else None
 
         if simgr != self.simgr.am_obj:
             self.simgr.am_obj = simgr
@@ -309,7 +307,7 @@ class QSimulationManagers(QFrame):
     def _on_explore_addr_changed(self, item: QTreeWidgetItem):  # pylint: disable=unused-argument
         """Refresh the disassembly view when an address in the 'avoids' or 'finds' tab is toggled. Ensures that
         annotations next to instructions are updated."""
-        view_manager = self.instance.workspace.view_manager
+        view_manager = self.workspace.view_manager
         if len(view_manager.views_by_category["disassembly"]) == 1:
             view = view_manager.first_view_in_category("disassembly")
         else:

@@ -10,8 +10,8 @@ class FunctionsView(BaseView):
     View displaying functions in the project.
     """
 
-    def __init__(self, instance, default_docking_position, *args, **kwargs):
-        super().__init__("functions", instance, default_docking_position, *args, **kwargs)
+    def __init__(self, workspace, instance, default_docking_position, *args, **kwargs):
+        super().__init__("functions", workspace, instance, default_docking_position, *args, **kwargs)
 
         self.base_caption = "Functions"
         self._function_table: QFunctionTable
@@ -20,12 +20,11 @@ class FunctionsView(BaseView):
 
         self._init_widgets()
 
-        self.width_hint = 300
+        self.width_hint = 375
         self.height_hint = 0
         self.updateGeometry()
 
         self.function_count = None
-        self._displayed_function_count = None
 
         self.reload()
 
@@ -35,12 +34,6 @@ class FunctionsView(BaseView):
 
     def refresh(self):
         self._function_table.refresh()
-
-    def set_function_count(self, count):
-        self.function_count = count
-
-    def set_displayed_function_count(self, count):
-        self._displayed_function_count = count
 
     def reload(self):
         if not self.instance.cfg.am_none:
@@ -75,4 +68,4 @@ class FunctionsView(BaseView):
         :param function:
         :return:
         """
-        self.instance.on_function_selected(func=func)
+        self.workspace.on_function_selected(func=func)

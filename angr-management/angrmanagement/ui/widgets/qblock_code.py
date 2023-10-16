@@ -105,7 +105,7 @@ class QBlockCodeObj(QObject):
         self.recreate_subobjs()
         span_min = cursor.position()
         for obj in self.subobjs:
-            if type(obj) is str:
+            if isinstance(obj, str):
                 cursor.insertText(obj, self._fmt_current)
             else:
                 obj.render_to_doc(cursor)
@@ -125,7 +125,7 @@ class QBlockCodeObj(QObject):
         if not self.hit_test(pos):
             return None
         for obj in self.subobjs:
-            if type(obj) is not str:
+            if not isinstance(obj, str):
                 hit = obj.get_hit_obj(pos)
                 if hit is not None:
                     return hit
@@ -171,10 +171,7 @@ class QVariableObj(QBlockCodeObj):
         return fmt
 
     def create_subobjs(self, obj):
-        if self.options.show_variable_identifiers:
-            ident = "<%s>" % (obj.ident if obj.ident else "")
-        else:
-            ident = ""
+        ident = "<%s>" % (obj.ident if obj.ident else "") if self.options.show_variable_identifiers else ""
         self.add_text(obj.name + ident)
 
 
@@ -391,10 +388,7 @@ class QAilRegisterObj(QAilTextObj):
         if obj.variable is not None and self.options.show_variables:
             self.add_variable(obj.variable)
         else:
-            if hasattr(obj, "reg_name"):
-                s = f"{obj.reg_name}"
-            else:
-                s = "reg_%d<%d>" % (obj.reg_offset, obj.bits // 8)
+            s = f"{obj.reg_name}" if hasattr(obj, "reg_name") else "reg_%d<%d>" % (obj.reg_offset, obj.bits // 8)
             self.add_text(s)
 
     def should_highlight(self) -> bool:
@@ -498,7 +492,7 @@ class QIROpTextObj(QIROpObj):
     """
 
     def create_subobjs(self, obj: Any):
-        if type(obj) is int:
+        if isinstance(obj, int):
             self.add_text("%#x" % obj)
         else:
             self.add_text(str(obj))

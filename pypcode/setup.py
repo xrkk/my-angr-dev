@@ -1,57 +1,68 @@
 #!/usr/bin/env python3
 import os
+import platform
+import struct
+import subprocess
 import sys
+from setuptools import setup, Extension
+from setuptools.command.build_ext import build_ext
+
 
 ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
-sys.path.append(ROOT_DIR)
-
-from setuptools import setup
-import build_cffi
+BUILD_DIR = os.path.join(ROOT_DIR, "build", "native")
 
 
-with open(os.path.join(ROOT_DIR, 'README.md')) as f:
-    long_description = f.read()
+class BuildExtension(build_ext):
+    """
+    Runs cmake to build the pypcode_native extension, sleigh binary, and runs sleigh to build .sla files.
+    """
+
+    def run(self):
+        try:
+            subprocess.check_output(["cmake", "--version"])
+        except OSError as exc:
+            raise RuntimeError("Please install CMake to build") from exc
+
+        install_pkg_root = os.path.abspath(os.path.join(ROOT_DIR if self.inplace else self.build_lib, "pypcode"))
+        cmake_install_prefix = install_pkg_root
+        cmake_config_args = [
+            f"-DCMAKE_INSTALL_PREFIX={cmake_install_prefix}",
+            f"-DPython_EXECUTABLE={sys.executable}",
+        ]
+        cmake_build_args = []
+        if platform.system() == "Windows":
+            is_64b = struct.calcsize("P") * 8 == 64
+            cmake_config_args += ["-A", "x64" if is_64b else "Win32"]
+            cmake_build_args += ["--config", "Release"]
+
+        # Build sleigh and pypcode_native extension
+        subprocess.check_call(["cmake", "-S", ".", "-B", BUILD_DIR] + cmake_config_args, cwd=ROOT_DIR)
+        subprocess.check_call(
+            ["cmake", "--build", BUILD_DIR, "--parallel", "--verbose"] + cmake_build_args,
+            cwd=ROOT_DIR,
+        )
+        subprocess.check_call(["cmake", "--install", BUILD_DIR], cwd=ROOT_DIR)
+
+        # Build sla files
+        bin_ext = ".exe" if platform.system() == "Windows" else ""
+        sleigh_bin = os.path.join(install_pkg_root, "bin", "sleigh" + bin_ext)
+        specfiles_dir = os.path.join(install_pkg_root, "processors")
+        subprocess.check_call([sleigh_bin, "-a", specfiles_dir])
 
 
 def add_pkg_data_dirs(pkg, dirs):
-       pkg_data = []
-       for d in dirs:
-               for root, _, files in os.walk(os.path.join(pkg, d)):
-                       r = os.path.relpath(root, pkg)
-                       pkg_data.extend([os.path.join(r, f) for f in files])
-       return pkg_data
+    pkg_data = []
+    for d in dirs:
+        for root, _, files in os.walk(os.path.join(pkg, d)):
+            r = os.path.relpath(root, pkg)
+            pkg_data.extend([os.path.join(r, f) for f in files])
+    return pkg_data
 
 
-cmdclass = {
-    'build_ext': build_cffi.FfiPreBuildExtension
-}
-
-try:
-    from wheel.bdist_wheel import bdist_wheel
-    class bdist_wheel_abi3(bdist_wheel):
-        def get_tag(self):
-            python, abi, plat = super().get_tag()
-            if python.startswith("cp"):
-                return "cp38", "abi3", plat
-            return python, abi, plat
-    cmdclass['bdist_wheel'] = bdist_wheel_abi3
-except ImportError:
-    pass
-
-
-setup(name='pypcode',
-      version='1.1.2.dev0',
-      description="Python bindings to Ghidra's SLEIGH library",
-      long_description=long_description,
-      long_description_content_type='text/markdown',
-      author='Matt Borgerson',
-      author_email='contact@mborgerson.com',
-      url='https://github.com/angr/pypcode',
-      packages=['pypcode'],
-      package_data={'pypcode': add_pkg_data_dirs('pypcode', ['processors', 'docs'])},
-      setup_requires=['cffi'],
-      install_requires=['cffi'],
-      cffi_modules=['build_cffi.py:ffibuilder'],
-      cmdclass=cmdclass,
-      python_requires='>=3.8',
-      )
+setup(
+    ext_modules=[Extension(name="pypcode_native", sources=[])],
+    package_data={
+        "pypcode": add_pkg_data_dirs("pypcode", ["bin", "docs", "processors"]) + ["py.typed", "pypcode_native.pyi"]
+    },
+    cmdclass={"build_ext": BuildExtension},
+)

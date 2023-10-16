@@ -1,5 +1,5 @@
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtWidgets import QGraphicsSimpleTextItem
+from PySide6.QtWidgets import QApplication, QGraphicsSimpleTextItem
 
 from .qgraph_object import QCachedGraphicsItem
 
@@ -8,7 +8,7 @@ class QVariable(QCachedGraphicsItem):
     IDENT_LEFT_PADDING = 5
     OFFSET_LEFT_PADDING = 12
 
-    def __init__(self, instance, disasm_view, variable, config, parent=None):
+    def __init__(self, instance, disasm_view, variable, config, infodock, parent=None):
         super().__init__(parent=parent)
 
         # initialization
@@ -16,6 +16,7 @@ class QVariable(QCachedGraphicsItem):
         self.disasm_view = disasm_view
         self.variable = variable
         self._config = config
+        self.infodock = infodock
 
         self._variable_name = None
         self._variable_name_item: QGraphicsSimpleTextItem = None
@@ -26,12 +27,20 @@ class QVariable(QCachedGraphicsItem):
 
         self._init_widgets()
 
+    @property
+    def selected(self):
+        return self.infodock.is_variable_selected(self.variable)
+
     #
     # Public methods
     #
 
     def paint(self, painter, option, widget):  # pylint: disable=unused-argument
-        pass
+        # Background
+        if self.selected:
+            painter.setPen(self._config.disasm_view_operand_select_color)
+            painter.setBrush(self._config.disasm_view_operand_select_color)
+            painter.drawRect(0, 0, self.width, self.height)
 
     def refresh(self):
         super().refresh()
@@ -42,6 +51,19 @@ class QVariable(QCachedGraphicsItem):
         self._layout_items_and_update_size()
 
     #
+    # Events
+    #
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.infodock.toggle_variable_selection(
+                self.variable,
+                unique=QApplication.keyboardModifiers() != Qt.ControlModifier,
+            )
+        else:
+            super().mousePressEvent(event)
+
+    #
     # Private methods
     #
 
@@ -50,20 +72,20 @@ class QVariable(QCachedGraphicsItem):
         self._variable_name = "" if not self.variable.name else self.variable.name
         self._variable_name_item = QGraphicsSimpleTextItem(self._variable_name, self)
         self._variable_name_item.setFont(self._config.disasm_font)
-        self._variable_name_item.setBrush(Qt.darkGreen)  # TODO: Expose it as a configuration entry in Config
+        self._variable_name_item.setBrush(self._config.disasm_view_variable_label_color)
 
         # variable ident
         self._variable_ident = "<%s>" % ("" if not self.variable.ident else self.variable.ident)
         self._variable_ident_item = QGraphicsSimpleTextItem(self._variable_ident, self)
         self._variable_ident_item.setFont(self._config.disasm_font)
-        self._variable_ident_item.setBrush(Qt.blue)  # TODO: Expose it as a configuration entry in Config
+        self._variable_ident_item.setBrush(self._config.disasm_view_variable_ident_color)
         self._variable_ident_item.setVisible(self.disasm_view.show_variable_identifier)
 
         # variable offset
         self._variable_offset = "%#x" % self.variable.offset
         self._variable_offset_item = QGraphicsSimpleTextItem(self._variable_offset, self)
         self._variable_offset_item.setFont(self._config.disasm_font)
-        self._variable_offset_item.setBrush(Qt.darkYellow)  # TODO: Expose it as a configuration entry in Config
+        self._variable_offset_item.setBrush(self._config.disasm_view_variable_offset_color)
 
         self._layout_items_and_update_size()
 

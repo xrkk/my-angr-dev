@@ -29,12 +29,12 @@ class ProximityView(BaseView):
     Proximity View
     """
 
-    def __init__(self, instance, default_docking_position, *args, **kwargs):
-        super().__init__("proximity", instance, default_docking_position, *args, **kwargs)
+    def __init__(self, workspace, instance, default_docking_position, *args, **kwargs):
+        super().__init__("proximity", workspace, instance, default_docking_position, *args, **kwargs)
 
         self.base_caption = "Proximity"
 
-        self._function: Optional["Function"] = None
+        self._function: Optional[Function] = None
         self._expand_function_addrs: Set[int] = set()
 
         # UI widgets
@@ -143,10 +143,10 @@ class ProximityView(BaseView):
         self.setLayout(hlayout)
 
     def _register_events(self):
-        self.instance.workspace.current_screen.am_subscribe(self.on_screen_changed)
+        self.workspace.current_screen.am_subscribe(self.on_screen_changed)
 
     def _unregister_events(self):
-        self.instance.workspace.current_screen.am_unsubscribe(self.on_screen_changed)
+        self.workspace.current_screen.am_unsubscribe(self.on_screen_changed)
 
     def closeEvent(self, event):
         self._unregister_events()

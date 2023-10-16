@@ -2,6 +2,7 @@ import binascii
 import logging
 import re
 import struct
+from typing import List, Optional, Tuple
 
 from cle.errors import CLEError
 
@@ -36,7 +37,7 @@ class Hex(Backend):
     def parse_record(line):
         m = intel_hex_re.match(line)
         if not m:
-            raise CLEError("Invalid HEX record: " + line)
+            raise CLEError(f"Invalid HEX record: {line}")
         my_cksum = 0
         count, addr, rectype, data, cksum = m.groups()
         cksum = int(cksum, 16)
@@ -59,18 +60,27 @@ class Hex(Backend):
         # Lots of tiny memory regions is bad!
         # The greedy algorithm to smash them together:
         result = []
+        last_addr: Optional[int] = None
+        last_data: Optional[List[bytes]] = None
+        last_size: Optional[int] = None
         for addr, region in sorted(regions):
-            if result and result[-1][0] + len(result[-1][1]) == addr:
-                result[-1] = (result[-1][0], result[-1][1] + region)
+            if last_addr is not None and last_addr + last_size == addr:
+                last_data.append(region)
+                last_size += len(region)
             else:
-                result.append((addr, region))
+                if last_addr is not None:
+                    result.append((last_addr, b"".join(last_data)))
+                last_addr, last_data, last_size = addr, [region], len(region)
+
+        if last_addr is not None:
+            result.append((last_addr, b"".join(last_data)))
 
         return result
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        if self.arch is None:
+        if self._arch is None:
             raise CLEError("To use the Hex binary backend, you need to specify an architecture in the loader options.")
 
         # Do the whole thing in one shot.
@@ -134,8 +144,10 @@ class Hex(Backend):
             )
         # HEX specifies a ton of tiny little memory regions.  We now smash them together to make things faster.
         new_regions = Hex.coalesce_regions(regions)
+        self.regions: List[Tuple[int, int]] = []  # A list of (addr, size)
         for addr, data in new_regions:
             self.memory.add_backer(addr, data)
+            self.regions.append((addr, len(data)))
         self._max_addr = max_addr
         self._min_addr = min_addr
 

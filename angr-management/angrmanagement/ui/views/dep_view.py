@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Dict, Optional
 
 import networkx
 from angr import SIM_PROCEDURES
-from angr.analyses.reaching_definitions.external_codeloc import ExternalCodeLocation
+from angr.code_location import ExternalCodeLocation
 from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QHBoxLayout
 
@@ -21,8 +21,8 @@ class DependencyView(BaseView):
     Creates view for dependency analysis.
     """
 
-    def __init__(self, instance, default_docking_position, *args, **kwargs):
-        super().__init__("dependencies", instance, default_docking_position, *args, **kwargs)
+    def __init__(self, workspace, instance, default_docking_position, *args, **kwargs):
+        super().__init__("dependencies", workspace, instance, default_docking_position, *args, **kwargs)
 
         self.base_caption = "Dependencies"
 
@@ -83,7 +83,7 @@ class DependencyView(BaseView):
         self.setLayout(hlayout)
 
     def _register_events(self):
-        self.instance.workspace.current_screen.am_subscribe(self.on_screen_changed)
+        self.workspace.current_screen.am_subscribe(self.on_screen_changed)
 
     def _convert_node(
         self, node: "Definition", converted: Dict["Definition", QDepGraphBlock]

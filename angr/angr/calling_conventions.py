@@ -1,12 +1,13 @@
 # pylint:disable=line-too-long,missing-class-docstring,no-self-use
 import logging
-from typing import Optional, List, Dict, Type
+from typing import Optional, List, Dict, Type, Union
 from collections import defaultdict
 
 import claripy
 import archinfo
 from archinfo import RegisterName
 
+from .errors import AngrTypeError
 from .sim_type import (
     SimType,
     SimTypeChar,
@@ -27,11 +28,10 @@ from .sim_type import (
     parse_signature,
     SimTypeReference,
 )
-
 from .state_plugins.sim_action_object import SimActionObject
+from .engines.soot.engine import SootMixin
 
 l = logging.getLogger(name=__name__)
-from .engines.soot.engine import SootMixin
 
 
 class PointerWrapper:
@@ -158,6 +158,12 @@ def refine_locs_with_struct_type(
             for field, field_ty in arg_type.fields.items()
         }
         return SimStructArg(arg_type, locs)
+    if isinstance(arg_type, SimUnion):
+        # Treat a SimUnion as functionality equivalent to its longest member
+        for member in arg_type.members.values():
+            if member.size == arg_type.size:
+                return refine_locs_with_struct_type(arch, locs, member, offset)
+
     raise TypeError("I don't know how to lay out a %s" % arg_type)
 
 
@@ -257,7 +263,7 @@ class SimFunctionArgument:
     def refine(self, size, arch=None, offset=None, is_fp=None):
         raise NotImplementedError
 
-    def get_footprint(self):
+    def get_footprint(self) -> List[Union["SimRegArg", "SimStackArg"]]:
         """
         Return a list of SimRegArg and SimStackArgs that are the base components used for this location
         """
@@ -662,7 +668,7 @@ class SimCC:
         if ty._arch is None:
             ty = ty.with_arch(self.arch)
         if isinstance(ty, (SimStruct, SimUnion, SimTypeFixedSizeArray)):
-            raise TypeError(
+            raise AngrTypeError(
                 f"{self} doesn't know how to return aggregate types. Consider overriding return_val to "
                 "implement its ABI logic"
             )
@@ -696,7 +702,7 @@ class SimCC:
             arg_type = SimTypePointer(arg_type.elem_type).with_arch(self.arch)
         if isinstance(arg_type, (SimStruct, SimUnion, SimTypeFixedSizeArray)):
             raise TypeError(
-                f"{self} doesn't know how to store aggregate types. Consider overriding next_arg to "
+                f"{self} doesn't know how to store aggregate type {type(arg_type)}. Consider overriding next_arg to "
                 "implement its ABI logic"
             )
         if isinstance(arg_type, SimTypeBottom):
@@ -1066,7 +1072,9 @@ class SimCC:
 
     @classmethod
     def _match(cls, arch, args: List, sp_delta):
-        if cls.ARCH is not None and not isinstance(arch, cls.ARCH):
+        if cls.ARCH is not None and not isinstance(
+            arch, cls.ARCH
+        ):  # pylint:disable=isinstance-second-argument-not-valid-type
             return False
         if sp_delta != cls.STACKARG_SP_DIFF:
             return False
@@ -1092,7 +1100,9 @@ class SimCC:
         return True
 
     @staticmethod
-    def find_cc(arch: "archinfo.Arch", args: List[SimFunctionArgument], sp_delta: int) -> Optional["SimCC"]:
+    def find_cc(
+        arch: "archinfo.Arch", args: List[SimFunctionArgument], sp_delta: int, platform: str = "Linux"
+    ) -> Optional["SimCC"]:
         """
         Pinpoint the best-fit calling convention and return the corresponding SimCC instance, or None if no fit is
         found.
@@ -1106,7 +1116,10 @@ class SimCC:
         """
         if arch.name not in CC:
             return None
-        possible_cc_classes = CC[arch.name]
+        if platform not in CC[arch.name]:
+            # fallback to default
+            platform = "default"
+        possible_cc_classes = CC[arch.name][platform]
         for cc_cls in possible_cc_classes:
             if cc_cls._match(arch, args, sp_delta):
                 return cc_cls(arch)
@@ -1144,21 +1157,21 @@ class SimLyingRegArg(SimRegArg):
             val = claripy.fpToFP(claripy.fp.RM.RM_NearestTiesEven, val.raw_to_fp(), claripy.FSORT_FLOAT)
         return val
 
-    def set_value(self, state, val, **kwargs):  # pylint:disable=arguments-differ
-        val = self.check_value_set(val, state.arch)
+    def set_value(self, state, value, **kwargs):  # pylint:disable=arguments-differ,unused-argument
+        value = self.check_value_set(value, state.arch)
         if self._real_size == 4:
-            val = claripy.fpToFP(claripy.fp.RM.RM_NearestTiesEven, val.raw_to_fp(), claripy.FSORT_DOUBLE)
-        state.registers.store(self.reg_name, val)
-        # super(SimLyingRegArg, self).set_value(state, val, endness=endness, **kwargs)
+            value = claripy.fpToFP(claripy.fp.RM.RM_NearestTiesEven, value.raw_to_fp(), claripy.FSORT_DOUBLE)
+        state.registers.store(self.reg_name, value)
+        # super(SimLyingRegArg, self).set_value(state, value, endness=endness, **kwargs)
 
     def refine(self, size, arch=None, offset=None, is_fp=None):
         return SimLyingRegArg(self.reg_name, size)
 
 
 class SimCCUsercall(SimCC):
-    def __init__(self, arch, arg_locs, ret_loc):
+    def __init__(self, arch, args, ret_loc):
         super().__init__(arch)
-        self.arg_locs = arg_locs
+        self.args = args
         self.ret_loc = ret_loc
 
     ArgSession = UsercallArgSession
@@ -1327,7 +1340,7 @@ class SimCCSyscall(SimCC):
         self.ERROR_REG.set_value(state, error_reg_val)
         return expr
 
-    def set_return_val(self, state, val, ty, **kwargs):
+    def set_return_val(self, state, val, ty, **kwargs):  # pylint:disable=arguments-differ
         if self.ERROR_REG is not None:
             val = self.linux_syscall_update_error_reg(state, val)
         super().set_return_val(state, val, ty, **kwargs)
@@ -1613,7 +1626,8 @@ class SimCCARM(SimCC):
     FP_ARG_REGS = []  # regular arg regs are used as fp arg regs
     CALLER_SAVED_REGS = []
     RETURN_ADDR = SimRegArg("lr", 4)
-    RETURN_VAL = SimRegArg("r0", 4)  # TODO Return val can also include reg r1
+    RETURN_VAL = SimRegArg("r0", 4)
+    OVERFLOW_RETURN_VAL = SimRegArg("r1", 4)
     ARCH = archinfo.ArchARM
 
     # https://github.com/ARM-software/abi-aa/blob/60a8eb8c55e999d74dac5e368fc9d7e36e38dda4/aapcs32/aapcs32.rst#parameter-passing
@@ -1624,7 +1638,7 @@ class SimCCARM(SimCC):
         classification = self._classify(arg_type)
         try:
             mapped_classes = []
-            for idx, cls in enumerate(classification):
+            for cls in classification:
                 if cls == "DOUBLEP":
                     if session.getstate()[1] % 2 == 1:  # doubles must start on an even register
                         next(session.int_iter)
@@ -1812,6 +1826,24 @@ class SimCCAArch64LinuxSyscall(SimCCSyscall):
         return state.regs.x8
 
 
+class SimCCRISCV64LinuxSyscall(SimCCSyscall):
+    # TODO: Make sure all the information is correct
+    ARG_REGS = ["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"]
+    FP_ARG_REGS = []  # TODO: ???
+    RETURN_VAL = SimRegArg("a0", 8)
+    RETURN_ADDR = SimRegArg("ip_at_syscall", 4)
+    ARCH = archinfo.ArchRISCV64
+
+    @classmethod
+    def _match(cls, arch, args, sp_delta):  # pylint: disable=unused-argument
+        # never appears anywhere except syscalls
+        return False
+
+    @staticmethod
+    def syscall_num(state):
+        return state.regs.a0
+
+
 class SimCCO32(SimCC):
     ARG_REGS = ["a0", "a1", "a2", "a3"]
     FP_ARG_REGS = [
@@ -1824,6 +1856,7 @@ class SimCCO32(SimCC):
     CALLER_SAVED_REGS = ["t9", "gp"]
     RETURN_ADDR = SimRegArg("ra", 4)
     RETURN_VAL = SimRegArg("v0", 4)
+    OVERFLOW_RETURN_VAL = SimRegArg("v1", 4)
     ARCH = archinfo.ArchMIPS32
 
     # http://math-atlas.sourceforge.net/devel/assembly/mipsabi32.pdf Section 3-17
@@ -1969,8 +2002,8 @@ class SimCCO32LinuxSyscall(SimCCSyscall):
         return state.regs.v0
 
 
-class SimCCO64(SimCC):  # TODO: add n32 and n64
-    ARG_REGS = ["a0", "a1", "a2", "a3"]
+class SimCCN64(SimCC):  # TODO: add n32
+    ARG_REGS = ["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"]
     CALLER_SAVED_REGS = ["t9", "gp"]
     FP_ARG_REGS = []  # TODO: ???
     STACKARG_SP_BUFF = 32
@@ -1979,7 +2012,10 @@ class SimCCO64(SimCC):  # TODO: add n32 and n64
     ARCH = archinfo.ArchMIPS64
 
 
-class SimCCO64LinuxSyscall(SimCCSyscall):
+SimCCO64 = SimCCN64  # compatibility
+
+
+class SimCCN64LinuxSyscall(SimCCSyscall):
     ARG_REGS = ["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"]
     FP_ARG_REGS = []  # TODO: ???
     RETURN_VAL = SimRegArg("v0", 8)
@@ -2112,65 +2148,86 @@ class SimCCS390XLinuxSyscall(SimCCSyscall):
         return state.regs.r1
 
 
-CC = {
-    "AMD64": [
-        SimCCSystemVAMD64,
-    ],
-    "X86": [
-        SimCCCdecl,
-    ],
-    "ARMEL": [
-        SimCCARM,
-    ],
-    "ARMHF": [
-        SimCCARMHF,
-        SimCCARM,
-    ],
-    "ARMCortexM": [
-        SimCCARMHF,
-        SimCCARM,
-    ],
-    "MIPS32": [
-        SimCCO32,
-    ],
-    "MIPS64": [
-        SimCCO64,
-    ],
-    "PPC32": [
-        SimCCPowerPC,
-    ],
-    "PPC64": [
-        SimCCPowerPC64,
-    ],
-    "AARCH64": [
-        SimCCAArch64,
-    ],
-    "S390X": [
-        SimCCS390X,
-    ],
+CC: Dict[str, Dict[str, List[Type[SimCC]]]] = {
+    "AMD64": {
+        "default": [SimCCSystemVAMD64],
+        "Linux": [SimCCSystemVAMD64],
+        "Win32": [SimCCMicrosoftAMD64],
+    },
+    "X86": {
+        "default": [SimCCCdecl],
+        "Linux": [SimCCCdecl],
+        "CGC": [SimCCCdecl],
+        "Win32": [SimCCMicrosoftCdecl, SimCCMicrosoftFastcall],
+    },
+    "ARMEL": {
+        "default": [SimCCARM],
+        "Linux": [SimCCARM],
+    },
+    "ARMHF": {
+        "default": [SimCCARMHF, SimCCARM],
+        "Linux": [SimCCARMHF, SimCCARM],
+    },
+    "ARMCortexM": {
+        "default": [SimCCARMHF, SimCCARM],
+        "Linux": [SimCCARMHF, SimCCARM],
+    },
+    "MIPS32": {
+        "default": [SimCCO32],
+        "Linux": [SimCCO32],
+    },
+    "MIPS64": {
+        "default": [SimCCN64],
+        "Linux": [SimCCN64],
+    },
+    "PPC32": {
+        "default": [SimCCPowerPC],
+        "Linux": [SimCCPowerPC],
+    },
+    "PPC64": {
+        "default": [SimCCPowerPC64],
+        "Linux": [SimCCPowerPC64],
+    },
+    "AARCH64": {
+        "default": [SimCCAArch64],
+        "Linux": [SimCCAArch64],
+    },
+    "S390X": {
+        "default": [SimCCS390X],
+        "Linux": [SimCCS390X],
+    },
 }
 
 
-DEFAULT_CC: Dict[str, Type[SimCC]] = {
-    "AMD64": SimCCSystemVAMD64,
-    "X86": SimCCCdecl,
-    "ARMEL": SimCCARM,
-    "ARMHF": SimCCARMHF,
-    "ARMCortexM": SimCCARM,
-    "MIPS32": SimCCO32,
-    "MIPS64": SimCCO64,
-    "PPC32": SimCCPowerPC,
-    "PPC64": SimCCPowerPC64,
-    "AARCH64": SimCCAArch64,
-    "Soot": SimCCSoot,
-    "AVR8": SimCCUnknown,
-    "MSP": SimCCUnknown,
-    "S390X": SimCCS390X,
+DEFAULT_CC: Dict[str, Dict[str, Type[SimCC]]] = {
+    "AMD64": {"Linux": SimCCSystemVAMD64, "Win32": SimCCMicrosoftAMD64},
+    "X86": {"Linux": SimCCCdecl, "CGC": SimCCCdecl, "Win32": SimCCMicrosoftCdecl},
+    "ARMEL": {"Linux": SimCCARM},
+    "ARMHF": {"Linux": SimCCARMHF},
+    "ARMCortexM": {"Linux": SimCCARM},
+    "MIPS32": {"Linux": SimCCO32},
+    "MIPS64": {"Linux": SimCCN64},
+    "PPC32": {"Linux": SimCCPowerPC},
+    "PPC64": {"Linux": SimCCPowerPC64},
+    "AARCH64": {"Linux": SimCCAArch64},
+    "Soot": {"Linux": SimCCSoot},
+    "AVR8": {"Linux": SimCCUnknown},
+    "MSP": {"Linux": SimCCUnknown},
+    "S390X": {"Linux": SimCCS390X},
 }
 
 
-def register_default_cc(arch: str, cc: Type[SimCC]):
-    DEFAULT_CC[arch] = cc
+def register_default_cc(arch: str, cc: Type[SimCC], platform: str = "Linux"):
+    DEFAULT_CC[arch] = {platform: cc}
+    if arch not in CC:
+        CC[arch] = {}
+    if platform not in CC[arch]:
+        CC[arch][platform] = [cc]
+        if platform != "default":
+            CC[arch]["default"] = [cc]
+    else:
+        if cc not in CC[arch][platform]:
+            CC[arch][platform].append(cc)
 
 
 ARCH_NAME_ALIASES = {
@@ -2197,23 +2254,39 @@ for k, vs in ARCH_NAME_ALIASES.items():
 
 
 def default_cc(  # pylint:disable=unused-argument
-    arch: str, platform: Optional[str] = None, language: Optional[str] = None
+    arch: str,
+    platform: Optional[str] = "Linux",
+    language: Optional[str] = None,
+    **kwargs,
 ) -> Optional[Type[SimCC]]:
     """
     Return the default calling convention for a given architecture, platform, and language combination.
 
     :param arch:        The architecture name.
-    :param platform:    The platform name (e.g., "linux").
+    :param platform:    The platform name (e.g., "Linux" or "Win32").
     :param language:    The programming language name (e.g., "go").
     :return:            A default calling convention class if we can find one for the architecture, platform, and
                         language combination, or None if nothing fits.
     """
 
+    if platform is None:
+        platform = "Linux"
+
+    default = kwargs.get("default", ...)
+
     if arch in DEFAULT_CC:
-        return DEFAULT_CC[arch]
+        if platform not in DEFAULT_CC[arch]:
+            if default is not ...:
+                return default
+            if "Linux" in DEFAULT_CC[arch]:
+                return DEFAULT_CC[arch]["Linux"]
+        return DEFAULT_CC[arch][platform]
 
     alias = unify_arch_name(arch)
-    return DEFAULT_CC.get(alias)
+    if alias not in DEFAULT_CC or platform not in DEFAULT_CC[alias]:
+        if default is not ...:
+            return default
+    return DEFAULT_CC[alias][platform]
 
 
 def unify_arch_name(arch: str) -> str:
@@ -2228,7 +2301,7 @@ def unify_arch_name(arch: str) -> str:
         # Sleigh architecture names
         chunks = arch.lower().split(":")
         if len(chunks) >= 3:
-            arch_base, endianness, bits = chunks[:3]
+            arch_base, endianness, bits = chunks[:3]  # pylint:disable=unused-variable
             arch = f"{arch_base}{bits}"
 
     return ALIAS_TO_ARCH_NAME.get(arch, arch)
@@ -2238,13 +2311,13 @@ SYSCALL_CC: Dict[str, Dict[str, Type[SimCCSyscall]]] = {
     "X86": {
         "default": SimCCX86LinuxSyscall,
         "Linux": SimCCX86LinuxSyscall,
-        "Windows": SimCCX86WindowsSyscall,
+        "Win32": SimCCX86WindowsSyscall,
         "CGC": SimCCX86LinuxSyscall,
     },
     "AMD64": {
         "default": SimCCAMD64LinuxSyscall,
         "Linux": SimCCAMD64LinuxSyscall,
-        "Windows": SimCCAMD64WindowsSyscall,
+        "Win32": SimCCAMD64WindowsSyscall,
     },
     "ARMEL": {
         "default": SimCCARMLinuxSyscall,
@@ -2267,8 +2340,8 @@ SYSCALL_CC: Dict[str, Dict[str, Type[SimCCSyscall]]] = {
         "Linux": SimCCO32LinuxSyscall,
     },
     "MIPS64": {
-        "default": SimCCO64LinuxSyscall,
-        "Linux": SimCCO64LinuxSyscall,
+        "default": SimCCN64LinuxSyscall,
+        "Linux": SimCCN64LinuxSyscall,
     },
     "PPC32": {
         "default": SimCCPowerPCLinuxSyscall,
@@ -2281,6 +2354,10 @@ SYSCALL_CC: Dict[str, Dict[str, Type[SimCCSyscall]]] = {
     "S390X": {
         "default": SimCCS390XLinuxSyscall,
         "Linux": SimCCS390XLinuxSyscall,
+    },
+    "RISCV64": {
+        "default": SimCCRISCV64LinuxSyscall,
+        "Linux": SimCCRISCV64LinuxSyscall,
     },
 }
 

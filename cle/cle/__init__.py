@@ -5,7 +5,7 @@ produce an address space where that program is loaded and ready to run.
 The primary interface to CLE is the Loader class.
 """
 
-__version__ = "9.2.42.dev0"
+__version__ = "9.2.73.dev0"
 
 from .address_translator import AT, AddressTranslator
 from .backends import (
@@ -19,6 +19,7 @@ from .backends import (
     BackedCGC,
     Backend,
     Blob,
+    Coff,
     ELFCore,
     ExceptionHandling,
     FunctionHint,
@@ -68,7 +69,7 @@ from .errors import (
 )
 from .gdb import GDB_SEARCH_PATH, convert_info_proc_maps, convert_info_sharedlibrary
 from .loader import Loader
-from .memory import Clemory, ClemoryBase, ClemoryTranslator, ClemoryView, UninitializedClemory
+from .memory import Clemory, ClemoryBase, ClemoryTranslator, ClemoryView
 from .patched_stream import PatchedStream
 
 __all__ = [
@@ -81,6 +82,7 @@ __all__ = [
     "BackedCGC",
     "Backend",
     "Blob",
+    "Coff",
     "ELFCore",
     "ExceptionHandling",
     "FunctionHint",
@@ -125,7 +127,6 @@ __all__ = [
     "ClemoryBase",
     "ClemoryView",
     "ClemoryTranslator",
-    "UninitializedClemory",
     "PatchedStream",
     "AddressTranslator",
     "AT",

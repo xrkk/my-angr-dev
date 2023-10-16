@@ -62,8 +62,8 @@ class DebugToolbar(Toolbar):
 
     def __init__(self, main_window: "MainWindow"):
         super().__init__(main_window, "DebugToolbar")
-        self.workspace: "Workspace" = main_window.workspace
-        self.instance: "Instance" = self.workspace.main_instance
+        self.workspace: Workspace = main_window.workspace
+        self.instance: Instance = self.workspace.main_instance
 
         self._cont_backward_act = ToolbarAction(
             qta.icon("fa5s.fast-backward", color=Conf.palette_buttontext),
@@ -219,10 +219,7 @@ class DebugToolbar(Toolbar):
 
     def _on_step_over(self):
         b = self._dbg_mgr.debugger.simstate.block()
-        if b.instructions == 1 and b.vex.jumpkind == "Ijk_Call":
-            until_addr = b.instruction_addrs[0] + b.size
-        else:
-            until_addr = None
+        until_addr = b.instruction_addrs[0] + b.size if b.instructions == 1 and b.vex.jumpkind == "Ijk_Call" else None
         self._dbg_mgr.debugger.step_forward(until_addr=until_addr)
 
     def _on_step_backward(self):

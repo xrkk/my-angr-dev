@@ -60,10 +60,7 @@ class QDepGraphBlock(QCachedGraphicsItem):
     def _init_widgets(self):
         # definition
         self._definition_str = ""
-        if self.definition is not None:
-            atom = self.definition.atom
-        else:
-            atom = self.atom
+        atom = self.definition.atom if self.definition is not None else self.atom
         addr_str = "unknown address" if self.addr is None else "%#x" % self.addr
         if isinstance(atom, Register):
             # convert it to a register name
@@ -102,9 +99,7 @@ class QDepGraphBlock(QCachedGraphicsItem):
                 else:
                     self._function_str = f"{the_func.name}{offset:+x}"
             # instruction
-            self._instruction_str = "{}:  {}".format(
-                self._function_str, self._instance.get_instruction_text_at(self.addr)
-            )
+            self._instruction_str = f"{self._function_str}:  {self._instance.get_instruction_text_at(self.addr)}"
             # text
             self._text = get_string_for_display(
                 self._instance.cfg,

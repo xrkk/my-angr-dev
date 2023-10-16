@@ -5,7 +5,7 @@ from threading import Thread
 from typing import Optional
 
 from PySide6 import QtCore, QtWidgets
-from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
+from PySide6.QtWidgets import QInputDialog, QLineEdit
 
 from .view import BaseView
 
@@ -21,11 +21,6 @@ try:
     import archr
 except ImportError:
     archr = None
-try:
-    import slacrs
-    import slacrs.model
-except ImportError:
-    slacrs = None
 
 
 _l = logging.getLogger(name=__name__)
@@ -42,7 +37,7 @@ class SavedInteraction:
 class ProtocolInteractor:
     def __init__(self, view, sock):
         self.view: InteractionView = view
-        self.sock: Optional["nclib.Netcat"] = sock
+        self.sock: Optional[nclib.Netcat] = sock
 
     def consume_data(self, data):
         # try to decode it
@@ -73,15 +68,15 @@ class InteractionState(enum.Enum):
 
 
 class InteractionView(BaseView):
-    def __init__(self, instance, *args, **kwargs):
-        super().__init__("interaction", instance, *args, **kwargs)
+    def __init__(self, workspace, instance, *args, **kwargs):
+        super().__init__("interaction", workspace, instance, *args, **kwargs)
         self.base_caption = "Interaction"
         self.current_log = (
             []
         )  # for now each entry is a dict. each entry has {"dir": "in"/"out", "data": bytes} and then whatever
         # "in" here means it's input to the program
         self.log_controls = []
-        self.sock: Optional["nclib.Netcat"] = None
+        self.sock: Optional[nclib.Netcat] = None
 
         self._state = None
         self._last_img_name: Optional[str] = None
@@ -226,62 +221,6 @@ class InteractionView(BaseView):
         )
         self.instance.interactions.am_event()
 
-    def _upload_interaction(self):
-        if slacrs is None:
-            QMessageBox.warning(
-                self.instance.workspace.main_window,
-                "slacrs module does not exist",
-                "Failed to import slacrs package. Please make sure it is installed.",
-            )
-            return
-        connector = self.instance.workspace.plugins.get_plugin_instance_by_name("ChessConnector")
-        if connector is None:
-            # chess connector does not exist
-            QMessageBox.warning(
-                self.instance.workspace.main_window,
-                "CHESSConnector is not found",
-                "Cannot communicate with the CHESSConnector plugin. Please make sure it is installed " "and enabled.",
-            )
-            return
-        if not connector.target_image_id:
-            # the target image ID does not exist
-            QMessageBox.warning(
-                self.instance.workspace.main_window,
-                "Target image ID is not specified",
-                "The target image ID is unspecified. Please associate the binary with a remote " "challenge target.",
-            )
-            return
-        slacrs_instance = connector.slacrs_instance()
-        if slacrs_instance is None:
-            # slacrs does not exist
-            QMessageBox.warning(
-                self.instance.workspace.main_window,
-                "CHECRS backend does not exist",
-                "Cannot communicate with the CHECRS backend. Please make sure you have proper Internet "
-                "access and have connected to the CHECRS backend.",
-            )
-            return
-        session = slacrs_instance.session()
-
-        # get the interaction
-        interaction: SavedInteraction = self.instance.interactions[self.widget_combobox_load.currentIndex()]
-
-        # upload it to the session
-        data = b""
-        for model in interaction.log:
-            if model["dir"] == "in":
-                data += model["data"] + b"\n"
-
-        if data:
-            input_ = slacrs.model.Input(
-                value=data, target_image_id=connector.target_image_id, created_by="interaction view"
-            )
-            session.add(input_)
-            session.commit()
-
-        session.close()
-        print(interaction.name, interaction.protocol, interaction.log, flush=True)  # DEBUG
-
     def _load_interaction(self):
         if self.widget_combobox_load.currentIndex() == -1:
             return
@@ -339,30 +278,29 @@ class InteractionView(BaseView):
         Thread(target=self._socket_thread, args=(img_name,), daemon=True).start()
 
     def _socket_thread(self, img_name):
-        with archr.targets.DockerImageTarget(img_name).build().start() as target:
-            with target.flight_context() as flight:
-                sock = flight.default_channel
-                sock._raise_timeout = True
-                self.chosen_protocol = self.selected_protocol
-                self.running_protocol = self.chosen_protocol(self, sock)
-                _l.debug("Connected to running target")
-                self._signal_start.emit()
-                while self.running_protocol is not None:
-                    try:
-                        data = sock.recv(timeout=1)
-                    except nclib.NetcatTimeout:
-                        continue
-                    except nclib.NetcatError:
-                        break
-                    if not data:
-                        break
-                    self._signal_data.emit(data)
+        with archr.targets.DockerImageTarget(img_name).build().start() as target, target.flight_context() as flight:
+            sock = flight.default_channel
+            sock._raise_timeout = True
+            self.chosen_protocol = self.selected_protocol
+            self.running_protocol = self.chosen_protocol(self, sock)
+            _l.debug("Connected to running target")
+            self._signal_start.emit()
+            while self.running_protocol is not None:
+                try:
+                    data = sock.recv(timeout=1)
+                except nclib.NetcatTimeout:
+                    continue
+                except nclib.NetcatError:
+                    break
+                if not data:
+                    break
+                self._signal_data.emit(data)
 
-                if self.running_protocol is not None:
-                    _l.debug("Connection dropped by server")
-                    self._signal_eof.emit()
-                else:
-                    _l.debug("Connection closed by client")
+            if self.running_protocol is not None:
+                _l.debug("Connection dropped by server")
+                self._signal_eof.emit()
+            else:
+                _l.debug("Connection closed by client")
 
     def _init_widgets(self):
         self.setLayout(QtWidgets.QHBoxLayout(self))
@@ -444,11 +382,6 @@ class InteractionView(BaseView):
         box_save.layout().addWidget(save_button)
         save_button.clicked.connect(self._save_interaction)
 
-        upload_button = QtWidgets.QPushButton(box_upload)
-        upload_button.setText("Upload")
-        box_upload.layout().addWidget(upload_button)
-        upload_button.clicked.connect(self._upload_interaction)
-
         scrollArea = QtWidgets.QScrollArea(self)
         scrollArea.setWidgetResizable(True)
         self.layout().addWidget(scrollArea)
@@ -468,10 +401,9 @@ class SmartPlainTextEdit(QtWidgets.QPlainTextEdit):
         self._callback = callback
 
     def keyPressEvent(self, event):
-        if event.key() == QtCore.Qt.Key_Return:
-            if event.modifiers() != QtCore.Qt.ShiftModifier:
-                self._callback()
-                return
+        if event.key() == QtCore.Qt.Key_Return and event.modifiers() != QtCore.Qt.ShiftModifier:
+            self._callback()
+            return
         super().keyPressEvent(event)
 
 
@@ -493,10 +425,7 @@ class PlainTextProtocol(ProtocolInteractor):
     def render_input_form(self):
         # will be called whenever we need to show the input form
         # should translate any data we need between the old and new forms
-        if self.view.widget_input is not None:
-            cur_input = self.view.widget_input.toPlainText()
-        else:
-            cur_input = ""
+        cur_input = self.view.widget_input.toPlainText() if self.view.widget_input is not None else ""
         txt = SmartPlainTextEdit(None, self._send_callback)
         txt.setPlainText(cur_input)
         return txt

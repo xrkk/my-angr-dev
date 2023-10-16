@@ -68,7 +68,7 @@ class QInstruction(QCachedGraphicsItem):
         event.accept()
 
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent):
-        if self.instance.workspace.plugins.handle_click_insn(self, event):
+        if self.disasm_view.workspace.plugins.handle_click_insn(self, event):
             # stop handling this event if the event has been handled by a plugin
             event.accept()
         elif event.button() == Qt.LeftButton and QApplication.keyboardModifiers() in (
@@ -94,7 +94,7 @@ class QInstruction(QCachedGraphicsItem):
 
     def _calc_backcolor(self):
         # First we'll check for customizations
-        color = self.instance.workspace.plugins.color_insn(self.insn.addr, self.selected)
+        color = self.disasm_view.workspace.plugins.color_insn(self.insn.addr, self.selected, self.disasm_view)
         if color is not None:
             return color
 
@@ -156,7 +156,7 @@ class QInstruction(QCachedGraphicsItem):
             painter.drawRect(0, 0, self.width, self.height)
 
         # any plugin instruction rendering passes
-        self.instance.workspace.plugins.draw_insn(self, painter)
+        self.disasm_view.workspace.plugins.draw_insn(self, painter)
 
     #
     # Private methods
@@ -245,13 +245,13 @@ class QInstruction(QCachedGraphicsItem):
             for line in lines:
                 comment = QGraphicsSimpleTextItem(self.COMMENT_PREFIX + line, self)
                 comment.setFont(self._config.disasm_font)
-                comment.setBrush(Qt.darkGreen)  # TODO: Expose it as a setting in Config
+                comment.setBrush(self._config.disasm_view_comment_color)
                 self._comment_items.append(comment)
         elif self._string is not None:
             self._comment_items = None
             self._string_item = QGraphicsSimpleTextItem(self._string, self)
             self._string_item.setFont(self._config.disasm_font)
-            self._string_item.setBrush(Qt.gray)  # TODO: Expose it as a setting in Config
+            self._string_item.setBrush(self._config.disasm_view_string_color)
 
     def _layout_items_and_update_size(self):
         x, y = 0, 0

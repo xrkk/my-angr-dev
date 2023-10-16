@@ -34,6 +34,8 @@ class Expression(TaggedObject):
             return self.likes(atom)
 
     def __eq__(self, other):
+        if self is other:
+            return True
         return type(self) is type(other) and self.likes(other) and self.idx == other.idx
 
     def likes(self, atom):  # pylint:disable=unused-argument,no-self-use
@@ -51,10 +53,10 @@ class Expression(TaggedObject):
         return r, replaced
 
     def __add__(self, other):
-        return BinaryOp(None, "Add", [self, other], False)
+        return BinaryOp(None, "Add", [self, other], False, **self.tags)
 
     def __sub__(self, other):
-        return BinaryOp(None, "Sub", [self, other], False)
+        return BinaryOp(None, "Sub", [self, other], False, **self.tags)
 
 
 class Atom(Expression):
@@ -234,7 +236,11 @@ class UnaryOp(Op):
         return stable_hash((self.op, self.operand, self.bits))
 
     def replace(self, old_expr, new_expr):
-        r, replaced_operand = self.operand.replace(old_expr, new_expr)
+        if self.operand == old_expr:
+            r = True
+            replaced_operand = new_expr
+        else:
+            r, replaced_operand = self.operand.replace(old_expr, new_expr)
 
         if r:
             return True, UnaryOp(self.idx, self.op, replaced_operand, **self.tags)
@@ -488,6 +494,8 @@ class BinaryOp(Op):
         "CmpGTs": ">s",
         "CmpGEs": ">=s",
         "Concat": "CONCAT",
+        "Ror": "ROR",
+        "Rol": "ROL",
     }
 
     COMPARISON_NEGATION = {
@@ -543,9 +551,9 @@ class BinaryOp(Op):
         elif self.op == "Concat":
             self.bits = get_bits(operands[0]) + get_bits(operands[1])
         elif self.op == "Mull":
-            self.bits = get_bits(operands[0]) * 2 if type(operands[0]) is not int else get_bits(operands[1]) * 2
+            self.bits = get_bits(operands[0]) * 2 if not isinstance(operands[0], int) else get_bits(operands[1]) * 2
         else:
-            self.bits = get_bits(operands[0]) if type(operands[0]) is not int else get_bits(operands[1])
+            self.bits = get_bits(operands[0]) if not isinstance(operands[0], int) else get_bits(operands[1])
         self.signed = signed
         self.variable = variable
         self.variable_offset = variable_offset
@@ -921,9 +929,24 @@ class ITE(Expression):
         )
 
     def replace(self, old_expr, new_expr):
-        cond_replaced, new_cond = self.cond.replace(old_expr, new_expr)
-        iffalse_replaced, new_iffalse = self.iffalse.replace(old_expr, new_expr)
-        iftrue_replaced, new_iftrue = self.iftrue.replace(old_expr, new_expr)
+        if self.cond == old_expr:
+            cond_replaced = True
+            new_cond = new_expr
+        else:
+            cond_replaced, new_cond = self.cond.replace(old_expr, new_expr)
+
+        if self.iffalse == old_expr:
+            iffalse_replaced = True
+            new_iffalse = new_expr
+        else:
+            iffalse_replaced, new_iffalse = self.iffalse.replace(old_expr, new_expr)
+
+        if self.iftrue == old_expr:
+            iftrue_replaced = True
+            new_iftrue = new_expr
+        else:
+            iftrue_replaced, new_iftrue = self.iftrue.replace(old_expr, new_expr)
+
         replaced = cond_replaced or iftrue_replaced or iffalse_replaced
 
         if replaced:
@@ -1068,6 +1091,9 @@ class MultiStatementExpression(Expression):
     def _hash_core(self):
         return stable_hash((MultiStatementExpression,) + tuple(self.stmts) + (self.expr,))
 
+    def likes(self, other):
+        return type(self) is type(other) and self.stmts == other.stmts and self.expr == other.expr
+
     def __repr__(self):
         return f"MultiStatementExpression({self.stmts}, {self.expr})"
 
@@ -1106,6 +1132,9 @@ class MultiStatementExpression(Expression):
                 self.idx, new_stmts, new_expr_ if new_expr_ is not None else self.expr, **self.tags
             )
         return False, self
+
+    def copy(self) -> "MultiStatementExpression":
+        return MultiStatementExpression(self.idx, self.stmts[::], self.expr, **self.tags)
 
 
 #
@@ -1190,3 +1219,21 @@ class StackBaseOffset(BasePointerOffset):
 
     def copy(self) -> "StackBaseOffset":
         return StackBaseOffset(self.idx, self.bits, self.offset, **self.tags)
+
+
+def negate(expr: Expression) -> Expression:
+    if isinstance(expr, UnaryOp) and expr.op == "Not":
+        # unpack
+        return expr.operand
+    if isinstance(expr, BinaryOp) and expr.op in BinaryOp.COMPARISON_NEGATION:
+        return BinaryOp(
+            expr.idx,
+            BinaryOp.COMPARISON_NEGATION[expr.op],
+            expr.operands,
+            expr.signed,
+            bits=expr.bits,
+            floating_point=expr.floating_point,
+            rounding_mode=expr.rounding_mode,
+            **expr.tags,
+        )
+    return UnaryOp(None, "Not", expr, **expr.tags)

@@ -39,7 +39,7 @@ class PE(Backend):
                 # only cache shared libraries, the main binary will not be reused
                 self._pefile_cache[self.binary] = self._pe
 
-        if self.arch is None:
+        if self._arch is None:
             self.set_arch(archinfo.arch_from_id(pefile.MACHINE_TYPE[self._pe.FILE_HEADER.Machine]))
 
         self.mapped_base = self.linked_base = self._pe.OPTIONAL_HEADER.ImageBase
@@ -170,7 +170,7 @@ class PE(Backend):
             for entry in self._pe.DIRECTORY_ENTRY_IMPORT:
                 for imp in entry.imports:
                     if imp.name is None:  # must be an import by ordinal
-                        imp_name = "ordinal.%d.%s" % (imp.ordinal, entry.dll.lower())
+                        imp_name = "ordinal.%d.%s" % (imp.ordinal, entry.dll.lower().decode())
                     else:
                         imp_name = imp.name.decode()
 

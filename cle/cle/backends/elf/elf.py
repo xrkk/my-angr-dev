@@ -1,9 +1,11 @@
+# pylint:disable=bad-builtin
 import copy
 import logging
 import os
+import pathlib
 import xml.etree.ElementTree
 from collections import OrderedDict, defaultdict
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 import archinfo
 import elftools
@@ -103,11 +105,11 @@ class ELF(MetaELF):
 
             try:
                 self._reader = elffile.ELFFile(self._binary_stream)
-            except Exception as e:  # pylint: disable=broad-except
-                raise CLECompatibilityError from e
+            except Exception as e1:  # pylint: disable=broad-except
+                raise CLECompatibilityError from e1
 
         # Get an appropriate archinfo.Arch for this binary, unless the user specified one
-        if self.arch is None:
+        if self._arch is None:
             self.set_arch(self.extract_arch(self._reader))
         else:
             try:
@@ -148,7 +150,7 @@ class ELF(MetaELF):
         # DWARF data
         self.has_dwarf_info = bool(self._reader.has_dwarf_info())
         self.build_id = None
-        self.addr_to_line = SortedDict()
+        self.addr_to_line: "SortedDict[int, Set[Tuple[int, int]]]" = SortedDict()
         self.variables: Optional[List[Variable]] = None
         self.compilation_units: Optional[List[CompilationUnit]] = None
 
@@ -374,14 +376,14 @@ class ELF(MetaELF):
     def symbols_by_name(self):
         return self._symbols_by_name.copy()
 
-    def get_symbol(self, symid, symbol_table=None):  # pylint: disable=arguments-differ
+    def get_symbol(self, symid, symbol_table=None):  # pylint: disable=arguments-differ,arguments-renamed
         """
         Gets a Symbol object for the specified symbol.
 
         :param symid: Either an index into .dynsym or the name of a symbol.
         """
         version = None
-        if type(symid) is int:
+        if isinstance(symid, int):
             if symid == 0:
                 # special case the null symbol, this is important for static binaries
                 return self._nullsymbol
@@ -398,7 +400,7 @@ class ELF(MetaELF):
                 return cached
             if self.hashtable is not None and symbol_table is self.hashtable.symtab and self._vertable is not None:
                 version = self._vertable.get_symbol(symid).entry.ndx
-        elif type(symid) is str:
+        elif isinstance(symid, str):
             if not symid:
                 log.warning("Trying to resolve a symbol by its empty name")
                 return None
@@ -434,7 +436,7 @@ class ELF(MetaELF):
         delta = new_base - self.linked_base
         super().rebase(new_base)
 
-        self.addr_to_line = {addr + delta: value for addr, value in self.addr_to_line.items()}
+        self.addr_to_line = SortedDict((addr + delta, value) for addr, value in self.addr_to_line.items())
 
     #
     # Private Methods
@@ -576,7 +578,7 @@ class ELF(MetaELF):
 
         try:
             for entry in dwarf.EH_CFI_entries():
-                if type(entry) is callframe.FDE:
+                if isinstance(entry, callframe.FDE):
                     self.function_hints.append(
                         FunctionHint(
                             entry.header["initial_location"],
@@ -599,7 +601,11 @@ class ELF(MetaELF):
         try:
             lsda = LSDAExceptionTable(self._binary_stream, self.arch.bits, self.arch.memory_endness == "Iend_LE")
             for entry in dwarf.EH_CFI_entries():
-                if type(entry) is callframe.FDE and hasattr(entry, "lsda_pointer") and entry.lsda_pointer is not None:
+                if (
+                    isinstance(entry, callframe.FDE)
+                    and hasattr(entry, "lsda_pointer")
+                    and entry.lsda_pointer is not None
+                ):
                     # function address
                     func_addr = entry.header.get("initial_location", None)
                     if func_addr is None:
@@ -653,17 +659,19 @@ class ELF(MetaELF):
                 else:
                     file_entry = lineprog.header["file_entry"][line.state.file - 1]
                     if file_entry["dir_index"] == 0:
-                        filename = os.path.join(comp_dir, file_entry.name.decode())
+                        filename = pathlib.PurePosixPath(comp_dir) / file_entry.name.decode()
                     else:
-                        filename = os.path.join(
-                            comp_dir,
-                            lineprog.header["include_directory"][file_entry["dir_index"] - 1].decode(),
-                            file_entry.name.decode(),
+                        filename = (
+                            pathlib.PurePosixPath(comp_dir)
+                            / lineprog.header["include_directory"][file_entry["dir_index"] - 1].decode()
+                            / file_entry.name.decode()
                         )
                     file_cache[line.state.file] = filename
 
                 relocated_addr = AT.from_lva(line.state.address, self).to_mva()
-                self.addr_to_line[relocated_addr] = (filename, line.state.line)
+                if relocated_addr not in self.addr_to_line:
+                    self.addr_to_line[relocated_addr] = set()
+                self.addr_to_line[relocated_addr].add((str(filename), line.state.line))
 
     @staticmethod
     def _load_low_high_pc_form_die(die: DIE):
@@ -1042,9 +1050,6 @@ class ELF(MetaELF):
         return parts
 
     def __register_relocs(self, section, dynsym=None, force_jmprel=False):
-        if not self.loader._perform_relocations:
-            return
-
         got_min = got_max = 0
 
         if not force_jmprel:

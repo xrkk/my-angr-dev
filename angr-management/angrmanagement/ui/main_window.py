@@ -36,6 +36,7 @@ from angrmanagement.data.library_docs import LibraryDocs
 from angrmanagement.errors import InvalidURLError, UnexpectedStatusCodeError
 from angrmanagement.logic import GlobalInfo
 from angrmanagement.logic.commands import BasicCommand
+from angrmanagement.ui.views import DisassemblyView
 from angrmanagement.utils.env import app_root, is_pyinstaller
 from angrmanagement.utils.io import download_url, isurl
 
@@ -76,13 +77,12 @@ class DockShortcutEventFilter(QObject):
 
     def __init__(self, main_window: "MainWindow"):
         super().__init__()
-        self._main_window: "MainWindow" = main_window
+        self._main_window: MainWindow = main_window
 
     def eventFilter(self, qobject, event):
-        if event.type() == QEvent.KeyPress:
-            if QKeySequence(event.keyCombination()) == QKeySequence("Ctrl+Shift+P"):
-                self._main_window.show_command_palette(qobject)
-                return True
+        if event.type() == QEvent.KeyPress and QKeySequence(event.keyCombination()) == QKeySequence("Ctrl+Shift+P"):
+            self._main_window.show_command_palette(qobject)
+            return True
         return False
 
 
@@ -97,7 +97,7 @@ class ShiftShiftEventFilter(QObject):
 
     def __init__(self, main_window: "MainWindow"):
         super().__init__()
-        self._main_window: "MainWindow" = main_window
+        self._main_window: MainWindow = main_window
         self._press_count: int = 0
         self._last_press_time: float = 0
         self._did_process_qwindow_event: bool = False
@@ -151,7 +151,7 @@ class MainWindow(QMainWindow):
         # initialization
         self.setMinimumSize(QSize(400, 400))
 
-        self.app: Optional["QApplication"] = app
+        self.app: Optional[QApplication] = app
         self.workspace: Workspace = None
         self.dock_manager: QtAds.CDockManager
         self._dock_shortcut_event_filter = DockShortcutEventFilter(self)
@@ -185,7 +185,7 @@ class MainWindow(QMainWindow):
         self._init_menus()
         self._init_plugins()
         self._init_library_docs()
-        self._init_url_scheme_handler()
+        # self._init_url_scheme_handler()
 
         self._register_commands()
 
@@ -251,7 +251,7 @@ class MainWindow(QMainWindow):
         if self.workspace.main_instance.project.am_none:
             QMessageBox.critical(self, "Cannot create new states", "Please open a binary to analyze first.")
             return
-        new_state_dialog = NewState(self.workspace.main_instance, parent=self, create_simgr=True)
+        new_state_dialog = NewState(self.workspace, self.workspace.main_instance, parent=self, create_simgr=True)
         new_state_dialog.exec_()
 
     def open_doc_link(self):
@@ -492,17 +492,17 @@ class MainWindow(QMainWindow):
     #
 
     def _init_url_scheme_handler(self):
+        if "CI" in os.environ:
+            return
+
         # URL scheme
         from angrmanagement.logic.url_scheme import AngrUrlScheme  # pylint:disable=import-outside-toplevel
 
         scheme = AngrUrlScheme()
         registered, _ = scheme.is_url_scheme_registered()
         supported = scheme.is_url_scheme_supported()
-        checrs_plugin = self.workspace.plugins.get_plugin_instance_by_name("ChessConnector")
-        if checrs_plugin is None:
-            return
 
-        if not registered and supported:
+        if not registered and supported and not Conf.prompted_for_url_scheme_registration:
             btn = QMessageBox.question(
                 None,
                 "Setting up angr URL scheme",
@@ -521,6 +521,10 @@ class MainWindow(QMainWindow):
                         "Error in registering angr URL scheme",
                         "Failed to register the angr URL scheme.\nThe following exception occurred:\n" + str(ex),
                     )
+                    return
+
+            Conf.prompted_for_url_scheme_registration = True
+            save_config()
 
     #
     # Commands
@@ -837,10 +841,10 @@ class MainWindow(QMainWindow):
         self.close()
 
     def run_variable_recovery(self):
-        self.workspace._get_or_create_disassembly_view().variable_recovery_flavor = "accurate"
+        self.workspace._get_or_create_view("disassembly", DisassemblyView).variable_recovery_flavor = "accurate"
 
     def run_induction_variable_analysis(self):
-        self.workspace._get_or_create_disassembly_view().run_induction_variable_analysis()
+        self.workspace._get_or_create_view("disassembly", DisassemblyView).run_induction_variable_analysis()
 
     def run_dependency_analysis(self, func_addr: Optional[int] = None, func_arg_idx: Optional[int] = None):
         if self.workspace is None or self.workspace.main_instance is None:
@@ -850,7 +854,7 @@ class MainWindow(QMainWindow):
 
     def run_analysis(self):
         if self.workspace:
-            self.workspace.main_instance.run_analysis()
+            self.workspace.run_analysis()
 
     def decompile_current_function(self):
         if self.workspace is not None:

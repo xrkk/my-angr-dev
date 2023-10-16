@@ -6,7 +6,7 @@ import claripy
 import ailment
 
 from ...calling_conventions import SimRegArg
-from ...sim_type import SimTypeFunction, SimTypeBottom
+from ...sim_type import SimTypeFunction
 from ...engines.light import SimEngineLightAILMixin
 from ..typehoon import typeconsts, typevars
 from ..typehoon.lifter import TypeLifter
@@ -23,7 +23,12 @@ class SimEngineVRAIL(
     SimEngineLightAILMixin,
     SimEngineVRBase,
 ):
+    """
+    The engine for variable recovery on AIL.
+    """
+
     state: "VariableRecoveryFastState"
+    block: ailment.Block
 
     def __init__(self, *args, call_info=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -80,6 +85,7 @@ class SimEngineVRAIL(
         ret_reg_offset = None
         ret_expr_bits = self.state.arch.bits
         ret_val = None  # stores the value that this method should return to its caller when this is a call expression.
+        create_variable = True
         if not is_expr:
             # this is a call statement. we need to update the return value register later
             ret_expr: Optional[ailment.Expr.Register] = stmt.ret_expr
@@ -87,13 +93,11 @@ class SimEngineVRAIL(
                 ret_reg_offset = ret_expr.reg_offset
                 ret_expr_bits = ret_expr.bits
             else:
+                # the return expression is not used, so we treat this call as not returning anything
                 if stmt.calling_convention is not None:
+                    # we only set the ret_expr if prototype must be guessed. otherwise ret_expr should just be None
                     if stmt.prototype is None:
                         ret_expr: SimRegArg = stmt.calling_convention.RETURN_VAL
-                    elif stmt.prototype.returnty is None or type(stmt.prototype.returnty) is SimTypeBottom:
-                        ret_expr = None
-                    else:
-                        ret_expr: SimRegArg = stmt.calling_convention.return_val(stmt.prototype.returnty)
                 else:
                     l.debug(
                         "Unknown calling convention for function %s. Fall back to default calling convention.", target
@@ -102,6 +106,7 @@ class SimEngineVRAIL(
 
                 if ret_expr is not None:
                     ret_reg_offset = self.project.arch.registers[ret_expr.reg_name][0]
+                create_variable = False
         else:
             # this is a call expression. we just return the value at the end of this method
             if stmt.ret_expr is not None:
@@ -141,8 +146,9 @@ class SimEngineVRAIL(
                 self._assign_to_register(
                     ret_reg_offset,
                     RichR(self.state.top(expr_bits), typevar=ret_ty),
-                    self.state.arch.bytes,
+                    expr_bits // self.arch.byte_width,
                     dst=ret_expr,
+                    create_variable=create_variable,
                 )
 
         if prototype is not None and args:
@@ -197,7 +203,7 @@ class SimEngineVRAIL(
         r = self._load(addr_r, size, expr=expr)
         return r
 
-    def _ail_handle_Const(self, expr):
+    def _ail_handle_Const(self, expr: ailment.Expr.Const):
         if isinstance(expr.value, float):
             v = claripy.FPV(expr.value, claripy.FSORT_DOUBLE if expr.bits == 64 else claripy.FSORT_FLOAT)
             ty = typeconsts.float_type(expr.bits)
@@ -205,11 +211,20 @@ class SimEngineVRAIL(
             if self.project.loader.find_segment_containing(expr.value) is not None:
                 r = self._load_from_global(expr.value, 1, expr=expr)
                 ty = r.typevar
+            elif expr.value == 0 and expr.bits == self.arch.bits:
+                # this can be viewed as a NULL
+                ty = (
+                    typeconsts.Pointer64(typeconsts.TopType())
+                    if self.arch.bits == 64
+                    else typeconsts.Pointer32(typeconsts.TopType())
+                )
             else:
                 ty = typeconsts.int_type(expr.size * self.state.arch.byte_width)
-            v = claripy.BVV(expr.value, expr.size * self.state.arch.byte_width)
+            v = claripy.BVV(expr.value, expr.bits)
         r = RichR(v, typevar=ty)
-        self._reference(r, self._codeloc())
+        codeloc = self._codeloc()
+        self._ensure_variable_existence(r, codeloc)
+        self._reference(r, codeloc)
         return r
 
     def _ail_handle_BinaryOp(self, expr):
@@ -262,6 +277,7 @@ class SimEngineVRAIL(
 
         value_v = self.state.stack_address(expr.offset)
         richr = RichR(value_v, typevar=typevar)
+        self._ensure_variable_existence(richr, self._codeloc(), src_expr=expr)
         if self._reference_spoffset:
             self._reference(richr, self._codeloc(), src=expr)
 
@@ -302,7 +318,7 @@ class SimEngineVRAIL(
 
         if r1.data.concrete:
             # addition with constants. create a derived type variable
-            typevar = typevars.DerivedTypeVariable(r0_typevar, typevars.AddN(r1.data._model_concrete.value))
+            typevar = typevars.DerivedTypeVariable(r0_typevar, typevars.AddN(r1.data.concrete_value))
         elif r1.typevar is not None:
             typevar = typevars.TypeVariable()
             type_constraints.add(typevars.Add(r0_typevar, r1.typevar, typevar))
@@ -327,7 +343,7 @@ class SimEngineVRAIL(
 
         type_constraints = set()
         if r0.typevar is not None and r1.data.concrete:
-            typevar = typevars.DerivedTypeVariable(r0.typevar, typevars.SubN(r1.data._model_concrete.value))
+            typevar = typevars.DerivedTypeVariable(r0.typevar, typevars.SubN(r1.data.concrete_value))
         else:
             typevar = typevars.TypeVariable()
             if r0.typevar is not None and r1.typevar is not None:
@@ -491,7 +507,7 @@ class SimEngineVRAIL(
                 typevar=r0.typevar,
             )
 
-        shiftamount = r1.data._model_concrete.value
+        shiftamount = r1.data.concrete_value
 
         return RichR(r0.data << shiftamount, typevar=typeconsts.int_type(result_size), type_constraints=None)
 
@@ -510,7 +526,7 @@ class SimEngineVRAIL(
                 typevar=r0.typevar,
             )
 
-        shiftamount = r1.data._model_concrete.value
+        shiftamount = r1.data.concrete_value
 
         return RichR(
             claripy.LShR(r0.data, shiftamount), typevar=typeconsts.int_type(result_size), type_constraints=None
@@ -531,7 +547,7 @@ class SimEngineVRAIL(
                 typevar=r0.typevar,
             )
 
-        shiftamount = r1.data._model_concrete.value
+        shiftamount = r1.data.concrete_value
 
         return RichR(r0.data << shiftamount, typevar=typeconsts.int_type(result_size), type_constraints=None)
 
@@ -550,7 +566,7 @@ class SimEngineVRAIL(
                 typevar=r0.typevar,
             )
 
-        shiftamount = r1.data._model_concrete.value
+        shiftamount = r1.data.concrete_value
 
         return RichR(r0.data >> shiftamount, typevar=typeconsts.int_type(result_size), type_constraints=None)
 

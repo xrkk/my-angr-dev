@@ -2,7 +2,7 @@ import logging
 import re
 from typing import List, Optional
 
-from archinfo import RegisterOffset, TmpVar
+from archinfo.types import RegisterOffset, TmpVar
 
 from .const import U8, U16, U32, U64, IRConst, get_type_size
 from .enums import IRCallee, IRRegArray, VEXObject, get_enum_from_int, get_int_from_enum
@@ -70,7 +70,7 @@ class IRExpr(VEXObject):
             v = getattr(self, k)
             if isinstance(v, IRExpr) and v in replacements:
                 setattr(self, k, replacements.get(v))
-            elif type(v) is list:
+            elif isinstance(v, list):
                 # Replace the instance in the list
                 for i, expr_ in enumerate(v):
                     if isinstance(expr_, IRExpr) and expr_ in replacements:

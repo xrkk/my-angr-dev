@@ -4,13 +4,6 @@ from PySide6.QtGui import QColor
 
 from .trace_statistics import TraceStatistics
 
-try:
-    from slacrs import Slacrs
-    from slacrs.model import Input
-except ImportError:
-    Slacrs = None
-    HumanFatigue = None
-
 
 class MultiTrace:
     HIT_COLOR = QColor(0x00, 0x99, 0x00, 0x60)
@@ -30,34 +23,24 @@ class MultiTrace:
         self.function_info = {}
         self.is_active_tab = False
         self.addr_color_map = {}
-        # self.base_addr = base_addr
 
     def add_trace(self, trace, base_addr):
         traceStats = TraceStatistics(self.workspace, trace, base_addr)
         self._traces[trace["id"]] = traceStats
         self._traces_summary.extend(traceStats.mapped_trace)
-        # self._make_addr_map()
         return traceStats
 
     def get_hit_miss_color(self, addr):
-        # hexstr_addr = hex(addr)
-        if addr in self.addr_color_map.keys():
-            # return MultiTrace.BUCKET_COLORS[self.addr_color_map[addr]]
+        if addr in self.addr_color_map:
             return self.addr_color_map[addr]
         else:
             return MultiTrace.MISS_COLOR
 
     def get_percent_color(self, func):
         addr = func.addr
-        if addr in self.addr_color_map.keys():
-            # return MultiTrace.BUCKET_COLORS[self.addr_color_map[addr]]
+        if addr in self.addr_color_map:
             return self.addr_color_map[addr]
         return None
-
-        # if func.addr not in self.function_info:
-        #     self._calc_function_info(func)
-
-        # return self.function_info[func.addr]["color"]
 
     def get_coverage(self, func):
         if func.addr not in self.function_info:
@@ -75,43 +58,17 @@ class MultiTrace:
         return self._traces.keys()
 
     def get_input_id_for_trace_id(self, trace_id):
-        if trace_id not in self._traces.keys():
+        if trace_id not in self._traces:
             self.workspace.log("ERROR - trace id %s not present in multitrace" % trace_id)
             return None
         trace = self._traces[trace_id]
         return trace.input_id
 
     def get_trace_with_id(self, trace_id):
-        if trace_id not in self._traces.keys():
+        if trace_id not in self._traces:
             self.workspace.log("ERROR - trace id %s not present in multitrace" % trace_id)
             return None
         return self._traces[trace_id]
-
-    def get_input_seed_for_id(self, trace_id):
-        input_seed_string = "<>"
-
-        if not Slacrs:
-            self.workspace.log("slacrs not installed, unable to retrieve trace seed inputs")
-            return "<>"
-
-        connector = self.workspace.plugins.get_plugin_instance_by_name("ChessConnector")
-        if connector is None:
-            # chess connector does not exist
-            return None
-        slacrs_instance = connector.slacrs_instance()
-        if slacrs_instance is None:
-            # slacrs does not exist. continue
-            return None
-
-        session = slacrs_instance.session()
-        if session:
-            result = session.query(Input).filter_by(id=trace_id).first()
-            if result:
-                input_seed_string = result.value
-            session.close()
-        if input_seed_string == "<>":
-            self.workspace.log("Unable to retrieve seed input for trace: %s" % trace_id)
-        return input_seed_string
 
     def clear_heatmap(self):
         self._make_addr_map([])
@@ -119,7 +76,7 @@ class MultiTrace:
     def reload_heatmap(self, targets):
         addrs_of_interest = []
         for trace_id in targets:
-            if trace_id not in self._traces.keys():
+            if trace_id not in self._traces:
                 self.workspace.log("%s not found in traces" % trace_id)
                 continue
             addr_list = self._traces[trace_id].mapped_trace
@@ -131,13 +88,13 @@ class MultiTrace:
         self.addr_color_map.clear()
         hit_map = {}
         for addr in addrs_of_interest:
-            if addr not in hit_map.keys():
+            if addr not in hit_map:
                 hit_map[addr] = 0
             hit_map[addr] += 1
 
         buckets = {}
         for addr, count in hit_map.items():
-            if count not in buckets.keys():
+            if count not in buckets:
                 buckets[count] = []
             buckets[count].append(addr)
 

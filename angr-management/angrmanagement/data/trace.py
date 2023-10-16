@@ -12,7 +12,7 @@ class Trace:
 
     @property
     def source(self) -> str:
-        raise NotImplementedError()
+        raise NotImplementedError
 
     @classmethod
     def trace_backend_enabled(cls) -> bool:
@@ -29,7 +29,7 @@ class BintraceTrace(Trace):
 
     def __init__(self, trace: "bintrace.Trace"):
         assert BintraceTrace.trace_backend_enabled()
-        self.trace: "bintrace.Trace" = trace
+        self.trace: bintrace.Trace = trace
 
     @property
     def source(self) -> str:

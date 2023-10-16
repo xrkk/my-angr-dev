@@ -4,7 +4,7 @@ import networkx
 import string
 import itertools
 from collections import defaultdict
-from typing import Union, Optional, Iterable, Set, Generator
+from typing import Union, Optional, Iterable, Set
 from typing import Type
 
 from itanium_demangler import parse
@@ -13,13 +13,16 @@ from cle.backends.symbol import Symbol
 from archinfo.arch_arm import get_real_address_if_arm
 import claripy
 
+from angr.block import Block
+
 from ...codenode import CodeNode, BlockNode, HookNode, SyscallNode
 from ...serializable import Serializable
 from ...errors import AngrValueError, SimEngineError, SimMemoryError
 from ...procedures import SIM_LIBRARIES
 from ...procedures.definitions import SimSyscallLibrary
 from ...protos import function_pb2
-from ...calling_conventions import DEFAULT_CC
+from ...calling_conventions import DEFAULT_CC, default_cc
+from ...misc.ux import deprecated
 from .function_parser import FunctionParser
 
 l = logging.getLogger(name=__name__)
@@ -74,7 +77,7 @@ class Function(Serializable):
         "_local_block_addrs",
         "info",
         "tags",
-        "alignment",
+        "is_alignment",
         "is_prototype_guessed",
         "ran_cca",
     )
@@ -85,9 +88,9 @@ class Function(Serializable):
         addr,
         name=None,
         syscall=None,
-        is_simprocedure=None,
+        is_simprocedure: Optional[bool] = None,
         binary_name=None,
-        is_plt=None,
+        is_plt: Optional[bool] = None,
         returning=None,
         alignment=False,
     ):
@@ -107,7 +110,7 @@ class Function(Serializable):
         :param bool returning:  If this function returns.
         :param bool alignment:  If this function acts as an alignment filler. Such functions usually only contain nops.
         """
-        self.transition_graph = networkx.DiGraph()
+        self.transition_graph = networkx.classes.digraph.DiGraph()
         self._local_transition_graph = None
         self.normalized = False
 
@@ -129,9 +132,8 @@ class Function(Serializable):
         self.startpoint = None
         self._function_manager = function_manager
         self.is_syscall = None
-        self.is_plt = None
         self.is_simprocedure = False
-        self.alignment = alignment
+        self.is_alignment = alignment
 
         # These properties are set by VariableManager
         self.bp_on_stack = False
@@ -242,11 +244,22 @@ class Function(Serializable):
             if cc is None:
                 arch = self.project.arch
                 if self.project.arch.name in DEFAULT_CC:
-                    cc = DEFAULT_CC[arch.name](arch)
+                    cc = default_cc(
+                        arch.name, platform=self.project.simos.name if self.project.simos is not None else None
+                    )(arch)
 
             self.calling_convention: Optional[SimCC] = cc
         else:
             self.calling_convention: Optional[SimCC] = None
+
+    @property
+    @deprecated(".is_alignment")
+    def alignment(self):
+        return self.is_alignment
+
+    @alignment.setter
+    def alignment(self, value):
+        self.is_alignment = value
 
     @property
     def name(self):
@@ -345,10 +358,10 @@ class Function(Serializable):
         return self._block_sizes.get(addr, None)
 
     @property
-    def nodes(self) -> Generator[CodeNode, None, None]:
+    def nodes(self) -> Iterable[CodeNode]:
         return self.transition_graph.nodes()
 
-    def get_node(self, addr):
+    def get_node(self, addr) -> Block:
         return self._addr_to_block_node.get(addr, None)
 
     @property
@@ -752,8 +765,15 @@ class Function(Serializable):
         self._local_blocks = {}
         self._local_block_addrs = set()
         self.startpoint = None
-        self.transition_graph = networkx.DiGraph()
+        self.transition_graph = networkx.classes.digraph.DiGraph()
         self._local_transition_graph = None
+
+        self._ret_sites = set()
+        self._jumpout_sites = set()
+        self._callout_sites = set()
+        self._retout_sites = set()
+        self._endpoints = defaultdict(set)
+        self._call_sites = {}
 
     def _confirm_fakeret(self, src, dst):
         if src not in self.transition_graph or dst not in self.transition_graph[src]:
@@ -1041,7 +1061,7 @@ class Function(Serializable):
         if self._local_transition_graph is not None:
             return self._local_transition_graph
 
-        g = networkx.DiGraph()
+        g = networkx.classes.digraph.DiGraph()
         if self.startpoint is not None:
             g.add_node(self.startpoint)
         for block in self._local_blocks.values():
@@ -1081,7 +1101,7 @@ class Function(Serializable):
             return graph
 
         # BFS on local graph but ignoring certain types of graphs
-        g = networkx.DiGraph()
+        g = networkx.classes.digraph.DiGraph()
         queue = [n for n in graph if n is self.startpoint or graph.in_degree[n] == 0]
         traversed = set(queue)
 
@@ -1122,7 +1142,7 @@ class Function(Serializable):
             return graph
 
         # BFS on local graph but ignoring certain types of graphs
-        g = networkx.DiGraph()
+        g = networkx.classes.digraph.DiGraph()
         queue = [n for n in graph if n is self.startpoint or graph.in_degree[n] == 0]
         traversed = set(queue)
 
@@ -1166,7 +1186,7 @@ class Function(Serializable):
 
         # subgraph = networkx.subgraph(self.graph, blocks)
         subgraph = self.graph.subgraph(blocks).copy()
-        g = networkx.DiGraph()
+        g = networkx.classes.digraph.DiGraph()
 
         for n in subgraph.nodes():
             insns = block_addr_to_insns[n.addr]
@@ -1243,7 +1263,7 @@ class Function(Serializable):
         import matplotlib.pyplot as pyplot  # pylint: disable=import-error
         from networkx.drawing.nx_agraph import graphviz_layout  # pylint: disable=import-error
 
-        tmp_graph = networkx.DiGraph()
+        tmp_graph = networkx.classes.digraph.DiGraph()
         for from_block, to_block in self.transition_graph.edges():
             node_a = "%#08x" % from_block.addr
             node_b = "%#08x" % to_block.addr
@@ -1503,7 +1523,10 @@ class Function(Serializable):
                     if self.project.arch.name in library.default_ccs:
                         self.calling_convention = library.default_ccs[self.project.arch.name](self.project.arch)
                     elif self.project.arch.name in DEFAULT_CC:
-                        self.calling_convention = DEFAULT_CC[self.project.arch.name](self.project.arch)
+                        self.calling_convention = default_cc(
+                            self.project.arch.name,
+                            platform=self.project.simos.name if self.project.simos is not None else None,
+                        )(self.project.arch)
 
                 return True
 
@@ -1590,7 +1613,7 @@ class Function(Serializable):
         func.calling_convention = self.calling_convention
         func.prototype = self.prototype
         func._returning = self._returning
-        func.alignment = self.alignment
+        func.alignment = self.is_alignment
         func.startpoint = self.startpoint
         func._addr_to_block_node = self._addr_to_block_node.copy()
         func._block_sizes = self._block_sizes.copy()

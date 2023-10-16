@@ -2,12 +2,7 @@ import angr
 
 from cle.backends.externs.simdata.io_file import io_file_data_for_arch
 
-######################################
-# fdopen
-#
-# Reference for implementation:
-#   glibc-2.25/libio/iofdopen.c
-######################################
+# Reference for implementation: glibc-2.25/libio/iofdopen.c
 
 
 def mode_to_flag(mode):
@@ -28,6 +23,24 @@ def mode_to_flag(mode):
     return all_modes[mode]
 
 
+def create_file(mode):
+    # TODO improve this: handle mode = strings
+    if mode[-1] == b"b":  # lol who uses windows
+        mode = mode[:-1]
+    all_modes = {
+        b"r": False,
+        b"r+": False,
+        b"w": True,
+        b"w+": True,
+        b"a": True,
+        b"a+": True,
+    }
+    if mode not in all_modes:
+        raise angr.SimProcedureError("unsupported file open mode %s" % mode)
+
+    return all_modes[mode]
+
+
 class fdopen(angr.SimProcedure):
     # pylint:disable=arguments-differ
 
@@ -37,12 +50,12 @@ class fdopen(angr.SimProcedure):
 
         m_strlen = self.inline_call(strlen, m_addr)
         m_expr = self.state.memory.load(m_addr, m_strlen.max_null_index, endness="Iend_BE")
-        self.state.solver.eval(m_expr, cast_to=bytes)
+        mode = self.state.solver.eval(m_expr, cast_to=bytes)
 
         # TODO: handle append and other mode subtleties
 
-        fd = self.state.solver.eval(fd_int)
-        if fd not in self.state.posix.fd:
+        fd_concr = self.state.posix.get_concrete_fd(fd_int, create_file=create_file(mode))
+        if fd_concr not in self.state.posix.fd:
             # if file descriptor not found return NULL
             return 0
         else:
@@ -52,9 +65,13 @@ class fdopen(angr.SimProcedure):
             file_struct_ptr = self.inline_call(malloc, io_file_data["size"]).ret_expr
 
             # Write the fd
-            fd_bvv = self.state.solver.BVV(fd, 4 * 8)  # int
+            fd_bvv = self.state.solver.BVV(fd_concr, 4 * 8)  # int
             self.state.memory.store(
                 file_struct_ptr + io_file_data["fd"], fd_bvv, endness=self.state.arch.memory_endness
             )
 
-            return file_struct_ptr
+            if self.state.solver.is_true(fd_int == fd_concr):
+                return file_struct_ptr
+            else:
+                null = self.state.solver.BVV(0, self.state.arch.bits)
+                return self.state.solver.If(fd_int == fd_concr, file_struct_ptr, null)

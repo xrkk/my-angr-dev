@@ -1,6 +1,8 @@
-from .arch import Arch, register_arch, Endness, Register
-from .tls import TLSArchInfo
+from archinfo.types import RegisterOffset
+
+from .arch import Arch, Endness, Register, register_arch
 from .archerror import ArchError
+from .tls import TLSArchInfo
 
 try:
     import capstone as _capstone
@@ -23,14 +25,14 @@ except ImportError:
     _pyvex = None
 
 
-_NATIVE_FUNCTION_PROLOGS = [
+_NATIVE_FUNCTION_PROLOGS = {
     rb"\x55\x48\x89\xe5",  # push rbp; mov rbp, rsp
     rb"\x48[\x83,\x81]\xec[\x00-\xff]",  # sub rsp, xxx
-]
+}
 # every function prolog can potentially be prefixed with endbr64
 _endbr64 = b"\xf3\x0f\x1e\xfa"
-_prefixed = [(_endbr64 + prolog) for prolog in _NATIVE_FUNCTION_PROLOGS]
-_FUNCTION_PROLOGS = _prefixed + _NATIVE_FUNCTION_PROLOGS
+_prefixed = {(_endbr64 + prolog) for prolog in _NATIVE_FUNCTION_PROLOGS}
+_FUNCTION_PROLOGS = _prefixed | _NATIVE_FUNCTION_PROLOGS
 
 
 class ArchAMD64(Arch):
@@ -148,7 +150,7 @@ class ArchAMD64(Arch):
     linux_name = "x86_64"
     triplet = "x86_64-linux-gnu"
     max_inst_bytes = 15
-    ret_offset = 16
+    ret_offset = RegisterOffset(16)
     vex_conditional_helpers = True
     syscall_num_offset = 16
     call_pushes_ret = True
@@ -449,6 +451,75 @@ class ArchAMD64(Arch):
     got_section_name = ".got.plt"
     ld_linux_name = "ld-linux-x86-64.so.2"
     elf_tls = TLSArchInfo(2, 704, [16], [8], [0], 0, 0)
+    dwarf_registers = [
+        "rax",
+        "rdx",
+        "rcx",
+        "rbx",
+        "rsi",
+        "rdi",
+        "rbp",
+        "rsp",
+        "r8",
+        "r9",
+        "r10",
+        "r11",
+        "r12",
+        "r13",
+        "r14",
+        "r15",
+        "rip",
+        "xmm0",
+        "xmm1",
+        "xmm2",
+        "xmm3",
+        "xmm4",
+        "xmm5",
+        "xmm6",
+        "xmm7",
+        "xmm8",
+        "xmm9",
+        "xmm10",
+        "xmm11",
+        "xmm12",
+        "xmm13",
+        "xmm14",
+        "xmm15",
+        "st0",
+        "st1",
+        "st2",
+        "st3",
+        "st4",
+        "st5",
+        "st6",
+        "st7",
+        "mm0",
+        "mm1",
+        "mm2",
+        "mm3",
+        "mm4",
+        "mm5",
+        "mm6",
+        "mm7",
+        "rflags",
+        "es",
+        "cs",
+        "ss",
+        "ds",
+        "fs",
+        "gs",
+        "<none>",
+        "<none>",
+        "fs.base",
+        "gs.base",
+        "<none>",
+        "<none>",
+        "tr",
+        "ldtr",
+        "mxcsr",
+        "fcw",
+        "fsw",
+    ]
 
 
 register_arch([r".*amd64|.*x64|.*x86_64|.*metapc"], 64, Endness.LE, ArchAMD64)

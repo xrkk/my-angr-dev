@@ -4,12 +4,16 @@ from typing import Optional, Set, List, Tuple, Dict, Union, TYPE_CHECKING
 import logging
 
 import networkx
+import capstone
 
 from pyvex.stmt import Put
 from pyvex.expr import RdTmp
 from archinfo.arch_arm import is_arm_arch, ArchARMHF
+import ailment
 
-from ..calling_conventions import SimFunctionArgument, SimRegArg, SimStackArg, SimCC, default_cc, unify_arch_name
+from angr.code_location import ExternalCodeLocation
+
+from ..calling_conventions import SimFunctionArgument, SimRegArg, SimStackArg, SimCC, default_cc
 from ..sim_type import (
     SimTypeInt,
     SimTypeFunction,
@@ -27,18 +31,13 @@ from ..knowledge_plugins.key_definitions.tag import ReturnValueTag
 from ..knowledge_plugins.key_definitions.constants import OP_BEFORE, OP_AFTER
 from ..knowledge_plugins.key_definitions.rd_model import ReachingDefinitionsModel
 from ..knowledge_plugins.variables.variable_access import VariableAccessSort
+from ..knowledge_plugins.functions import Function
 from ..utils.constants import DEFAULT_STATEMENT
 from .. import SIM_PROCEDURES
 from .reaching_definitions import get_all_definitions
-from .reaching_definitions.external_codeloc import ExternalCodeLocation
 from . import Analysis, register_analysis, ReachingDefinitionsAnalysis
-from .reaching_definitions.function_handler import FunctionHandler
 
 if TYPE_CHECKING:
-    from angr.code_location import CodeLocation
-    from angr.analyses.reaching_definitions.dep_graph import DepGraph
-    from angr.analyses.reaching_definitions.rd_state import ReachingDefinitionsState
-    from ..knowledge_plugins.functions import Function
     from ..knowledge_plugins.cfg import CFGModel
     from ..knowledge_plugins.key_definitions.uses import Uses
     from ..knowledge_plugins.key_definitions.definition import Definition
@@ -66,25 +65,6 @@ class UpdateArgumentsOption:
     UpdateWhenCCHasNoArgs = 2
 
 
-class DummyFunctionHandler(FunctionHandler):
-    """
-    A function handler that is used during reaching definition analysis.
-    """
-
-    def handle_local_function(
-        self,
-        state: "ReachingDefinitionsState",
-        function_address: int,
-        call_stack: Optional[List],
-        maximum_local_call_depth: int,
-        visited_blocks: Set[int],
-        dep_graph: "DepGraph",
-        src_ins_addr: Optional[int] = None,
-        codeloc: Optional["CodeLocation"] = None,
-    ) -> Tuple[bool, "ReachingDefinitionsState", "Set[int]", "DepGraph"]:
-        return False, state, visited_blocks, dep_graph
-
-
 class CallingConventionAnalysis(Analysis):
     """
     Analyze the calling convention of a function and guess a probable prototype.
@@ -107,14 +87,16 @@ class CallingConventionAnalysis(Analysis):
 
     def __init__(
         self,
-        func: Optional["Function"],
+        func: Optional[Union["Function", int, str]],
         cfg: Optional["CFGModel"] = None,
         analyze_callsites: bool = False,
         caller_func_addr: Optional[int] = None,
         callsite_block_addr: Optional[int] = None,
         callsite_insn_addr: Optional[int] = None,
-        func_graph: Optional = None,
+        func_graph: Optional[networkx.DiGraph] = None,
     ):
+        if func is not None and not isinstance(func, Function):
+            func = self.kb.functions[func]
         self._function = func
         self._variable_manager = self.kb.variables
         self._cfg = cfg
@@ -182,7 +164,12 @@ class CallingConventionAnalysis(Analysis):
                         max_analyzing_callsites=1,
                         include_callsite_preds=include_callsite_preds,
                     )
-                    cc_cls = default_cc(self.project.arch.name)
+                    cc_cls = default_cc(
+                        self.project.arch.name,
+                        platform=self.project.simos.name
+                        if self.project is not None and self.project.simos is not None
+                        else None,
+                    )
                     if cc_cls is not None:
                         cc = cc_cls(self.project.arch)
                     else:
@@ -190,7 +177,7 @@ class CallingConventionAnalysis(Analysis):
                     prototype = None
                     if callsite_facts:
                         if self.prototype is None:
-                            proto = SimTypeFunction([], None)
+                            proto = SimTypeFunction([], SimTypeBottom(label="void"))
                         else:
                             proto = self.prototype
                         prototype = self._adjust_prototype(
@@ -235,7 +222,12 @@ class CallingConventionAnalysis(Analysis):
                     include_preds=include_callsite_preds,
                 )
             ]
-            cc_cls = default_cc(self.project.arch.name)
+            cc_cls = default_cc(
+                self.project.arch.name,
+                platform=self.project.simos.name
+                if self.project is not None and self.project.simos is not None
+                else None,
+            )
             if cc_cls is not None:
                 cc = cc_cls(self.project.arch)
             else:
@@ -285,8 +277,9 @@ class CallingConventionAnalysis(Analysis):
                 if self.project.is_hooked(real_func.addr):
                     # prioritize the hooker
                     hooker = self.project.hooked_by(real_func.addr)
-                    if hooker is not None and not hooker.is_stub:
-                        return real_func.calling_convention, real_func.prototype
+                    if hooker is not None:
+                        if not hooker.is_stub or hooker.is_function and not hooker.guessed_prototype:
+                            return real_func.calling_convention, hooker.prototype
                 if real_func.calling_convention and real_func.prototype:
                     return real_func.calling_convention, real_func.prototype
             else:
@@ -318,9 +311,16 @@ class CallingConventionAnalysis(Analysis):
             # we do not analyze SimProcedures or PLT stubs
             return None
 
-        if not self._variable_manager.has_function_manager:
+        if not self._variable_manager.has_function_manager(self._function.addr):
             l.warning("Please run variable recovery on %r before analyzing its calling convention.", self._function)
             return None
+
+        # check if this function is a variadic function
+        if self.project.arch.name == "AMD64":
+            is_variadic, fixed_args = self.is_va_start_amd64(self._function)
+        else:
+            is_variadic = False
+            fixed_args = None
 
         vm = self._variable_manager[self._function.addr]
 
@@ -331,7 +331,7 @@ class CallingConventionAnalysis(Analysis):
         sp_delta = self.project.arch.bytes if self.project.arch.call_pushes_ret else 0
 
         input_args = list(input_args)  # input_args might be modified by find_cc()
-        cc = SimCC.find_cc(self.project.arch, input_args, sp_delta)
+        cc = SimCC.find_cc(self.project.arch, input_args, sp_delta, platform=self.project.simos.name)
 
         if cc is None:
             l.warning(
@@ -342,12 +342,15 @@ class CallingConventionAnalysis(Analysis):
         else:
             # reorder args
             args = self._reorder_args(input_args, cc)
+            if fixed_args is not None:
+                args = args[:fixed_args]
+
             # guess the type of the return value -- it's going to be a wild guess...
             ret_type = self._guess_retval_type(cc, vm.ret_val_size)
             if self._function.name == "main" and self.project.arch.bits == 64 and isinstance(ret_type, SimTypeLongLong):
                 # hack - main must return an int even in 64-bit binaries
                 ret_type = SimTypeInt()
-            prototype = SimTypeFunction([self._guess_arg_type(arg, cc) for arg in args], ret_type)
+            prototype = SimTypeFunction([self._guess_arg_type(arg, cc) for arg in args], ret_type, variadic=is_variadic)
 
         return cc, prototype
 
@@ -373,12 +376,9 @@ class CallingConventionAnalysis(Analysis):
             func,
             func_graph=subgraph,
             observation_points=observation_points,
-            function_handler=DummyFunctionHandler(),
         )
         # rda_model: Optional[ReachingDefinitionsModel] = self.kb.defs.get_model(caller.addr)
-        fact = self._collect_callsite_fact(
-            caller_block_addr, call_insn_addr, None if return_site_block is None else return_site_block.addr, rda.model
-        )
+        fact = self._collect_callsite_fact(caller_block, call_insn_addr, rda.model)
         return fact
 
     def _extract_and_analyze_callsites(
@@ -403,7 +403,7 @@ class CallingConventionAnalysis(Analysis):
         in_edges = self._cfg.graph.in_edges(node, data=True)
 
         call_sites_by_function: Dict["Function", List[Tuple[int, int]]] = defaultdict(list)
-        for src, _, data in in_edges:
+        for src, _, data in sorted(in_edges, key=lambda x: x[0].addr):
             edge_type = data.get("jumpkind", "Ijk_Call")
             if edge_type != "Ijk_Call":
                 continue
@@ -415,7 +415,9 @@ class CallingConventionAnalysis(Analysis):
                 continue
             call_sites_by_function[caller].append((src.addr, src.instruction_addrs[-1]))
 
-        call_sites_by_function_list = list(call_sites_by_function.items())[:max_analyzing_callsites]
+        call_sites_by_function_list = sorted(call_sites_by_function.items(), key=lambda x: x[0].addr)[
+            :max_analyzing_callsites
+        ]
         ctr = 0
 
         for caller, call_site_tuples in call_sites_by_function_list:
@@ -484,31 +486,35 @@ class CallingConventionAnalysis(Analysis):
 
     def _collect_callsite_fact(
         self,
-        caller_block_addr: int,
+        caller_block,
         call_insn_addr: int,
-        return_site_addr: int,
         rda: ReachingDefinitionsModel,
     ) -> CallSiteFact:
         fact = CallSiteFact(
             True,  # by default we treat all return values as used
         )
 
-        default_cc_cls = default_cc(self.project.arch.name)
+        default_cc_cls = default_cc(
+            self.project.arch.name,
+            platform=self.project.simos.name if self.project is not None and self.project.simos is not None else None,
+        )
         if default_cc_cls is not None:
             cc: SimCC = default_cc_cls(self.project.arch)
-            self._analyze_callsite_return_value_uses(cc, return_site_addr, rda, fact)
-            self._analyze_callsite_arguments(cc, caller_block_addr, call_insn_addr, rda, fact)
+            self._analyze_callsite_return_value_uses(cc, caller_block.addr, rda, fact)
+            self._analyze_callsite_arguments(cc, caller_block, call_insn_addr, rda, fact)
 
         return fact
 
     def _analyze_callsite_return_value_uses(
-        self, cc: SimCC, return_site_addr: int, rda: ReachingDefinitionsModel, fact: CallSiteFact
+        self, cc: SimCC, caller_block_addr: int, rda: ReachingDefinitionsModel, fact: CallSiteFact
     ) -> None:
         all_defs: Set["Definition"] = {
             def_
             for def_ in rda.all_uses._uses_by_definition.keys()
             if (
-                def_.codeloc.block_addr == return_site_addr or any(isinstance(tag, ReturnValueTag) for tag in def_.tags)
+                def_.codeloc.block_addr == caller_block_addr
+                and def_.codeloc.stmt_idx == DEFAULT_STATEMENT
+                or any(isinstance(tag, ReturnValueTag) for tag in def_.tags)
             )
         }
         all_uses: "Uses" = rda.all_uses
@@ -539,7 +545,7 @@ class CallingConventionAnalysis(Analysis):
     def _analyze_callsite_arguments(
         self,
         cc: SimCC,
-        caller_block_addr: int,
+        caller_block,
         call_insn_addr: int,
         rda: ReachingDefinitionsModel,
         fact: CallSiteFact,
@@ -547,41 +553,64 @@ class CallingConventionAnalysis(Analysis):
         # determine if potential register and stack arguments are set
         state = rda.observed_results[("insn", call_insn_addr, OP_BEFORE)]
         defs_by_reg_offset: Dict[int, List["Definition"]] = defaultdict(list)
-        all_reg_defs: Set["Definition"] = get_all_definitions(state.register_definitions)
-        all_stack_defs: Set["Definition"] = get_all_definitions(state.stack_definitions)
+        all_reg_defs: Set["Definition"] = get_all_definitions(state.registers)
+        all_stack_defs: Set["Definition"] = get_all_definitions(state.stack)
         for d in all_reg_defs:
             if (
                 isinstance(d.atom, Register)
                 and not isinstance(d.codeloc, ExternalCodeLocation)
-                and not (d.codeloc.block_addr == caller_block_addr and d.codeloc.stmt_idx == DEFAULT_STATEMENT)
+                and not (d.codeloc.block_addr == caller_block.addr and d.codeloc.stmt_idx == DEFAULT_STATEMENT)
             ):
+                # do an extra check because of how entry and callN work on Xtensa
+                if isinstance(caller_block, ailment.Block) and self._likely_saving_temp_reg(
+                    caller_block, d, all_reg_defs
+                ):
+                    continue
                 defs_by_reg_offset[d.offset].append(d)
         defined_reg_offsets = set(defs_by_reg_offset.keys())
-        defs_by_stack_offset = {
-            -d.atom.addr.offset: d
-            for d in all_stack_defs
-            if isinstance(d.atom, MemoryLocation) and isinstance(d.atom.addr, SpOffset)
-        }
+        if self.project.arch.bits in {32, 64}:
+            # Calculate the relative distances between the stack pointer at the callsite and the stack definitions
+            sp_offset = state.get_sp_offset()
+            defs_by_stack_offset = {
+                d.atom.addr.offset - sp_offset: d
+                for d in all_stack_defs
+                if isinstance(d.atom, MemoryLocation) and isinstance(d.atom.addr, SpOffset)
+            }
+        else:
+            defs_by_stack_offset = {
+                -d.atom.addr.offset: d
+                for d in all_stack_defs
+                if isinstance(d.atom, MemoryLocation) and isinstance(d.atom.addr, SpOffset)
+            }
 
-        arg_session = cc.arg_session(SimTypeInt().with_arch(self.project.arch))
+        default_type_cls = SimTypeInt if self.project.arch.bits == 32 else SimTypeLongLong
+        arg_session = cc.arg_session(default_type_cls().with_arch(self.project.arch))
+        temp_args: List[Optional[SimFunctionArgument]] = []
         for _ in range(30):  # at most 30 arguments
-            arg_loc = cc.next_arg(arg_session, SimTypeInt().with_arch(self.project.arch))
+            arg_loc = cc.next_arg(arg_session, default_type_cls().with_arch(self.project.arch))
             if isinstance(arg_loc, SimRegArg):
                 reg_offset = self.project.arch.registers[arg_loc.reg_name][0]
                 # is it initialized?
                 if reg_offset in defined_reg_offsets:
-                    fact.args.append(arg_loc)
+                    temp_args.append(arg_loc)
                 else:
                     # no more arguments
-                    break
+                    temp_args.append(None)
             elif isinstance(arg_loc, SimStackArg):
                 if arg_loc.stack_offset in defs_by_stack_offset:
-                    fact.args.append(arg_loc)
+                    temp_args.append(arg_loc)
                 else:
                     # no more arguments
                     break
             else:
                 break
+
+        if None in temp_args:
+            # we be very conservative here and ignore all arguments starting from the first missing one
+            first_none_idx = temp_args.index(None)
+            fact.args = temp_args[:first_none_idx]
+        else:
+            fact.args = temp_args
 
     def _adjust_prototype(
         self,
@@ -595,7 +624,7 @@ class CallingConventionAnalysis(Analysis):
         # is the return value used anywhere?
         if facts:
             if all(fact.return_value_used is False for fact in facts):
-                proto.returnty = None
+                proto.returnty = SimTypeBottom(label="void")
             else:
                 proto.returnty = SimTypeInt().with_arch(self.project.arch)
 
@@ -604,7 +633,10 @@ class CallingConventionAnalysis(Analysis):
         ):
             if len({len(fact.args) for fact in facts}) == 1:
                 fact = next(iter(facts))
-                proto.args = [self._guess_arg_type(arg) for arg in fact.args]
+                proto.args = [
+                    self._guess_arg_type(arg) if arg is not None else SimTypeInt().with_arch(self.project.arch)
+                    for arg in fact.args
+                ]
 
         return proto
 
@@ -625,6 +657,10 @@ class CallingConventionAnalysis(Analysis):
 
         reg_vars_with_single_access: List[SimRegisterVariable] = []
 
+        def_cc = default_cc(
+            self.project.arch.name,
+            platform=self.project.simos.name if self.project is not None and self.project.simos is not None else None,
+        )
         for variable in variables:
             if isinstance(variable, SimStackVariable):
                 # a stack variable. convert it to a stack argument.
@@ -638,10 +674,15 @@ class CallingConventionAnalysis(Analysis):
                     args.add(arg)
             elif isinstance(variable, SimRegisterVariable):
                 # a register variable, convert it to a register argument
-                if not self._is_sane_register_variable(variable):
+                if not self._is_sane_register_variable(variable, def_cc=def_cc):
                     continue
                 reg_name = self.project.arch.translate_register_name(variable.reg, size=variable.size)
-                arg = SimRegArg(reg_name, variable.size)
+                if self.project.arch.name in {"AMD64", "X86"} and variable.size < self.project.arch.bytes:
+                    # use complete registers on AMD64 and X86
+                    reg_name = self.project.arch.translate_register_name(variable.reg, size=self.project.arch.bytes)
+                    arg = SimRegArg(reg_name, self.project.arch.bytes)
+                else:
+                    arg = SimRegArg(reg_name, variable.size)
                 args.add(arg)
 
                 accesses = var_manager.get_variable_accesses(variable)
@@ -683,7 +724,7 @@ class CallingConventionAnalysis(Analysis):
 
         return args.difference(restored_reg_vars)
 
-    def _is_sane_register_variable(self, variable: SimRegisterVariable) -> bool:
+    def _is_sane_register_variable(self, variable: SimRegisterVariable, def_cc: Optional[SimCC] = None) -> bool:
         """
         Filters all registers that are surly not members of function arguments.
         This can be seen as a workaround, since VariableRecoveryFast sometimes gives input variables of cc_ndep (which
@@ -695,8 +736,14 @@ class CallingConventionAnalysis(Analysis):
         """
 
         arch = self.project.arch
-        arch_name = unify_arch_name(self.project.arch.name)
+        arch_name = arch.name
+        if ":" in arch_name:
+            # for pcode architectures, we only leave registers that are known to be used as input arguments
+            if def_cc is not None:
+                return arch.translate_register_name(variable.reg, size=variable.size) in def_cc.ARG_REGS
+            return True
 
+        # VEX
         if arch_name == "AARCH64":
             return 16 <= variable.reg < 80  # x0-x7
 
@@ -749,14 +796,17 @@ class CallingConventionAnalysis(Analysis):
                 else:
                     int_args.append(arg)
 
+        stack_args = sorted([a for a in args if isinstance(a, SimStackArg)], key=lambda a: a.stack_offset)
+        stack_int_args = [a for a in stack_args if not a.is_fp]
+        stack_fp_args = [a for a in stack_args if a.is_fp]
         # match int args first
         for reg_name in cc.ARG_REGS:
             try:
                 arg = next(iter(a for a in int_args if isinstance(a, SimRegArg) and a.reg_name == reg_name))
             except StopIteration:
                 # have we reached the end of the args list?
-                if [a for a in int_args if isinstance(a, SimRegArg)]:
-                    # nope
+                if [a for a in int_args if isinstance(a, SimRegArg)] or len(stack_int_args) > 0:
+                    # haven't reached the end yet or there are stack args
                     arg = SimRegArg(reg_name, self.project.arch.bytes)
                 else:
                     break
@@ -771,8 +821,8 @@ class CallingConventionAnalysis(Analysis):
                     arg = next(iter(a for a in fp_args if isinstance(a, SimRegArg) and a.reg_name == reg_name))
                 except StopIteration:
                     # have we reached the end of the args list?
-                    if [a for a in fp_args if isinstance(a, SimRegArg)]:
-                        # nope
+                    if [a for a in fp_args if isinstance(a, SimRegArg)] or len(stack_fp_args) > 0:
+                        # haven't reached the end yet or there are stack args
                         arg = SimRegArg(reg_name, self.project.arch.bytes)
                     else:
                         break
@@ -780,7 +830,6 @@ class CallingConventionAnalysis(Analysis):
                 if arg in fp_args:
                     fp_args.remove(arg)
 
-        stack_args = sorted([a for a in args if isinstance(a, SimStackArg)], key=lambda a: a.stack_offset)
         return reg_args + int_args + fp_args + stack_args
 
     def _guess_arg_type(self, arg: SimFunctionArgument, cc: Optional[SimCC] = None) -> SimType:
@@ -830,6 +879,73 @@ class CallingConventionAnalysis(Analysis):
 
         # fallback
         return SimTypeInt() if cc.arch.bits == 32 else SimTypeLongLong()
+
+    @staticmethod
+    def _likely_saving_temp_reg(ail_block: ailment.Block, d: "Definition", all_reg_defs: Set["Definition"]) -> bool:
+        if d.codeloc.block_addr == ail_block.addr and d.codeloc.stmt_idx < len(ail_block.statements):
+            stmt = ail_block.statements[d.codeloc.stmt_idx]
+            if isinstance(stmt, ailment.Stmt.Assignment) and isinstance(stmt.src, ailment.Expr.Register):
+                src_offset = stmt.src.reg_offset
+                src_reg_def = next(
+                    iter(
+                        d_ for d_ in all_reg_defs if isinstance(d_.atom, Register) and d_.atom.reg_offset == src_offset
+                    ),
+                    None,
+                )
+                if src_reg_def is not None:
+                    if isinstance(src_reg_def.codeloc, ExternalCodeLocation):
+                        return True
+        return False
+
+    def is_va_start_amd64(self, func: Function) -> Tuple[bool, Optional[int]]:
+        # TODO: Use a better pattern matching approach
+        if len(func.block_addrs_set) < 3:
+            return False, None
+
+        head = func.startpoint
+        out_edges = list(func.transition_graph.out_edges(head, data=True))
+        if len(out_edges) != 2:
+            return False, None
+        succ0, succ1 = out_edges[0][1], out_edges[1][1]
+        if func.transition_graph.has_edge(succ0, succ1):
+            mid = succ0
+        elif func.transition_graph.has_edge(succ1, succ0):
+            mid = succ1
+        else:
+            return False, None
+
+        # compare instructions
+        for insn in self.project.factory.block(mid.addr, size=mid.size).capstone.insns:
+            if insn.mnemonic != "movaps":
+                return False, None
+
+        spilled_regs = []
+        allowed_spilled_regs = [
+            capstone.x86.X86_REG_RDI,
+            capstone.x86.X86_REG_RSI,
+            capstone.x86.X86_REG_RDX,
+            capstone.x86.X86_REG_RCX,
+            capstone.x86.X86_REG_R8,
+            capstone.x86.X86_REG_R9,
+        ]
+        for insn in reversed(self.project.factory.block(head.addr, size=head.size).capstone.insns[:-2]):
+            if (
+                insn.mnemonic == "mov"
+                and insn.operands[0].type == capstone.x86.X86_OP_MEM
+                and insn.operands[1].type == capstone.x86.X86_OP_REG
+            ):
+                spilled_regs.append(insn.operands[1].reg)
+            else:
+                break
+
+        if not set(spilled_regs).issubset(set(allowed_spilled_regs)):
+            return False, None
+
+        for i, reg in enumerate(allowed_spilled_regs):
+            if reg in spilled_regs:
+                break
+
+        return True, i
 
 
 register_analysis(CallingConventionAnalysis, "CallingConvention")

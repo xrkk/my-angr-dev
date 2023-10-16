@@ -3,9 +3,10 @@ import logging
 
 import claripy
 import pyvex
+import archinfo
 
 from ...engines.light import SimEngineLightVEXMixin
-from ...calling_conventions import DEFAULT_CC, SimRegArg
+from ...calling_conventions import DEFAULT_CC, default_cc, SimRegArg
 from .values import Top, Bottom
 from .engine_base import SimEnginePropagatorBase
 from .top_checker_mixin import TopCheckerMixin
@@ -109,7 +110,9 @@ class SimEnginePropagatorVEX(
                     ebx_offset = self.arch.registers["ebx"][0]
                     self.state.store_register(ebx_offset, 4, claripy.BVV(self.block.addr + self.block.size, 32))
         if self.arch.name in DEFAULT_CC:
-            cc = DEFAULT_CC[self.arch.name]  # don't instantiate the class for speed
+            cc = default_cc(
+                self.arch.name, platform=self.project.simos.name if self.project.simos is not None else None
+            )  # don't instantiate the class for speed
             if isinstance(cc.RETURN_VAL, SimRegArg):
                 offset, size = self.arch.registers[cc.RETURN_VAL.reg_name]
                 self.state.store_register(offset, size, self.state.top(size * self.arch.byte_width))
@@ -121,6 +124,19 @@ class SimEnginePropagatorVEX(
     #
     # VEX statement handlers
     #
+    def _handle_Dirty(self, stmt):
+        # For RISCV CSR and mret operations, the Dirty statement is skipped.
+        if archinfo.arch_riscv64.is_riscv_arch(self.project.arch):
+            helper = str(stmt.cee)
+            if helper in (
+                "riscv_dirtyhelper_CSR_rw",
+                "riscv_dirtyhelper_CSR_s",
+                "riscv_dirtyhelper_CSR_c",
+                "riscv_dirtyhelper_mret",
+            ):
+                pass
+            else:
+                self.l.warning("Unimplemented Dirty node for current architecture.")
 
     def _handle_WrTmp(self, stmt):
         super()._handle_WrTmp(stmt)

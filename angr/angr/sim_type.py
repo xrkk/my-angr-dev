@@ -566,6 +566,12 @@ class SimTypePointer(SimTypeReg):
         return f"{self.pts_to}*"
 
     def c_repr(self, name=None, full=0, memo=None, indent=0):
+        # if pts_to is SimTypeBottom, we return a void*
+        if isinstance(self.pts_to, SimTypeBottom):
+            out = "void*"
+            if name is None:
+                return out
+            return f"{out} {name}"
         # if it points to an array, we do not need to add a *
         deref_chr = "*" if not isinstance(self.pts_to, SimTypeArray) else ""
         name_with_deref = deref_chr if name is None else f"{deref_chr}{name}"
@@ -843,7 +849,7 @@ class SimTypeFunction(SimType):
     _fields = ("args", "returnty")
     base = False
 
-    def __init__(self, args, returnty, label=None, arg_names=None, variadic=False):
+    def __init__(self, args: List[SimType], returnty: Optional[SimType], label=None, arg_names=None, variadic=False):
         """
         :param label:    The type label
         :param args:     A tuple of types representing the arguments to the function
@@ -851,7 +857,7 @@ class SimTypeFunction(SimType):
         :param variadic: Whether the function accepts varargs
         """
         super().__init__(label=label)
-        self.args = args
+        self.args: List[SimType] = args
         self.returnty: Optional[SimType] = returnty
         self.arg_names = arg_names if arg_names else ()
         self.variadic = variadic
@@ -863,19 +869,14 @@ class SimTypeFunction(SimType):
         return "({}) -> {}".format(", ".join(argstrs), self.returnty)
 
     def c_repr(self, name=None, full=0, memo=None, indent=0):
-        name2 = name or ""
-        name3 = "({})({})".format(
-            name2,
-            ", ".join(
-                a.c_repr(n, full - 1, memo, indent)
-                for a, n in zip(self.args, self.arg_names if self.arg_names and full else (None,) * len(self.args))
-            )
-            + ", ..."
-            if self.variadic
-            else "",
-        )
-        name4 = self.returnty.c_repr(name3, full, memo, indent) if self.returnty is not None else "void %s" % name3
-        return name4
+        formatted_args = [
+            a.c_repr(n, full - 1, memo, indent)
+            for a, n in zip(self.args, self.arg_names if self.arg_names and full else (None,) * len(self.args))
+        ]
+        if self.variadic:
+            formatted_args.append("...")
+        proto = f"({name or ''})({', '.join(formatted_args)})"
+        return f"void {proto}" if self.returnty is None else self.returnty.c_repr(proto, full, memo, indent)
 
     @property
     def size(self):
@@ -3031,6 +3032,13 @@ def _cpp_decl_to_type(decl: Any, extra_types: Dict[str, SimType], opaque_classes
             subdecl = decl.rstrip("&").strip()
             subt = _cpp_decl_to_type(subdecl, extra_types, opaque_classes=opaque_classes)
             t = SimTypeReference(subt)
+            return t
+
+        if decl.endswith("*"):
+            # pointer
+            subdecl = decl.rstrip("*").strip()
+            subt = _cpp_decl_to_type(subdecl, extra_types, opaque_classes=opaque_classes)
+            t = SimTypePointer(subt)
             return t
 
         if decl.endswith(" const"):

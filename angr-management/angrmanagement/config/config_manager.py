@@ -1,7 +1,9 @@
+import contextlib
+import enum
 import logging
 import os
 import re
-from typing import Any, Callable, List, Optional, Type
+from typing import Any, Callable, List, Optional, Tuple, Type
 
 import tomlkit
 import tomlkit.exceptions
@@ -29,15 +31,15 @@ class UninterpretedCE(CE):
 def tomltype2pytype(v, ty: Optional[Type]) -> Any:
     if ty is str:
         if not isinstance(v, tomlkit.items.String):
-            raise TypeError()
+            raise TypeError
         return str(v)
     elif ty is int:
         if not isinstance(v, tomlkit.items.Integer):
-            raise TypeError()
+            raise TypeError
         return v.unwrap()
     elif ty is list:
         if not isinstance(v, tomlkit.items.Array):
-            raise TypeError()
+            raise TypeError
         return [tomltype2pytype(v_, None) for v_ in v.value]
     return str(v) if isinstance(v, tomlkit.items.String) else v.unwrap()
 
@@ -81,6 +83,37 @@ def font_serializer(config_option, value: QFont) -> str:
     return f"{value.pointSize()}px {value.family()}"
 
 
+def enum_parser_serializer_generator(
+    the_enum: enum.Enum, default
+) -> Tuple[Callable[[str, str], enum.Enum], Callable[[str, enum.Enum], str]]:
+    def parser(config_option: str, value: str) -> enum.Enum:
+        try:
+            return the_enum[value]
+        except KeyError:
+            _l.error(
+                "Failed to parse value %r as %s for option %s. Default to %s.",
+                value,
+                type(the_enum),
+                config_option,
+                default,
+            )
+        return default
+
+    def serializer(config_option: str, value: enum.Enum) -> str:
+        if not isinstance(value, the_enum):
+            _l.error(
+                "Failed to serialize value %r as %s for option %s. Default to %s.",
+                value,
+                type(the_enum),
+                config_option,
+                default,
+            )
+            return default
+        return value.name
+
+    return parser, serializer
+
+
 def bool_parser(config_option, value) -> bool:
     if not value:
         return False
@@ -103,6 +136,8 @@ data_serializers = {
     QColor: (color_parser, color_serializer),
     QFont: (font_parser, font_serializer),
     bool: (bool_parser, bool_serializer),
+    QFont.Weight: enum_parser_serializer_generator(QFont.Weight, QFont.Weight.Normal),
+    QFont.Style: enum_parser_serializer_generator(QFont.Style, QFont.Style.StyleNormal),
 }
 
 
@@ -115,12 +150,20 @@ ENTRIES = [
     CE("code_font", QFont, QFont("Source Code Pro", 10)),
     CE("theme_name", str, "Light"),
     CE("disasm_view_minimap_viewport_color", QColor, QColor(0xFF, 0x00, 0x00)),
+    CE("disasm_view_minimap_background_color", QColor, QColor(0xFF, 0xFF, 0xFF, 0xFF)),
+    CE("disasm_view_minimap_outline_color", QColor, QColor(0xB8, 0xB8, 0xB8, 0xFF)),
+    CE("disasm_view_background_color", QColor, QColor(0xFF, 0xFF, 0xFF, 0xFF)),
     CE("disasm_view_operand_color", QColor, QColor(0x00, 0x00, 0x80)),
     CE("disasm_view_operand_constant_color", QColor, QColor(0x00, 0x00, 0x80)),
     CE("disasm_view_variable_label_color", QColor, QColor(0x00, 0x80, 0x00)),
     CE("disasm_view_operand_highlight_color", QColor, QColor(0xFC, 0xEF, 0x00)),
     CE("disasm_view_operand_select_color", QColor, QColor(0xFF, 0xFF, 0x00)),
     CE("disasm_view_function_color", QColor, QColor(0x00, 0x00, 0xFF)),
+    CE("disasm_view_string_color", QColor, QColor(0xA0, 0xA0, 0xA4)),
+    CE("disasm_view_variable_ident_color", QColor, QColor(0xAA, 0x25, 0xDA)),
+    CE("disasm_view_variable_offset_color", QColor, QColor(0x80, 0x80, 0x00)),
+    CE("disasm_view_branch_target_text_color", QColor, QColor(0x80, 0x80, 0x00)),
+    CE("disasm_view_comment_color", QColor, QColor(0x37, 0x3D, 0x3F, 0xFF)),
     CE("disasm_view_ir_default_color", QColor, QColor(0x80, 0x80, 0x80)),
     CE("disasm_view_label_color", QColor, QColor(0x00, 0x00, 0xFF)),
     CE("disasm_view_label_highlight_color", QColor, QColor(0xF0, 0xF0, 0xBF)),
@@ -163,7 +206,7 @@ ENTRIES = [
     CE("palette_alternatebase", QColor, QColor(0xF7, 0xF7, 0xF7, 0xFF)),
     CE("palette_tooltipbase", QColor, QColor(0xFF, 0xFF, 0xDC, 0xFF)),
     CE("palette_tooltiptext", QColor, QColor(0x00, 0x00, 0x00, 0xFF)),
-    CE("palette_placeholdertext", QColor, QColor(0x00, 0x00, 0x00, 0xFF)),
+    CE("palette_placeholdertext", QColor, QColor(0x00, 0x00, 0x00, 0xAF)),
     CE("palette_text", QColor, QColor(0x00, 0x00, 0x00, 0xFF)),
     CE("palette_button", QColor, QColor(0xEF, 0xEF, 0xEF, 0xFF)),
     CE("palette_buttontext", QColor, QColor(0x00, 0x00, 0x00, 0xFF)),
@@ -181,9 +224,26 @@ ENTRIES = [
     CE("palette_link", QColor, QColor(0x00, 0x00, 0xFF, 0xFF)),
     CE("palette_linkvisited", QColor, QColor(0xFF, 0x00, 0xFF, 0xFF)),
     CE("pseudocode_comment_color", QColor, QColor(0x00, 0x80, 0x00, 0xFF)),
+    CE("pseudocode_comment_weight", QFont.Weight, QFont.Weight.Bold),
+    CE("pseudocode_comment_style", QFont.Style, QFont.Style.StyleNormal),
     CE("pseudocode_function_color", QColor, QColor(0x00, 0x00, 0xFF, 0xFF)),
+    CE("pseudocode_function_weight", QFont.Weight, QFont.Weight.Bold),
+    CE("pseudocode_function_style", QFont.Style, QFont.Style.StyleNormal),
     CE("pseudocode_quotation_color", QColor, QColor(0x00, 0x80, 0x00, 0xFF)),
+    CE("pseudocode_quotation_weight", QFont.Weight, QFont.Weight.Normal),
+    CE("pseudocode_quotation_style", QFont.Style, QFont.Style.StyleNormal),
     CE("pseudocode_keyword_color", QColor, QColor(0x00, 0x00, 0x80, 0xFF)),
+    CE("pseudocode_keyword_weight", QFont.Weight, QFont.Weight.Bold),
+    CE("pseudocode_keyword_style", QFont.Style, QFont.Style.StyleNormal),
+    CE("pseudocode_types_color", QColor, QColor(0x00, 0x00, 0x80, 0xFF)),
+    CE("pseudocode_types_weight", QFont.Weight, QFont.Weight.Normal),
+    CE("pseudocode_types_style", QFont.Style, QFont.Style.StyleNormal),
+    CE("pseudocode_variable_color", QColor, QColor(0x00, 0x00, 0x00, 0xFF)),
+    CE("pseudocode_variable_weight", QFont.Weight, QFont.Weight.Normal),
+    CE("pseudocode_variable_style", QFont.Style, QFont.Style.StyleNormal),
+    CE("pseudocode_label_color", QColor, QColor(0x00, 0x00, 0xFF)),
+    CE("pseudocode_label_weight", QFont.Weight, QFont.Weight.Normal),
+    CE("pseudocode_label_style", QFont.Style, QFont.Style.StyleNormal),
     CE("pseudocode_highlight_color", QColor, QColor(0xFF, 0xFF, 0x00, 0xFF)),
     CE("proximity_node_background_color", QColor, QColor(0xFA, 0xFA, 0xFA)),
     CE("proximity_node_selected_background_color", QColor, QColor(0xCC, 0xCC, 0xCC)),
@@ -226,6 +286,7 @@ ENTRIES = [
     CE("enabled_tabs", str, ""),
     # Recent
     CE("recent_files", list, []),
+    CE("prompted_for_url_scheme_registration", bool, False),
 ]
 
 
@@ -422,10 +483,8 @@ class ConfigurationManager:  # pylint: disable=assigning-non-slot
     recent_files: List[str]
 
     def recent_file(self, file_path: str):
-        try:
+        with contextlib.suppress(ValueError):
             self.recent_files.remove(file_path)
-        except ValueError:
-            pass
         self.recent_files = self.recent_files[:9]
         self.recent_files.append(file_path)
 
@@ -505,7 +564,7 @@ class ConfigurationManager:  # pylint: disable=assigning-non-slot
                 v = tomltype2pytype(v, ty)
             except TypeError:
                 _l.warning(
-                    "Value '%s' for configuration option '%s' has type '%s', " "expected type '%s'. Ignoring...",
+                    "Value '%s' for configuration option '%s' has type '%s', expected type '%s'. Ignoring...",
                     v,
                     k,
                     type(v),

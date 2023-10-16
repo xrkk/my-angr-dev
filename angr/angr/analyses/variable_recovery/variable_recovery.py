@@ -4,12 +4,13 @@ from typing import Tuple
 
 import claripy
 
+from angr.analyses import ForwardAnalysis, visitors
+from angr.analyses import AnalysesHub
 from ...errors import SimMemoryMissingError
 from ...storage.memory_mixins.paged_memory.pages.multi_values import MultiValues
 from ... import BP, BP_AFTER
 from ...sim_variable import SimRegisterVariable, SimStackVariable
 from ...code_location import CodeLocation
-from ..forward_analysis import ForwardAnalysis, FunctionGraphVisitor
 from .variable_recovery_base import VariableRecoveryBase, VariableRecoveryStateBase
 from .annotations import StackLocationAnnotation
 
@@ -49,7 +50,7 @@ class VariableRecoveryState(VariableRecoveryStateBase):
         """
 
         for s in self.concrete_states:
-            if s.ip._model_concrete.value == addr:
+            if s.ip.concrete_value == addr:
                 return s
 
         return None
@@ -138,7 +139,7 @@ class VariableRecoveryState(VariableRecoveryStateBase):
         merged = []
 
         for s in self.concrete_states:
-            other_state = other.get_concrete_state(s.ip._model_concrete.value)
+            other_state = other.get_concrete_state(s.ip.concrete_value)
             if other_state is not None:
                 s = s.merge(other_state)
             merged.append(s)
@@ -397,7 +398,7 @@ class VariableRecoveryState(VariableRecoveryStateBase):
                 anno = next(iter(anno for anno in addr.annotations if isinstance(anno, StackLocationAnnotation)), None)
                 if anno is None:
                     if addr.op == "BVV":
-                        return False, addr._model_concrete.value
+                        return False, addr.concrete_value
                     raise ValueError()
                 return True, anno.offset
 
@@ -447,7 +448,7 @@ class VariableRecovery(ForwardAnalysis, VariableRecoveryBase):  # pylint:disable
         :param knowledge.Function func:  The function to analyze.
         """
 
-        function_graph_visitor = FunctionGraphVisitor(func)
+        function_graph_visitor = visitors.FunctionGraphVisitor(func)
 
         VariableRecoveryBase.__init__(self, func, max_iterations, store_live_variables)
         ForwardAnalysis.__init__(
@@ -548,7 +549,5 @@ class VariableRecovery(ForwardAnalysis, VariableRecoveryBase):  # pylint:disable
                     state.downsize_region(state.stack_region),
                 )
 
-
-from angr.analyses import AnalysesHub
 
 AnalysesHub.register_default("VariableRecovery", VariableRecovery)

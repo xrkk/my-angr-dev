@@ -1,5 +1,5 @@
 # pylint:disable=wrong-import-position
-from typing import Optional, Tuple, Any, Union
+from typing import Optional, Tuple, Any, Union, List
 
 import networkx
 
@@ -31,6 +31,8 @@ def remove_last_statement(node):
             stmt = remove_last_statement(node.true_node)
         else:
             raise NotImplementedError("More than one last statement exist")
+    elif type(node) is LoopNode:
+        stmt = remove_last_statement(node.sequence_node)
     else:
         raise NotImplementedError()
 
@@ -224,6 +226,15 @@ def insert_node(parent, insert_location: str, node, node_idx: Optional[Union[int
             raise TypeError(
                 f'Unsupported label value "{label}". Must be one of the following: switch_expr, case, ' f"default."
             )
+    elif isinstance(parent, LoopNode):
+        if label == "condition":
+            raise ValueError("Cannot insert nodes into a condition expression.")
+        if label == "body":
+            if not isinstance(parent.sequence_node, SequenceNode):
+                parent.sequence_node = SequenceNode(parent.sequence_node.addr, nodes=[parent.sequence_node])
+            insert_node(parent.sequence_node, insert_location, node, node_idx)
+        else:
+            raise NotImplementedError()
     else:
         raise NotImplementedError()
 
@@ -315,7 +326,14 @@ def has_nonlabel_statements(block: ailment.Block) -> bool:
     return block.statements and any(not isinstance(stmt, ailment.Stmt.Label) for stmt in block.statements)
 
 
-def first_nonlabel_statement(block: ailment.Block) -> Optional[ailment.Stmt.Statement]:
+def first_nonlabel_statement(block: Union[ailment.Block, "MultiNode"]) -> Optional[ailment.Stmt.Statement]:
+    if isinstance(block, MultiNode):
+        for n in block.nodes:
+            stmt = first_nonlabel_statement(n)
+            if stmt is not None:
+                return stmt
+        return None
+
     for stmt in block.statements:
         if not isinstance(stmt, ailment.Stmt.Label):
             return stmt
@@ -350,10 +368,169 @@ def remove_labels(graph: networkx.DiGraph):
         nodes_map[node] = node_copy
 
     new_graph.add_nodes_from(nodes_map.values())
-    for src, dst in graph.edges:
-        new_graph.add_edge(nodes_map[src], nodes_map[dst])
+    for src, dst, data in graph.edges(data=True):
+        new_graph.add_edge(nodes_map[src], nodes_map[dst], **data)
 
     return new_graph
+
+
+def structured_node_is_simple_return(node: Union["SequenceNode", "MultiNode"], graph: networkx.DiGraph) -> bool:
+    """
+    Will check if a "simple return" is contained within the node a simple returns looks like this:
+    if (cond) {
+      // simple return
+      ...
+      return 0;
+    }
+    ...
+
+    Returns true on any block ending in linear statements and a return.
+    """
+
+    def _flatten_structured_node(packed_node: Union["SequenceNode", "MultiNode"]) -> List[ailment.Block]:
+        if not packed_node or not packed_node.nodes:
+            return []
+
+        blocks = []
+        if packed_node.nodes is not None:
+            for _node in packed_node.nodes:
+                if isinstance(_node, (SequenceNode, MultiNode)):
+                    blocks += _flatten_structured_node(_node)
+                else:
+                    blocks.append(_node)
+
+        return blocks
+
+    # sanity check: we need a graph to understand returning blocks
+    if graph is None:
+        return False
+
+    last_block = None
+    if isinstance(node, (SequenceNode, MultiNode)) and node.nodes:
+        flat_blocks = _flatten_structured_node(node)
+        if all(isinstance(block, ailment.Block) for block in flat_blocks):
+            last_block = flat_blocks[-1]
+    elif isinstance(node, ailment.Block):
+        last_block = node
+
+    valid_last_stmt = last_block is not None
+    if valid_last_stmt and last_block.statements:
+        valid_last_stmt = not isinstance(last_block.statements[-1], (ailment.Stmt.ConditionalJump, ailment.Stmt.Jump))
+
+    return valid_last_stmt and last_block in graph and not list(graph.successors(last_block))
+
+
+def is_statement_terminating(stmt: ailment.statement.Statement, functions) -> bool:
+    if isinstance(stmt, ailment.Stmt.Return):
+        return True
+    if isinstance(stmt, ailment.Stmt.Call) and isinstance(stmt.target, ailment.Expr.Const):
+        # is it calling a non-returning function?
+        target_func_addr = stmt.target.value
+        try:
+            func = functions.get_by_addr(target_func_addr)
+            return func.returning is False
+        except KeyError:
+            pass
+    return False
+
+
+def peephole_optimize_exprs(block, expr_opts):
+    class _any_update:
+        """
+        Local temporary class used as a container for variable `v`.
+        """
+
+        v = False
+
+    def _handle_expr(
+        expr_idx: int, expr: ailment.Expr.Expression, stmt_idx: int, stmt: Optional[ailment.Stmt.Statement], block
+    ) -> Optional[ailment.Expr.Expression]:
+        old_expr = expr
+
+        redo = True
+        while redo:
+            redo = False
+            for expr_opt in expr_opts:
+                if isinstance(expr, expr_opt.expr_classes):
+                    r = expr_opt.optimize(expr)
+                    if r is not None and r is not expr:
+                        expr = r
+                        redo = True
+                        break
+
+        if expr is not old_expr:
+            _any_update.v = True
+            # continue to process the expr
+            r = ailment.AILBlockWalker._handle_expr(walker, expr_idx, expr, stmt_idx, stmt, block)
+            return expr if r is None else r
+
+        return ailment.AILBlockWalker._handle_expr(walker, expr_idx, expr, stmt_idx, stmt, block)
+
+    # run expression optimizers
+    walker = ailment.AILBlockWalker()
+    walker._handle_expr = _handle_expr
+    walker.walk(block)
+
+    return _any_update.v
+
+
+def peephole_optimize_expr(expr, expr_opts):
+    def _handle_expr(
+        expr_idx: int, expr: ailment.Expr.Expression, stmt_idx: int, stmt: Optional[ailment.Stmt.Statement], block
+    ) -> Optional[ailment.Expr.Expression]:
+        old_expr = expr
+
+        redo = True
+        while redo:
+            redo = False
+            for expr_opt in expr_opts:
+                if isinstance(expr, expr_opt.expr_classes):
+                    r = expr_opt.optimize(expr)
+                    if r is not None and r is not expr:
+                        expr = r
+                        redo = True
+                        break
+
+        if expr is not old_expr:
+            # continue to process the expr
+            r = ailment.AILBlockWalker._handle_expr(walker, expr_idx, expr, stmt_idx, stmt, block)
+            return expr if r is None else r
+
+        return ailment.AILBlockWalker._handle_expr(walker, expr_idx, expr, stmt_idx, stmt, block)
+
+    # run expression optimizers
+    walker = ailment.AILBlockWalker()
+    walker._handle_expr = _handle_expr
+    new_expr = walker._handle_expr(0, expr, 0, None, None)
+
+    return new_expr
+
+
+def peephole_optimize_stmts(block, stmt_opts):
+    any_update = False
+    statements = []
+
+    # run statement optimizers
+    for stmt in block.statements:
+        old_stmt = stmt
+        redo = True
+        while redo:
+            redo = False
+            for opt in stmt_opts:
+                if isinstance(stmt, opt.stmt_classes):
+                    r = opt.optimize(stmt)
+                    if r is not None and r is not stmt:
+                        stmt = r
+                        redo = True
+                        break
+
+        if stmt is not None and stmt is not old_stmt:
+            statements.append(stmt)
+            any_update = True
+        else:
+            statements.append(old_stmt)
+
+    return statements, any_update
 
 
 # delayed import
@@ -365,4 +542,5 @@ from .structuring.structurer_nodes import (
     ConditionNode,
     SwitchCaseNode,
     CascadingConditionNode,
+    LoopNode,
 )

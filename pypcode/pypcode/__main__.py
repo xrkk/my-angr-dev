@@ -11,66 +11,95 @@ import logging
 import sys
 from difflib import SequenceMatcher
 
-from pypcode import Arch, Context, PcodePrettyPrinter
+from pypcode import Arch, BadDataError, Context, OpCode, PcodePrettyPrinter, TranslateFlags, UnimplError
 
 log = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG, format='[%(name)s:%(levelname)s] %(message)s')
+logging.basicConfig(level=logging.DEBUG, format="[%(name)s:%(levelname)s] %(message)s")
 
 
 def main():
-  ap = argparse.ArgumentParser(prog='pypcode', description='Disassemble and translate machine code to P-code using SLEIGH')
-  ap.add_argument('-l', '--list', action='store_true', help='list supported architecture languages')
-  ap.add_argument('langid', help='architecture language id')
-  ap.add_argument('binary', help='path to flat binary code')
-  ap.add_argument('base', default='0', nargs='?', help='base address to load at')
-  ap.add_argument('-o', '--offset', default='0', help='offset in binary file to load from')
-  ap.add_argument('-s', '--length', default=None, help='length of code in bytes to load')
-  ap.add_argument('-i', '--max-instructions', default=0, type=int, help='maximum number of instructions to translate')
-  ap.add_argument('-r', '--raw', action='store_true', default=False, help='show raw p-code (disable pretty-printing)')
-  ap.add_argument('-b', '--basic-block', action='store_true', default=False, help='stop translation at end of basic block')
+    ap = argparse.ArgumentParser(
+        prog="pypcode",
+        description="Disassemble and translate machine code to P-code using SLEIGH",
+    )
+    ap.add_argument(
+        "-l",
+        "--list",
+        action="store_true",
+        help="list supported architecture languages",
+    )
+    ap.add_argument("langid", help="architecture language id")
+    ap.add_argument("binary", help="path to flat binary code")
+    ap.add_argument("base", default="0", nargs="?", help="base address to load at")
+    ap.add_argument("-o", "--offset", default="0", help="offset in binary file to load from")
+    ap.add_argument("-s", "--length", default=None, help="length of code in bytes to load")
+    ap.add_argument(
+        "-i",
+        "--max-instructions",
+        default=0,
+        type=int,
+        help="maximum number of instructions to translate",
+    )
+    ap.add_argument(
+        "-b",
+        "--basic-block",
+        action="store_true",
+        default=False,
+        help="stop translation at end of basic block",
+    )
 
-  # List supported languages
-  langs = {l.id:l for arch in Arch.enumerate() for l in arch.languages}
-  if ('-l' in sys.argv) or ('--list' in sys.argv):
-    for langid in sorted(langs):
-      print('%-35s - %s' % (langid, langs[langid].description))
-    return
+    # List supported languages
+    langs = {lang.id: lang for arch in Arch.enumerate() for lang in arch.languages}
+    if ("-l" in sys.argv) or ("--list" in sys.argv):
+        for langid in sorted(langs):
+            print("%-35s - %s" % (langid, langs[langid].description))
+        return
 
-  args = ap.parse_args()
+    args = ap.parse_args()
 
-  # Get requested language
-  if args.langid not in langs:
-    print(f'Language "{args.langid}" not found.')
-    t = args.langid.upper()
-    suggestions = [l for l in langs if SequenceMatcher(None, t, l.split()[0].upper()).ratio() > 0.25]
-    if len(suggestions):
-      print('\nSuggestions:')
-      for langid in sorted(suggestions):
-        print('  %-35s - %s' % (langid, langs[langid].description))
-      print('')
-    print('Try `--list` for full list of architectures.')
-    exit(1)
+    # Get requested language
+    if args.langid not in langs:
+        print(f'Language "{args.langid}" not found.')
+        t = args.langid.upper()
+        suggestions = [langid for langid in langs if SequenceMatcher(None, t, langid.split()[0].upper()).ratio() > 0.25]
+        if len(suggestions):
+            print("\nSuggestions:")
+            for langid in sorted(suggestions):
+                print("  %-35s - %s" % (langid, langs[langid].description))
+            print("")
+        print("Try `--list` for full list of architectures.")
+        sys.exit(1)
 
-  # Load target binary code
-  base = int(args.base, 0)
-  with open(args.binary, 'rb') as f:
-    f.seek(int(args.offset, 0))
-    code = f.read(int(args.length, 0)) if args.length else f.read()
+    # Load target binary code
+    base = int(args.base, 0)
+    with open(args.binary, "rb") as f:
+        f.seek(int(args.offset, 0))
+        code = f.read(int(args.length, 0)) if args.length else f.read()
 
-  # Translate
-  ctx = Context(langs[args.langid])
-  res = ctx.translate(code, base, args.max_instructions, bb_terminating=args.basic_block)
+    # Translate
+    ctx = Context(langs[args.langid])
 
-  for insn in res.instructions:
-    print('-' * 80)
-    print('%08x/%d: %s %s' % (insn.address.offset, insn.length, insn.asm_mnem, insn.asm_body))
-    print('-' * 80)
-    for op in insn.ops:
-      print('%3d: %s' % (op.seq.uniq, str(op) if args.raw else PcodePrettyPrinter.fmt_op(op)))
-    print('')
+    try:
+        flags = TranslateFlags.BB_TERMINATING if args.basic_block else 0
+        res = ctx.translate(code, base, max_instructions=args.max_instructions, flags=flags)
 
-  if res.error:
-    print('** An error occured during translation: ' + repr(res.error))
+        last_imark_idx = 0
+        for i, op in enumerate(res.ops):
+            if op.opcode == OpCode.IMARK:
+                last_imark_idx = i
+                disas_addr = op.inputs[0].offset
+                disas_offset = disas_addr - base
+                disas_len = sum(vn.size for vn in op.inputs)
+                disas_slice = code[disas_offset : disas_offset + disas_len]
+                for insn in ctx.disassemble(disas_slice, disas_addr).instructions:
+                    print(f"{insn.addr.offset:#x}/{insn.length}: {insn.mnem} {insn.body}")
+            else:
+                print(f" {i - last_imark_idx - 1:3d}: {PcodePrettyPrinter.fmt_op(op)}")
+        print("")
+    except (BadDataError, UnimplError) as e:
+        print(f"An error occurred during translation: {e}")
+        sys.exit(1)
 
-if __name__ == '__main__':
-	main()
+
+if __name__ == "__main__":
+    main()

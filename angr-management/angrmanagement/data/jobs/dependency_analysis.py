@@ -4,14 +4,15 @@ from typing import TYPE_CHECKING, Generator, List, Optional, Set, Tuple
 from angr import KnowledgeBase
 from angr.analyses.reaching_definitions.call_trace import CallTrace
 from angr.analyses.reaching_definitions.dep_graph import DepGraph
-from angr.analyses.reaching_definitions.external_codeloc import ExternalCodeLocation
 from angr.calling_conventions import DEFAULT_CC, SimCC, SimRegArg
+from angr.code_location import ExternalCodeLocation
 from angr.knowledge_plugins import Function
 from angr.knowledge_plugins.key_definitions.atoms import Register
 from angr.knowledge_plugins.key_definitions.constants import OP_BEFORE
 from angr.sim_type import SimType
 from PySide6.QtWidgets import QMessageBox
 
+from angrmanagement.logic import GlobalInfo
 from angrmanagement.logic.threads import gui_thread_schedule_async
 
 from .job import Job
@@ -67,7 +68,7 @@ class DependencyAnalysisJob(Job):
                 atom = Register(inst.project.arch.registers[arg.reg_name][0], arg.size)
                 return sink, atom
             else:
-                raise NotImplementedError()
+                raise NotImplementedError
 
         return None, None
 
@@ -132,7 +133,7 @@ class DependencyAnalysisJob(Job):
                 # determine if there is any values are marked as coming from Externalog. these values are not resolved
                 # within the current call-depth range
                 has_external = False
-                for def_, graph in closures.items():
+                for _def, graph in closures.items():
                     for node in graph.nodes():
                         if isinstance(node.codeloc, ExternalCodeLocation):
                             # yes!
@@ -203,11 +204,11 @@ class DependencyAnalysisJob(Job):
             caller_depth = curr_depth + 1
             if caller_depth >= max_depth:
                 # reached the depth limit. add them to potential analysis starts
-                starts |= set(map(lambda caller_addr: trace.step_back(caller_addr, None, caller_func_addr), callers))
+                starts |= {trace.step_back(caller_addr, None, caller_func_addr) for caller_addr in callers}
             else:
                 # add them to the queue
-                for item in map(
-                    lambda caller_addr: (trace.step_back(caller_addr, None, caller_func_addr), caller_depth), callers
+                for item in (
+                    (trace.step_back(caller_addr, None, caller_func_addr), caller_depth) for caller_addr in callers
                 ):
                     queue.append(item)
             encountered |= callers
@@ -252,7 +253,7 @@ class DependencyAnalysisJob(Job):
 
     @staticmethod
     def _display_closures(inst, sink_atom: "Atom", sink_addr: int, closures):
-        view = inst.workspace.view_manager.first_view_in_category("dependencies")
+        view = GlobalInfo.main_window.workspace.view_manager.first_view_in_category("dependencies")
         if view is None:
             return
 
@@ -263,4 +264,4 @@ class DependencyAnalysisJob(Job):
             view.reload()
         except Exception:
             log.warning("An error occurred when displaying the closures.", exc_info=True)
-        inst.workspace.view_manager.raise_view(view)
+        GlobalInfo.main_window.workspace.view_manager.raise_view(view)

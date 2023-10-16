@@ -1,4 +1,6 @@
-from .arch import Arch, register_arch, Endness, Register
+from archinfo.types import RegisterOffset
+
+from .arch import Arch, Endness, Register, register_arch
 from .tls import TLSArchInfo
 
 try:
@@ -59,7 +61,7 @@ class ArchPPC32(Arch):
     max_inst_bytes = 4
     # https://www.ibm.com/developerworks/community/forums/html/topic?id=77777777-0000-0000-0000-000013836863
     # claims that r15 is the base pointer but that is NOT what I see in practice
-    ret_offset = 28
+    ret_offset = RegisterOffset(28)
     syscall_num_offset = 16
     call_pushes_ret = False
     stack_change = -4
@@ -248,6 +250,75 @@ class ArchPPC32(Arch):
     ld_linux_name = "ld.so.1"
     elf_tls = TLSArchInfo(1, 52, [], [48], [], 0x7000, 0x8000)
 
+    dwarf_registers = [
+        "gpr0",
+        "gpr1",
+        "gpr2",
+        "gpr3",
+        "gpr4",
+        "gpr5",
+        "gpr6",
+        "gpr7",
+        "gpr8",
+        "gpr9",
+        "gpr10",
+        "gpr11",
+        "gpr12",
+        "gpr13",
+        "gpr14",
+        "gpr15",
+        "gpr16",
+        "gpr17",
+        "gpr18",
+        "gpr19",
+        "gpr20",
+        "gpr21",
+        "gpr22",
+        "gpr23",
+        "gpr24",
+        "gpr25",
+        "gpr26",
+        "gpr27",
+        "gpr28",
+        "gpr29",
+        "gpr30",
+        "gpr31",
+        "vsr0",
+        "vsr1",
+        "vsr2",
+        "vsr3",
+        "vsr4",
+        "vsr5",
+        "vsr6",
+        "vsr7",
+        "vsr8",
+        "vsr9",
+        "vsr10",
+        "vsr11",
+        "vsr12",
+        "vsr13",
+        "vsr14",
+        "vsr15",
+        "vsr16",
+        "vsr17",
+        "vsr18",
+        "vsr19",
+        "vsr20",
+        "vsr21",
+        "vsr22",
+        "vsr23",
+        "vsr24",
+        "vsr25",
+        "vsr26",
+        "vsr27",
+        "vsr28",
+        "vsr29",
+        "vsr30",
+        "vsr31",
+        "cr",
+        "fpscr",
+    ]
 
-register_arch([r".*p\w*pc.*be"], 32, "Iend_BE", ArchPPC32)
-register_arch([r".*p\w*pc.*"], 32, "any", ArchPPC32)
+
+register_arch([r".*p\w*pc.*be"], 32, Endness.BE, ArchPPC32)
+register_arch([r".*p\w*pc.*"], 32, Endness.ANY, ArchPPC32)

@@ -22,7 +22,7 @@ class PaletteModel(QAbstractItemModel):
 
     def __init__(self, workspace: "Workspace"):
         super().__init__()
-        self.workspace: "Workspace" = workspace
+        self.workspace: Workspace = workspace
         self._available_items: List[Any] = self.get_items()
         self._item_to_caption: Dict[Any, str] = {
             item: self.get_caption_for_item(item) for item in self._available_items
@@ -83,11 +83,9 @@ class CommandPaletteModel(PaletteModel):
     """
 
     def get_items(self) -> List["Command"]:
-        return list(
-            sorted(
-                [cmd for cmd in self.workspace.command_manager.get_commands() if cmd.is_visible],
-                key=lambda cmd: cmd.caption,
-            )
+        return sorted(
+            [cmd for cmd in self.workspace.command_manager.get_commands() if cmd.is_visible],
+            key=lambda cmd: cmd.caption,
         )
 
     def get_caption_for_item(self, item: "Command") -> str:

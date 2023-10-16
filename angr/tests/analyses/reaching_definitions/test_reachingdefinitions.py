@@ -1,26 +1,28 @@
+#!/usr/bin/env python3
 # Disable some pylint warnings: no-self-use, missing-docstring
-# pylint: disable=R0201, C0111
+# pylint: disable=R0201,C0111,bad-builtin
 
 import os
 import pickle
 from unittest import TestCase, main
 
 import ailment
+import claripy
+
 import angr
 from angr.analyses import ReachingDefinitionsAnalysis, CFGFast, CompleteCallingConventionsAnalysis
-from angr.code_location import CodeLocation
-from angr.analyses.reaching_definitions.external_codeloc import ExternalCodeLocation
+from angr.code_location import CodeLocation, ExternalCodeLocation
 from angr.analyses.reaching_definitions.rd_state import ReachingDefinitionsState
 from angr.analyses.reaching_definitions.subject import Subject
 from angr.analyses.reaching_definitions.dep_graph import DepGraph
 from angr.block import Block
 from angr.knowledge_plugins.key_definitions.live_definitions import LiveDefinitions
-from angr.knowledge_plugins.key_definitions.atoms import GuardUse, Tmp, Register, MemoryLocation
-from angr.knowledge_plugins.key_definitions.constants import OP_BEFORE, OP_AFTER
+from angr.knowledge_plugins.key_definitions.atoms import AtomKind, GuardUse, Tmp, Register, MemoryLocation
+from angr.knowledge_plugins.key_definitions.constants import ObservationPointType, OP_BEFORE, OP_AFTER
 from angr.knowledge_plugins.key_definitions.live_definitions import Definition, SpOffset
-from angr.utils.constants import DEFAULT_STATEMENT
 from angr.storage.memory_mixins import MultiValuedMemory
 from angr.storage.memory_object import SimMemoryObject
+from angr.utils.constants import DEFAULT_STATEMENT
 
 
 class InsnAndNodeObserveTestingUtils:
@@ -31,7 +33,7 @@ class InsnAndNodeObserveTestingUtils:
                 lambda attr: {
                     assertion(getattr(live_definition_1, attr)._pages, getattr(live_definition_2, attr)._pages)
                 },
-                ["register_definitions", "stack_definitions", "memory_definitions"],
+                ["registers", "stack", "memory"],
             )
         )
         assertion(getattr(live_definition_1, "tmps"), getattr(live_definition_2, "tmps"))
@@ -54,19 +56,20 @@ class InsnAndNodeObserveTestingUtils:
         reaching_definitions = project.analyses[ReachingDefinitionsAnalysis].prep()(
             subject=main_function,
             observation_points=observation_points,
-            call_stack=[],
         )
 
-        state = ReachingDefinitionsState(project.arch, reaching_definitions.subject)
+        state = ReachingDefinitionsState(
+            CodeLocation(main_function.addr, None), project.arch, reaching_definitions.subject
+        )
 
         return (project, main_function, reaching_definitions, state)
 
 
-def _binary_path(binary_name):
+def _binary_path(binary_name, arch: str = "x86_64"):
     tests_location = os.path.join(
         os.path.dirname(os.path.realpath(__file__)), "..", "..", "..", "..", "binaries", "tests"
     )
-    return os.path.join(tests_location, "x86_64", binary_name)
+    return os.path.join(tests_location, arch, binary_name)
 
 
 def _result_path(binary_results_name):
@@ -81,13 +84,12 @@ class TestReachingDefinitions(TestCase):
         reaching_definition = project.analyses[ReachingDefinitionsAnalysis].prep(kb=tmp_kb)(
             subject=function,
             observe_all=True,
-            call_stack=[],
         )
 
         result = _extract_result(reaching_definition)
 
         # Uncomment these to regenerate the reference results... if you dare
-        # with open(result_path, 'wb') as result_file:
+        # with open(result_path, "wb") as result_file:
         #    pickle.dump(result, result_file)
         with open(result_path, "rb") as result_file:
             expected_result = pickle.load(result_file)
@@ -118,11 +120,11 @@ class TestReachingDefinitions(TestCase):
             unsorted_result = map(
                 lambda x: {
                     "key": x[0],
-                    "register_definitions": self._extract_all_definitions_from_storage(x[1].register_definitions),
-                    "stack_definitions": self._extract_all_definitions_from_storage(x[1].stack_definitions),
-                    "memory_definitions": self._extract_all_definitions_from_storage(x[1].memory_definitions),
+                    "register_definitions": self._extract_all_definitions_from_storage(x[1].registers),
+                    "stack_definitions": self._extract_all_definitions_from_storage(x[1].stack),
+                    "memory_definitions": self._extract_all_definitions_from_storage(x[1].memory),
                 },
-                rda.observed_results.items(),
+                [(k, v) for k, v in rda.observed_results.items() if k[0] != "stmt"],
             )
             return list(sorted(unsorted_result, key=lambda x: x["key"]))
 
@@ -242,71 +244,6 @@ class TestReachingDefinitions(TestCase):
             )
         )
 
-    def test_init_the_call_stack_with_a_block_as_subject_add_its_owning_function_to_the_call_stack(self):
-        binary_path = _binary_path("all")
-        project = angr.Project(binary_path, load_options={"auto_load_libs": False})
-        cfg = project.analyses[CFGFast].prep()()
-
-        _start = cfg.kb.functions["_start"]
-        __libc_start_main = cfg.kb.functions["__libc_start_main"]
-        call_stack = [_start.addr, __libc_start_main.addr]
-
-        main_function = cfg.kb.functions["main"]
-        main_address = main_function.addr
-        main_block = Block(addr=main_address, project=project)
-
-        reaching_definitions = project.analyses[ReachingDefinitionsAnalysis].prep()(
-            subject=main_block, call_stack=call_stack
-        )
-        expected_call_stack = call_stack + [main_function.addr]
-
-        self.assertEqual(reaching_definitions._call_stack, expected_call_stack)
-
-    def test_init_the_call_stack_with_another_block_as_subject_does_not_deepen_the_call_stack(self):
-        binary_path = _binary_path("all")
-        project = angr.Project(binary_path, load_options={"auto_load_libs": False})
-        cfg = project.analyses[CFGFast].prep()()
-
-        _start = cfg.kb.functions["_start"]
-        __libc_start_main = cfg.kb.functions["__libc_start_main"]
-        initial_call_stack = [_start.addr, __libc_start_main.addr]
-
-        main_function = cfg.kb.functions["main"]
-        main_address = main_function.addr
-        main_block = Block(addr=main_address, project=project)
-        another_block_in_main = Block(addr=0x4006FD, project=project)
-
-        new_call_stack = (
-            project.analyses[ReachingDefinitionsAnalysis]
-            .prep()(subject=main_block, call_stack=initial_call_stack)
-            ._call_stack
-        )
-
-        reaching_definitions = project.analyses[ReachingDefinitionsAnalysis].prep()(
-            subject=another_block_in_main, call_stack=new_call_stack
-        )
-        expected_call_stack = initial_call_stack + [main_function.addr]
-
-        self.assertEqual(reaching_definitions._call_stack, expected_call_stack)
-
-    def test_init_the_call_stack_with_a_function_as_subject_adds_it_to_the_call_stack(self):
-        binary_path = _binary_path("all")
-        project = angr.Project(binary_path, load_options={"auto_load_libs": False})
-        cfg = project.analyses[CFGFast].prep()()
-
-        _start = cfg.kb.functions["_start"]
-        __libc_start_main = cfg.kb.functions["__libc_start_main"]
-        initial_call_stack = [_start.addr, __libc_start_main.addr]
-
-        main_function = cfg.kb.functions["main"]
-
-        reaching_definitions = project.analyses[ReachingDefinitionsAnalysis].prep()(
-            subject=main_function, call_stack=initial_call_stack
-        )
-        expected_call_stack = initial_call_stack + [main_function.addr]
-
-        self.assertEqual(reaching_definitions._call_stack, expected_call_stack)
-
     def test_reaching_definition_analysis_exposes_its_subject(self):
         binary_path = _binary_path("all")
         project = angr.Project(binary_path, load_options={"auto_load_libs": False})
@@ -339,15 +276,17 @@ class TestReachingDefinitions(TestCase):
     def test_dep_graph(self):
         project = angr.Project(_binary_path("true"), auto_load_libs=False)
         cfg = project.analyses[CFGFast].prep()()
-        main = cfg.functions["main"]
+        main_func = cfg.functions["main"]
 
         # build a def-use graph for main() of /bin/true without tmps.
         # check that the only dependency of the first block's
         # guard is the four cc registers
-        rda = project.analyses[ReachingDefinitionsAnalysis].prep()(subject=main, track_tmps=False, dep_graph=DepGraph())
+        rda = project.analyses[ReachingDefinitionsAnalysis].prep()(
+            subject=main_func, track_tmps=False, track_consts=False, dep_graph=True
+        )
         guard_use = list(
             filter(
-                lambda def_: type(def_.atom) is GuardUse and def_.codeloc.block_addr == main.addr,
+                lambda def_: type(def_.atom) is GuardUse and def_.codeloc.block_addr == main_func.addr,
                 rda.dep_graph._graph.nodes(),
             )
         )[0]
@@ -360,10 +299,14 @@ class TestReachingDefinitions(TestCase):
         )
 
         # build a def-use graph for main() of /bin/true. check that t7 in the first block is only used by the guard
-        rda = project.analyses[ReachingDefinitionsAnalysis].prep()(subject=main, track_tmps=True, dep_graph=DepGraph())
+        rda = project.analyses[ReachingDefinitionsAnalysis].prep()(
+            subject=main_func, track_tmps=True, dep_graph=DepGraph()
+        )
         tmp_7 = list(
             filter(
-                lambda def_: type(def_.atom) is Tmp and def_.atom.tmp_idx == 7 and def_.codeloc.block_addr == main.addr,
+                lambda def_: type(def_.atom) is Tmp
+                and def_.atom.tmp_idx == 7
+                and def_.codeloc.block_addr == main_func.addr,
                 rda.dep_graph._graph.nodes(),
             )
         )[0]
@@ -375,10 +318,10 @@ class TestReachingDefinitions(TestCase):
         project = angr.Project(bin_path, auto_load_libs=False)
         arch = project.arch
         cfg = project.analyses[CFGFast].prep()()
-        main = cfg.functions["authenticate"]
+        main_func = cfg.functions["authenticate"]
 
         rda: ReachingDefinitionsAnalysis = project.analyses[ReachingDefinitionsAnalysis].prep()(
-            subject=main, track_tmps=False, dep_graph=DepGraph()
+            subject=main_func, track_tmps=False, track_consts=False, dep_graph=True
         )
         dep_graph = rda.dep_graph
         open_rdi = next(
@@ -422,15 +365,14 @@ class TestReachingDefinitions(TestCase):
         project = angr.Project(bin_path, auto_load_libs=False)
         arch = project.arch
         cfg = project.analyses[CFGFast].prep()()
-        main = cfg.functions["main"]
+        main_func = cfg.functions["main"]
 
         project.analyses[CompleteCallingConventionsAnalysis].prep()(recover_variables=True)
-        rda = project.analyses[ReachingDefinitionsAnalysis].prep()(subject=main, track_tmps=False, call_stack=[])
+        rda = project.analyses[ReachingDefinitionsAnalysis].prep()(subject=main_func, track_tmps=False)
 
         # 4007ae
         # rsi and rdi are all used by authenticate()
-        context = (main.addr,)
-        code_location = CodeLocation(0x4007A0, DEFAULT_STATEMENT, ins_addr=0x4007AE, context=context)
+        code_location = CodeLocation(0x4007A0, DEFAULT_STATEMENT, ins_addr=0x4007AE)
         uses = rda.all_uses.get_uses_by_location(code_location)
         self.assertEqual(len(uses), 2)
         auth_rdi = next(
@@ -462,6 +404,59 @@ class TestReachingDefinitions(TestCase):
 
         block = project.factory.block(project.entry, cross_insn_opt=False)
         _ = project.analyses[ReachingDefinitionsAnalysis].prep()(subject=block, track_tmps=False)  # it should not crash
+
+    def test_partial_register_read(self):
+        bin_path = _binary_path("fauxware")
+        project = angr.Project(bin_path, auto_load_libs=False)
+        cfg = project.analyses[CFGFast].prep()()
+        rda = project.analyses[ReachingDefinitionsAnalysis].prep()(subject=cfg.kb.functions["main"], observe_all=True)
+        mv = rda.model.observed_results[("insn", 0x400765, OP_BEFORE)].registers.load(
+            project.arch.registers["edx"][0],
+            size=4,
+            endness=project.arch.register_endness,
+        )
+        assert claripy.is_true(mv.one_value() == claripy.BVV(1, 32))
+
+    def test_conditional_return(self):
+        bin_path = _binary_path("check_dap", arch="armel")
+        project = angr.Project(bin_path, auto_load_libs=False)
+        cfg = project.analyses[CFGFast].prep()(normalize=True)
+        rda = project.analyses[ReachingDefinitionsAnalysis].prep()(subject=cfg.kb.functions[0x93E0], observe_all=True)
+        sp_0 = rda.model.observed_results[("insn", 0x9410, OP_BEFORE)].registers.load(
+            project.arch.sp_offset,
+            size=4,
+            endness=project.arch.register_endness,
+        )
+        sp_1 = rda.model.observed_results[("insn", 0x9410, OP_AFTER)].registers.load(
+            project.arch.sp_offset,
+            size=4,
+            endness=project.arch.register_endness,
+        )
+        assert sp_0 == sp_1
+
+    def test_constants_not_stored_to_live_memory_defs(self):
+        # Ensure constants loaded from read-only sections are not stored back to memory definitions. If they are stored,
+        # we may accidentally pair them with TOP during state merging.
+        project = angr.Project(_binary_path("two_cond_func_call_with_const_arg", "armel"), auto_load_libs=False)
+        project.analyses.CFGFast()
+        project.analyses.CompleteCallingConventions(recover_variables=True)
+        rda = project.analyses.ReachingDefinitions("main", observe_all=True)
+
+        for info in rda.callsites_to("f"):
+            (defn,) = info.args_defns[0]
+            ld = rda.model.get_observation_by_insn(info.callsite, ObservationPointType.OP_BEFORE)
+
+            # Expect a singular mem predecessor
+            preds = rda.dep_graph.find_all_predecessors(defn, kind=AtomKind.MEMORY)
+            assert len(preds) == 1
+
+            # Verify not stored
+            with self.assertRaises(angr.errors.SimMemoryMissingError):
+                atom = preds[0].atom
+                ld.memory.load(atom.addr, atom.size)
+
+            # Verify expected constant value
+            assert ld.get_concrete_value_from_definition(defn) == 1337
 
 
 if __name__ == "__main__":

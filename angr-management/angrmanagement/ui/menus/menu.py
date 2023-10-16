@@ -74,10 +74,7 @@ class Menu:
             # in order to use the cached result, must not have extra entries
             return self._qmenu
 
-        if self.parent is not None:
-            menu = QMenu(self.caption, self.parent)
-        else:
-            menu = QMenu(self.caption)
+        menu = QMenu(self.caption, self.parent) if self.parent is not None else QMenu(self.caption)
 
         for entry in self.entries + extra_entries:
             self.translate_element(menu, entry)
@@ -152,5 +149,5 @@ class Menu:
 
     def remove(self, action):
         self.entries.remove(action)
-        if self._qmenu is not None and type(action) is MenuEntry:
+        if self._qmenu is not None and isinstance(action, MenuEntry):
             self._qmenu.removeAction(action._qaction)

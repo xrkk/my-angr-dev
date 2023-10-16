@@ -23,10 +23,10 @@ class XRef(Serializable):
 
     def __init__(
         self,
-        ins_addr=None,
-        block_addr=None,
-        stmt_idx=None,
-        insn_op_idx=None,
+        ins_addr: Optional[int] = None,
+        block_addr: Optional[int] = None,
+        stmt_idx: Optional[int] = None,
+        insn_op_idx: Optional[int] = None,
         memory_data=None,
         dst: Optional[int] = None,
         xref_type=None,
@@ -35,10 +35,10 @@ class XRef(Serializable):
             raise TypeError("XRefs must be pointing to a constant target. Target %r is not supported." % dst)
 
         # src
-        self.ins_addr = ins_addr
-        self.insn_op_idx = insn_op_idx
-        self.block_addr = block_addr
-        self.stmt_idx = stmt_idx
+        self.ins_addr: Optional[int] = ins_addr
+        self.insn_op_idx: Optional[int] = insn_op_idx
+        self.block_addr: Optional[int] = block_addr
+        self.stmt_idx: Optional[int] = stmt_idx
 
         # dst
         self.memory_data = memory_data  # optional
@@ -53,10 +53,19 @@ class XRef(Serializable):
         return XRefType.to_string(self.type)
 
     def __repr__(self):
+        if self.dst is not None:
+            if isinstance(self.dst, int):
+                dst_str = hex(self.dst)
+            else:
+                dst_str = str(self.dst)
+        elif self.memory_data is not None:
+            dst_str = hex(self.memory_data.addr)
+        else:
+            dst_str = "unknown"
         return "<XRef {}: {}->{}>".format(
             self.type_string,
             "%#x" % self.ins_addr if self.ins_addr is not None else "%#x[%d]" % (self.block_addr, self.stmt_idx),
-            "%s" % self.dst if self.dst is not None else "%#x" % (self.memory_data.addr),
+            dst_str,
         )
 
     def __eq__(self, other):

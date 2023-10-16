@@ -2,7 +2,8 @@ import logging
 from typing import TYPE_CHECKING, Any, Optional, Set, Union
 
 from angr.analyses.decompiler.structured_codegen import DummyStructuredCodeGenerator
-from angr.analyses.decompiler.structured_codegen.c import CConstant, CFunctionCall, CStructuredCodeGenerator
+from angr.analyses.decompiler.structured_codegen.c import CConstant, CFunctionCall, CStructuredCodeGenerator, CVariable
+from angr.sim_variable import SimMemoryVariable
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QComboBox, QDockWidget, QFrame, QHBoxLayout, QMainWindow, QTextEdit, QVBoxLayout, QWidget
@@ -11,11 +12,13 @@ from angrmanagement.config import Conf
 from angrmanagement.data.jobs import DecompileFunctionJob, VariableRecoveryJob
 from angrmanagement.data.object_container import ObjectContainer
 from angrmanagement.logic.disassembly import JumpHistory
+from angrmanagement.ui.dialogs.jumpto import JumpTo
 from angrmanagement.ui.documents import QCodeDocument
 from angrmanagement.ui.toolbars import NavToolbar
 from angrmanagement.ui.widgets.qccode_edit import QCCodeEdit
 from angrmanagement.ui.widgets.qdecomp_options import QDecompilationOptions
 
+from .disassembly_view import DisassemblyView
 from .view import BaseView
 
 if TYPE_CHECKING:
@@ -32,8 +35,8 @@ class CodeView(BaseView):
 
     FUNCTION_SPECIFIC_VIEW = True
 
-    def __init__(self, instance, default_docking_position, *args, **kwargs):
-        super().__init__("pseudocode", instance, default_docking_position, *args, **kwargs)
+    def __init__(self, workspace, instance, default_docking_position, *args, **kwargs):
+        super().__init__("pseudocode", workspace, instance, default_docking_position, *args, **kwargs)
 
         self.base_caption = "Pseudocode"
 
@@ -208,7 +211,7 @@ class CodeView(BaseView):
                     self._function.am_event(focus_addr=self.addr.am_obj, focus=focus)
                 else:
                     log.error(
-                        "There is a block which is in the current function " "but find_closest_node_pos failed on it"
+                        "There is a block which is in the current function but find_closest_node_pos failed on it"
                     )
 
     def _on_new_node(self, **kwargs):  # pylint: disable=unused-argument
@@ -254,7 +257,7 @@ class CodeView(BaseView):
         else:
             if event == "retype_variable":
                 dec = self.instance.project.analyses.Decompiler(
-                    self._function, variable_kb=self.instance.pseudocode_variable_kb, decompile=False
+                    self._function.am_obj, variable_kb=self.instance.pseudocode_variable_kb, decompile=False
                 )
                 dec_cache = self.instance.kb.structured_code[(self._function.addr, "pseudocode")]
                 new_codegen = dec.reflow_variable_types(
@@ -302,10 +305,7 @@ class CodeView(BaseView):
     def _on_new_function(self, focus=False, focus_addr=None, flavor=None, **kwargs):  # pylint: disable=unused-argument
         # sets a new function. extra args are used in case this operation requires waiting for the decompiler
         if flavor is None:
-            if self.codegen.am_none:
-                flavor = "pseudocode"
-            else:
-                flavor = self.codegen.flavor
+            flavor = "pseudocode" if self.codegen.am_none else self.codegen.flavor
 
         if not self.codegen.am_none and self._last_function is self._function.am_obj:
             self._focus_core(focus, focus_addr)
@@ -357,13 +357,17 @@ class CodeView(BaseView):
                 if selected_node.callee_func is not None:
                     self.jump_history.record_address(selected_node.tags["ins_addr"])
                     self.jump_history.jump_to(selected_node.callee_func.addr)
-                    self.instance.workspace.decompile_function(selected_node.callee_func, view=self)
+                    self.workspace.decompile_function(selected_node.callee_func, view=self)
             elif isinstance(selected_node, CConstant):
                 # jump to highlighted constants
                 if selected_node.reference_values is not None and selected_node.value is not None:
-                    self.instance.workspace.jump_to(selected_node.value)
+                    self.workspace.jump_to(selected_node.value)
+            elif isinstance(selected_node, CVariable):
+                var = selected_node.variable
+                if var and isinstance(var, SimMemoryVariable):
+                    self.workspace.jump_to(var.addr)
 
-    def _jump_to(self, addr: int):
+    def jump_to(self, addr: int, src_ins_addr=None):  # pylint:disable=unused-argument
         self.addr.am_obj = addr
         self.addr.am_event()
 
@@ -372,36 +376,44 @@ class CodeView(BaseView):
         if addr is None:
             self.close()
         else:
-            self._jump_to(addr)
+            self.jump_to(addr)
+
+    def popup_jumpto_dialog(self):
+        view = self.workspace._get_or_create_view("disassembly", DisassemblyView)
+        JumpTo(view, parent=self).exec_()
+        view.decompile_current_function()
 
     def jump_forward(self):
         addr = self.jump_history.forwardstep()
         if addr is not None:
-            self._jump_to(addr)
+            self.jump_to(addr)
 
     def jump_to_history_position(self, pos: int):
         addr = self.jump_history.step_position(pos)
         if addr is not None:
-            self._jump_to(addr)
+            self.jump_to(addr)
 
     def keyPressEvent(self, event):
         key = event.key()
         if key == Qt.Key_Tab:
             # Switch back to disassembly view
-            self.instance.workspace.jump_to(self.addr.am_obj)
+            self.workspace.jump_to(self.addr.am_obj)
+            return True
+        elif key == Qt.Key_G:
+            # jump to window
+            self.popup_jumpto_dialog()
             return True
         elif key == Qt.Key_Escape:
             self.jump_back()
             return True
-        elif key == Qt.Key_Space:
-            if not self.codegen.am_none:
-                flavor = self.codegen.flavor
-                flavors = self.instance.kb.structured_code.available_flavors(self._function.addr)
-                idx = flavors.index(flavor)
-                newidx = (idx + 1) % len(flavors)
-                self.codegen.am_obj = self.instance.kb.structured_code[(self._function.addr, flavors[newidx])].codegen
-                self.codegen.am_event()
-                return True
+        elif key == Qt.Key_Space and not self.codegen.am_none:
+            flavor = self.codegen.flavor
+            flavors = self.instance.kb.structured_code.available_flavors(self._function.addr)
+            idx = flavors.index(flavor)
+            newidx = (idx + 1) % len(flavors)
+            self.codegen.am_obj = self.instance.kb.structured_code[(self._function.addr, flavors[newidx])].codegen
+            self.codegen.am_event()
+            return True
 
         return super().keyPressEvent(event)
 
@@ -472,4 +484,4 @@ class CodeView(BaseView):
 
         self._textedit.focusWidget()
 
-        self.instance.workspace.plugins.instrument_code_view(self)
+        self.workspace.plugins.instrument_code_view(self)

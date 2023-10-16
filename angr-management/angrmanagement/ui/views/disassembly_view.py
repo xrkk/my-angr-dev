@@ -26,6 +26,7 @@ from angrmanagement.ui.dialogs.set_comment import SetComment
 from angrmanagement.ui.dialogs.xref import XRefDialog
 from angrmanagement.ui.menus.disasm_insn_context_menu import DisasmInsnContextMenu
 from angrmanagement.ui.menus.disasm_label_context_menu import DisasmLabelContextMenu
+from angrmanagement.ui.views.symexec_view import SymexecView
 from angrmanagement.ui.widgets import (
     DisassemblyLevel,
     QAvoidAddrAnnotation,
@@ -153,6 +154,7 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
         self.infodock.initialize()
 
         # Reload the current graph to make sure it gets the latest information, such as variables.
+        self._reload_current_function_if_changed()
         self._current_view.reload(old_infodock=old_infodock)
 
     def refresh(self):
@@ -207,10 +209,9 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
 
     @variable_recovery_flavor.setter
     def variable_recovery_flavor(self, v):
-        if v in ("fast", "accurate"):
-            if v != self._variable_recovery_flavor:
-                self._variable_recovery_flavor = v
-                # TODO: Rerun the variable recovery analysis and update the current view
+        if v in ("fast", "accurate") and v != self._variable_recovery_flavor:
+            self._variable_recovery_flavor = v
+            # TODO: Rerun the variable recovery analysis and update the current view
 
     @property
     def current_graph(self) -> Union[QLinearDisassemblyView, QDisassemblyGraph]:
@@ -307,6 +308,12 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
             # jump back
             self.jump_back()
             return
+        elif key == Qt.Key_C:
+            self.define_code()
+            return
+        elif key == Qt.Key_U:
+            self.undefine_code()
+            return
 
         super().keyPressEvent(event)
 
@@ -321,8 +328,24 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
     def on_screen_changed(self):
         self._current_view.refresh()
 
+    def _reload_current_function_if_changed(self):
+        if self._flow_graph.function_graph is not None:
+            func_addr = self._flow_graph.function_graph.function.addr
+
+            try:
+                func = self.instance.kb.functions.get_by_addr(func_addr)
+            except KeyError:
+                func = None
+
+            if self._flow_graph.function_graph.function is not func:
+                self._display_function(func)
+
+            if func is None:
+                self._jump_to(func_addr)
+
     def _on_cfb_event(self, **kwargs):
         if not kwargs:
+            self._reload_current_function_if_changed()
             self._linear_viewer.reload()
 
     #
@@ -351,7 +374,7 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
         self._insn_menu.insn_addr = insn.addr
         # pop up the menu
         mnu = self._insn_menu.qmenu(
-            extra_entries=list(self.instance.workspace.plugins.build_context_menu_insn(insn)), cached=False
+            extra_entries=list(self.workspace.plugins.build_context_menu_insn(insn)), cached=False
         )
         self.append_view_menu_actions(mnu)
         mnu.exec_(pos)
@@ -377,6 +400,20 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
             if dlg.result is not None:
                 obj.obj.name = dlg.result
                 self._current_view.refresh()
+
+    def define_code(self):
+        """
+        Redefine selected data as code
+        """
+        if self.infodock.selected_labels:
+            self.workspace.define_code(next(iter(self.infodock.selected_labels)))
+
+    def undefine_code(self):
+        """
+        Undefine selected instruction as code, mark it as data
+        """
+        if self.infodock.selected_insns:
+            self.workspace.undefine_code(next(iter(self.infodock.selected_insns)))
 
     def get_context_menu_for_selected_object(self) -> Optional[QMenu]:
         """
@@ -418,7 +455,7 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
         if comment_addr is None:
             return
 
-        dialog = SetComment(self.instance.workspace, comment_addr, parent=self)
+        dialog = SetComment(self.workspace, comment_addr, parent=self)
         dialog.exec_()
 
     def popup_newstate_dialog(self, async_=True):
@@ -426,7 +463,7 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
         if addr is None:
             return
 
-        dialog = NewState(self.instance, addr=addr, create_simgr=True, parent=self)
+        dialog = NewState(self.workspace, self.instance, addr=addr, create_simgr=True, parent=self)
         if async_:
             dialog.show()
         else:
@@ -438,7 +475,7 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
         if addr is None:
             return
 
-        dialog = HookDialog(self.instance, addr=addr, parent=self)
+        dialog = HookDialog(self.workspace, addr=addr, parent=self)
         if async_:
             dialog.show()
         else:
@@ -490,10 +527,9 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
             operand = None
 
         # if a function target is selected, switch to function mode
-        if operand is not None and not func:
-            if operand._branch_target is not None and operand._is_target_func:
-                func = True
-                addr = operand._branch_target
+        if operand is not None and not func and operand._branch_target is not None and operand._is_target_func:
+            func = True
+            addr = operand._branch_target
 
         if func:
             # attempt to pass in a function
@@ -507,13 +543,12 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
         dependson = DependsOn(addr, operand, func=the_func, parent=self)
         dependson.exec_()
 
-        if dependson.location is not None:
-            if dependson.arg is not None:
-                # track function argument
-                self.instance.workspace._main_window.run_dependency_analysis(
-                    func_addr=addr,
-                    func_arg_idx=dependson.arg,
-                )
+        if dependson.location is not None and dependson.arg is not None:
+            # track function argument
+            self.workspace._main_window.run_dependency_analysis(
+                func_addr=addr,
+                func_arg_idx=dependson.arg,
+            )
 
     def parse_operand_and_popup_xref_dialog(self, ins_addr, operand, async_=True):
         if operand is not None:
@@ -619,7 +654,7 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
             except StopIteration:
                 curr_ins = None
 
-            self.instance.workspace.decompile_function(self._current_function.am_obj, curr_ins=curr_ins)
+            self.workspace.decompile_function(self._current_function.am_obj, curr_ins=curr_ins)
 
     def toggle_show_minimap(self, show_minimap: Optional[bool] = None) -> None:
         """
@@ -747,10 +782,10 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
                 self._flow_graph.update_label(addr, is_renaming=is_renaming)
 
     def avoid_addr_in_exec(self, addr):
-        self.instance.workspace._get_or_create_symexec_view().avoid_addr_in_exec(addr)
+        self.workspace._get_or_create_view("symexec", SymexecView).avoid_addr_in_exec(addr)
 
     def find_addr_in_exec(self, addr):
-        self.instance.workspace._get_or_create_symexec_view().find_addr_in_exec(addr)
+        self.workspace._get_or_create_view("symexec", SymexecView).find_addr_in_exec(addr)
 
     def run_induction_variable_analysis(self):
         if self._flow_graph.induction_variable_analysis:
@@ -763,13 +798,13 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
 
     def fetch_qblock_annotations(self, qblock):
         addr_to_annotations = defaultdict(list)
-        for annotations in self.instance.workspace.plugins.build_qblock_annotations(qblock):
+        for annotations in self.workspace.plugins.build_qblock_annotations(qblock):
             addr_to_annotations[annotations.addr].append(annotations)
-        for addr in qblock.addr_to_insns.keys():
+        for addr in qblock.addr_to_insns:
             if addr in self.instance.project._sim_procedures:
                 hook_annotation = QHookAnnotation(addr)
                 addr_to_annotations[addr].append(hook_annotation)
-            view = self.instance.workspace.view_manager.first_view_in_category("symexec")
+            view = self.workspace.view_manager.first_view_in_category("symexec")
             if view is not None:
                 qsimgrs = view._simgrs
                 if addr in qsimgrs.find_addrs:
@@ -821,7 +856,7 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
 
         self.display_disasm_graph()
 
-        self.instance.workspace.plugins.instrument_disassembly_view(self)
+        self.workspace.plugins.instrument_disassembly_view(self)
 
     def _init_menus(self):
         self._insn_menu = DisasmInsnContextMenu(self)
@@ -836,8 +871,9 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
         self.infodock.hovered_block.am_subscribe(self.redraw_current_graph)
         self.infodock.hovered_edge.am_subscribe(self.redraw_current_graph)
         self.infodock.selected_labels.am_subscribe(self.redraw_current_graph)
+        self.infodock.selected_variables.am_subscribe(self.redraw_current_graph)
         self.infodock.qblock_code_obj_selection_changed.connect(self.redraw_current_graph)
-        self.instance.workspace.current_screen.am_subscribe(self.on_screen_changed)
+        self.workspace.current_screen.am_subscribe(self.on_screen_changed)
         self.instance.breakpoint_mgr.breakpoints.am_subscribe(self._on_breakpoints_updated)
         self.instance.cfb.am_subscribe(self._on_cfb_event)
 
@@ -852,8 +888,9 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
         self.infodock.hovered_block.am_unsubscribe(self.redraw_current_graph)
         self.infodock.hovered_edge.am_unsubscribe(self.redraw_current_graph)
         self.infodock.selected_labels.am_unsubscribe(self.redraw_current_graph)
+        self.infodock.selected_variables.am_unsubscribe(self.redraw_current_graph)
         self.infodock.qblock_code_obj_selection_changed.disconnect(self.redraw_current_graph)
-        self.instance.workspace.current_screen.am_unsubscribe(self.on_screen_changed)
+        self.workspace.current_screen.am_unsubscribe(self.on_screen_changed)
         self.instance.breakpoint_mgr.breakpoints.am_unsubscribe(self._on_breakpoints_updated)
         self.instance.cfb.am_unsubscribe(self._on_cfb_event)
 
@@ -866,7 +903,8 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
     #
 
     def _display_function(self, the_func):
-        self.set_synchronized_cursor_address(the_func.addr)
+        if the_func is not None:
+            self.set_synchronized_cursor_address(the_func.addr)
 
         self._current_function.am_obj = the_func
         self._current_function.am_event()
@@ -882,18 +920,21 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
         # clear existing selected instructions and operands
         self.infodock.clear_selection()
 
-        if self._current_view is self._flow_graph:
-            if self._flow_graph.function_graph is None or self._flow_graph.function_graph.function is not the_func:
-                # set function graph of a new function
-                self._flow_graph.function_graph = FunctionGraph(
+        if self._flow_graph.function_graph is None or self._flow_graph.function_graph.function is not the_func:
+            self._flow_graph.function_graph = (
+                None
+                if the_func is None
+                else FunctionGraph(
                     function=the_func,
                     exception_edges=self.show_exception_edges,
                 )
+            )
 
-        elif self._current_view is self._linear_viewer:
+        if self._current_view is self._linear_viewer and the_func is not None:
             self._linear_viewer.navigate_to_addr(the_func.addr)
 
-        view = self.instance.workspace.view_manager.first_view_in_category("console")
+        # FIXME: Don't populate console func like this
+        view = self.workspace.view_manager.first_view_in_category("console")
         if view is not None:
             view.push_namespace(
                 {
@@ -942,7 +983,7 @@ class DisassemblyView(ViewStatePublisherMixin, SynchronizedView):
         if self._insn_addr_on_context_menu is not None:
             return "insn", self._insn_addr_on_context_menu
         if len(self.infodock.selected_operands) == 1:
-            selected_operand: "OperandDescriptor" = next(iter(self.infodock.selected_operands.values()))
+            selected_operand: OperandDescriptor = next(iter(self.infodock.selected_operands.values()))
             if selected_operand.num_value is not None:
                 return "operand", selected_operand.num_value
         if len(self.infodock.selected_insns) == 1:

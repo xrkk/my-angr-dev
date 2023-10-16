@@ -6,6 +6,21 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.8'
+      - run: |
+          python -m pip install pylint
+          python -m pip install -e .
+      - uses: pre-commit/action@v3.0.0
+        with:
+          extra_args: pylint --all-files
+
   build_sdist:
     name: Build source distribution
     runs-on: ubuntu-latest
@@ -30,20 +45,32 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: macos-latest,   wheel: cp38-macosx_x86_64 }
-          - { os: macos-latest,   wheel: pp38-macosx_x86_64 }
-          - { os: macos-latest,   wheel: pp39-macosx_x86_64 }
-          - { os: macos-latest,   wheel: cp38-macosx_arm64 }
-          - { os: windows-latest, wheel: cp38-win_amd64 }
-          - { os: windows-latest, wheel: pp38-win_amd64 }
-          - { os: windows-latest, wheel: pp39-win_amd64 }
-          - { os: ubuntu-latest,  wheel: cp38-manylinux_x86_64 }
-          - { os: ubuntu-latest,  wheel: pp38-manylinux_x86_64 }
-          - { os: ubuntu-latest,  wheel: pp39-manylinux_x86_64 }
+          - { wheel: cp38-macosx_arm64,      os: macos-latest   }
+          - { wheel: cp38-macosx_x86_64,     os: macos-latest   }
+          - { wheel: cp38-manylinux_x86_64,  os: ubuntu-latest  }
+          - { wheel: cp38-win_amd64,         os: windows-latest }
+          - { wheel: cp39-macosx_arm64,      os: macos-latest   }
+          - { wheel: cp39-macosx_x86_64,     os: macos-latest   }
+          - { wheel: cp39-manylinux_x86_64,  os: ubuntu-latest  }
+          - { wheel: cp39-win_amd64,         os: windows-latest }
+          - { wheel: cp310-macosx_arm64,     os: macos-latest   }
+          - { wheel: cp310-macosx_x86_64,    os: macos-latest   }
+          - { wheel: cp310-manylinux_x86_64, os: ubuntu-latest  }
+          - { wheel: cp310-win_amd64,        os: windows-latest }
+          - { wheel: cp311-macosx_arm64,     os: macos-latest   }
+          - { wheel: cp311-macosx_x86_64,    os: macos-latest   }
+          - { wheel: cp311-manylinux_x86_64, os: ubuntu-latest  }
+          - { wheel: cp311-win_amd64,        os: windows-latest }
+
+          # Currently broken on pypy3.8
+          # - { wheel: pp38-macosx_x86_64,     os: macos-latest   }
+          # - { wheel: pp38-manylinux_x86_64,  os: ubuntu-latest  }
+          # - { wheel: pp38-win_amd64,         os: windows-latest }
+
+          - { wheel: pp39-macosx_x86_64,     os: macos-latest   }
+          - { wheel: pp39-manylinux_x86_64,  os: ubuntu-latest  }
+          - { wheel: pp39-win_amd64,         os: windows-latest }
     steps:
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.8'
       - name: Download source distribution
         uses: actions/download-artifact@v3
         with:
@@ -52,58 +79,19 @@ jobs:
         shell: bash
         run: tar --strip-components 1 -xvf *.tar.gz
       - name: Build wheel
-        uses: pypa/cibuildwheel@v2.11.2
+        uses: pypa/cibuildwheel@v2.12.1
         with:
           output-dir: wheelhouse
         env:
           CIBW_ARCHS_MACOS: x86_64 arm64
           CIBW_BUILD: ${{ matrix.wheel }}
           CIBW_TEST_COMMAND: python -m unittest discover -v -s {package}/tests
-          CIBW_TEST_SKIP: "cp* *_arm64"
+          CIBW_TEST_SKIP: "*_arm64"
           CIBW_BUILD_VERBOSITY: 1
       - uses: actions/upload-artifact@v3
         with:
           name: wheels
           path: ./wheelhouse/*.whl
-
-  # CPython wheels are abi3 compatible and should work on 3.*,>=3.8
-  # Note: PyPy wheels are tested above with CIBW
-  test_wheels:
-    needs: build_wheels
-    name: Test with CPython ${{ matrix.py }} on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - { os: macos-latest,   py: '3.8' }
-          - { os: macos-latest,   py: '3.11' }
-          - { os: windows-latest, py: '3.8' }
-          - { os: windows-latest, py: '3.11' }
-          - { os: ubuntu-latest,  py: '3.8' }
-          - { os: ubuntu-latest,  py: '3.11' }
-    steps:
-      - uses: actions/download-artifact@v3
-        with:
-          name: source
-          path: dist
-      - uses: actions/download-artifact@v3
-        with:
-          name: wheels
-          path: dist
-      - uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.py }}
-      - name: Run tests
-        shell: bash
-        run: |
-          tar --strip-components 1 -xvf ./dist/*.tar.gz
-          ls dist
-
-          pip install cffi
-          pip install --no-index --find-links ./dist pypcode
-
-          pushd tests
-          python -m unittest discover -v -s .
 
   build_docs:
     name: Build docs
@@ -114,31 +102,17 @@ jobs:
         with:
           python-version: '3.11'
       - run: |
-          pip install pdoc
-          pip install -e .
-      - run: pdoc -o docs pypcode
-      - uses: actions/upload-pages-artifact@v1
-        with:
-          path: docs/
-
-  deploy_docs:
-    name: Deploy docs to GitHub pages
-    needs: [build_docs, build_wheels, test_wheels]
-    if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v1
+          pip install -e .[docs]
+          cd docs && make html coverage
+          if [ -s _build/coverage/python.txt ]; then
+            echo "Doc coverage is missing for:"
+            cat _build/coverage/python.txt
+            exit 1
+          fi
 
   upload_pypi:
     name: Upload wheels to PyPI
-    needs: [build_sdist, build_wheels, test_wheels]
+    needs: [lint, build_docs, build_sdist, build_wheels]
     runs-on: ubuntu-latest
     # upload to PyPI on every tag starting with 'v'
     if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')

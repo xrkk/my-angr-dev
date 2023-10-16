@@ -6,13 +6,14 @@ import pyvex
 from archinfo.arch_arm import is_arm_arch
 
 from ...errors import SimMemoryMissingError
-from ...calling_conventions import SimRegArg, SimStackArg, DefaultCC
+from ...calling_conventions import SimRegArg, SimStackArg, default_cc
 from ...engines.vex.claripy.datalayer import value as claripy_value
 from ...engines.light import SimEngineLightVEXMixin
 from ...knowledge_plugins import Function
 from ...storage.memory_mixins.paged_memory.pages.multi_values import MultiValues
 from ..typehoon import typevars, typeconsts
 from .engine_base import SimEngineVRBase, RichR
+from .irsb_scanner import VEXIRSBScanner
 
 if TYPE_CHECKING:
     from .variable_recovery_base import VariableRecoveryStateBase
@@ -32,8 +33,24 @@ class SimEngineVRVEX(
         super().__init__(*args, **kwargs)
 
         self.call_info = call_info or {}
+        self.stmts_to_lower = None
+        self.reg_read_stmts_to_ignore = None
 
     # Statement handlers
+
+    def _is_top(self, expr: RichR) -> bool:
+        return self.state.is_top(expr)
+
+    def _top(self, size: int):
+        return self.state.top(size)
+
+    def _process_Stmt(self, whitelist=None):
+        scanner = VEXIRSBScanner(logger=self.l)
+        scanner._process(None, None, block=self.block)
+        self.stmts_to_lower = scanner.stmts_to_lower
+        self.reg_read_stmts_to_ignore = scanner.reg_read_stmts_to_ignore
+
+        super()._process_Stmt(whitelist=whitelist)
 
     def _handle_Put(self, stmt):
         offset = stmt.offset
@@ -129,7 +146,18 @@ class SimEngineVRVEX(
                 if isinstance(next_stmt, pyvex.IRStmt.WrTmp) and isinstance(next_stmt.data, pyvex.IRExpr.ITE):
                     return RichR(self.state.top(reg_size * 8))
 
-        return self._read_from_register(reg_offset, reg_size, expr=expr)
+        force_variable_size = None
+        if self.stmts_to_lower and self.stmt_idx in self.stmts_to_lower:
+            if reg_size == 8:
+                force_variable_size = 4
+
+        return self._read_from_register(
+            reg_offset,
+            reg_size,
+            expr=expr,
+            force_variable_size=force_variable_size,
+            create_variable=self.stmt_idx not in self.reg_read_stmts_to_ignore,
+        )
 
     def _handle_Load(self, expr: pyvex.IRExpr.Load) -> RichR:
         addr = self._expr(expr.addr)
@@ -142,6 +170,7 @@ class SimEngineVRVEX(
         return RichR(self.state.top(expr.result_size(self.tyenv)))
 
     def _handle_Conversion(self, expr: pyvex.IRExpr.Unop) -> RichR:
+        _ = self._expr(expr.args[0])
         return RichR(self.state.top(expr.result_size(self.tyenv)))
 
     # Function handlers
@@ -177,7 +206,7 @@ class SimEngineVRVEX(
             # TODO: Handle multiple return registers
             cc = self.state.function.calling_convention
             if cc is None:
-                cc = DefaultCC[self.arch.name](self.arch)
+                cc = default_cc(self.arch.name, platform=self.project.simos.name)(self.arch)
             if isinstance(cc.RETURN_VAL, SimRegArg):
                 ret_val_size = 0
                 reg_offset = cc.RETURN_VAL.check_offset(self.arch)
@@ -208,7 +237,7 @@ class SimEngineVRVEX(
 
         typevar = None
         if r0.typevar is not None and r1.data.concrete:
-            typevar = typevars.DerivedTypeVariable(r0.typevar, typevars.AddN(r1.data._model_concrete.value))
+            typevar = typevars.DerivedTypeVariable(r0.typevar, typevars.AddN(r1.data.concrete_value))
 
         sum_ = r0.data + r1.data
         return RichR(
@@ -229,7 +258,7 @@ class SimEngineVRVEX(
 
         typevar = None
         if r0.typevar is not None and r1.data.concrete:
-            typevar = typevars.DerivedTypeVariable(r0.typevar, typevars.SubN(r1.data._model_concrete.value))
+            typevar = typevars.DerivedTypeVariable(r0.typevar, typevars.SubN(r1.data.concrete_value))
 
         diff = r0.data - r1.data
         return RichR(
@@ -360,6 +389,26 @@ class SimEngineVRVEX(
         r = self.state.top(result_size)
         return RichR(r)
 
+    def _handle_Mod(self, expr):
+        arg0, arg1 = expr.args
+        r0 = self._expr(arg0)
+        r1 = self._expr(arg1)
+
+        result_size = expr.result_size(self.tyenv)
+        if r0.data.concrete and r1.data.concrete and r1.data.concrete_value != 0:
+            # constants
+            try:
+                if result_size != r1.data.size():
+                    remainder = r0.data.SMod(claripy.SignExt(result_size - r1.data.size(), r1.data))
+                else:
+                    remainder = r0.data.SMod(r1.data)
+                return RichR(remainder)
+            except ZeroDivisionError:
+                pass
+
+        r = self.state.top(result_size)
+        return RichR(r)
+
     def _handle_Shr(self, expr):
         arg0, arg1 = expr.args
         r0 = self._expr(arg0)
@@ -369,7 +418,7 @@ class SimEngineVRVEX(
         if r0.data.concrete and r1.data.concrete:
             # constants
             return RichR(
-                claripy.LShR(r0.data, r1.data._model_concrete.value),
+                claripy.LShR(r0.data, r1.data.concrete_value),
                 typevar=typeconsts.int_type(result_size),
                 type_constraints=None,
             )
@@ -389,7 +438,7 @@ class SimEngineVRVEX(
         if r0.data.concrete and r1.data.concrete:
             # constants
             return RichR(
-                r0.data >> r1.data._model_concrete.value,
+                r0.data >> r1.data.concrete_value,
                 typevar=typeconsts.int_type(result_size),
                 type_constraints=None,
             )
@@ -409,7 +458,7 @@ class SimEngineVRVEX(
         if r0.data.concrete and r1.data.concrete:
             # constants
             return RichR(
-                r0.data << r1.data._model_concrete.value,
+                r0.data << r1.data.concrete_value,
                 typevar=typeconsts.int_type(result_size),
                 type_constraints=None,
             )

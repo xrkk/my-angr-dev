@@ -13,10 +13,10 @@ Some screenshots:
 
 ### Portable, pre-built executable
 
-The easiest way to run angr-management is by grabbing a bundled release here: https://github.com/angr/angr-management/releases
+The easiest way to run angr-management is by grabbing a bundled release from the releases page: https://github.com/angr/angr-management/releases
 
-"Onefile" builds can be placed and run from anywhere.
-Non-onefile builds must be extracted and then the `angr-management` binary can be run from the extracted directory.
+Builds can be extracted and then run from anywhere.
+Note that builds are currently unsigned.
 
 ### From PyPI
 
@@ -52,6 +52,14 @@ angr-management can then be run with `angr-management` or `python start.py`.
 - Next Tab: ```Ctrl+Tab```
 - Previous Tab: ```Ctrl+Shift+Tab```
 
+## Configuration
+
+Configuration files locations vary by platform.
+
+- Windows: `~\AppData\Local\angr-management\config.toml`
+- macOS: `~/Library/Preferences/angr-management/config.toml`
+- Linux: `~/.config/angr-management/config.toml`
+
 ## Plugins
 
 Plugins may be installed by placing a subdirectory under `plugins`. The directory must contain an `__init__.py` like that in `TestPlugin`:
@@ -65,3 +73,11 @@ This also allows you to import a plugin class from another package entirely. The
 ## Scripting
 
 Take a look at https://docs.angr.io/extending-angr/angr_management!
+
+## Building with PyInstaller
+To build a portable executable using PyInstaller, install angr management into a python envrionment with the `pyinstaller` extra.
+Do not install anything in editable mode (pip's `-e`), as PyInstaller currently [fails to bundle](https://github.com/pyinstaller/pyinstaller/issues/7524) modules installed with editable mode.
+Then, run `pyinstaller angr-management.spec`.
+
+If things go wrong, the best bet is to reference the nightly build pipeline and the [PyInstaller docs](https://pyinstaller.org/en/stable/).
+The CI environment that produces nightly builds is at `.github/workflows/nightly-build.yml` and `.github/workflows/nightly-build.sh`.

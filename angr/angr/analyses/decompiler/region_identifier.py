@@ -10,9 +10,9 @@ from ailment import Block
 from ailment.statement import ConditionalJump, Jump
 from ailment.expression import Const
 
+from angr.utils.graph import GraphUtils
 from ...utils.graph import dfs_back_edges, subgraph_between_nodes, dominates, shallow_reverse
 from .. import Analysis, register_analysis
-from ..cfg.cfg_utils import CFGUtils
 from .structuring.structurer_nodes import MultiNode, ConditionNode, IncompleteSwitchCaseHeadStatement
 from .graph_region import GraphRegion
 from .condition_processor import ConditionProcessor
@@ -44,7 +44,9 @@ class RegionIdentifier(Analysis):
             cond_proc
             if cond_proc is not None
             else ConditionProcessor(
-                self.project.arch if self.project is not None else None  # it's only None in test cases
+                self.project.arch
+                if getattr(self, "project", None) is not None
+                else None  # it's only None in test cases
             )
         )
         self._graph = graph if graph is not None else self.function.graph
@@ -88,9 +90,6 @@ class RegionIdentifier(Analysis):
         self._make_supergraph(graph)
 
         self._start_node = self._get_start_node(graph)
-
-        # preprocess: find loop headers
-        self._loop_headers = self._find_loop_headers(graph)
 
         self.region = self._make_regions(graph)
 
@@ -187,7 +186,7 @@ class RegionIdentifier(Analysis):
 
     def _find_loop_headers(self, graph: networkx.DiGraph) -> List:
         heads = {t for _, t in dfs_back_edges(graph, self._start_node)}
-        return CFGUtils.quasi_topological_sort_nodes(graph, heads)
+        return GraphUtils.quasi_topological_sort_nodes(graph, heads)
 
     def _find_initial_loop_nodes(self, graph: networkx.DiGraph, head):
         # TODO optimize
@@ -242,7 +241,7 @@ class RegionIdentifier(Analysis):
         # node.
         subgraph = networkx.DiGraph()
 
-        sorted_refined_exit_nodes = CFGUtils.quasi_topological_sort_nodes(graph, refined_exit_nodes)
+        sorted_refined_exit_nodes = GraphUtils.quasi_topological_sort_nodes(graph, refined_exit_nodes)
         while len(sorted_refined_exit_nodes) > 1 and new_exit_nodes:
             # visit each node in refined_exit_nodes once and determine which nodes to consider as loop nodes
             candidate_nodes = {}
@@ -276,7 +275,7 @@ class RegionIdentifier(Analysis):
 
             sorted_refined_exit_nodes += list(new_exit_nodes)
             sorted_refined_exit_nodes = list(set(sorted_refined_exit_nodes))
-            sorted_refined_exit_nodes = CFGUtils.quasi_topological_sort_nodes(graph, sorted_refined_exit_nodes)
+            sorted_refined_exit_nodes = GraphUtils.quasi_topological_sort_nodes(graph, sorted_refined_exit_nodes)
 
         refined_exit_nodes = set(sorted_refined_exit_nodes)
         refined_loop_nodes = refined_loop_nodes - refined_exit_nodes
@@ -362,36 +361,48 @@ class RegionIdentifier(Analysis):
 
         # FIXME: _get_start_node() will fail if the graph is just a loop
 
-        # Find all loops
+        # iteratively find and make loop regions
         while True:
-            restart = False
+            # find loop headers
+            self._loop_headers = self._find_loop_headers(graph)
+            if not self._loop_headers:
+                break
 
-            self._start_node = self._get_start_node(graph)
+            # Find all loops
+            while True:
+                restart = False
 
-            # Start from loops
-            for node in list(reversed(self._loop_headers)):
-                if node in structured_loop_headers:
-                    continue
-                if node not in graph:
-                    continue
-                region = self._make_cyclic_region(node, graph)
-                if region is None:
-                    # failed to struct the loop region - remove the header node from loop headers
-                    l.debug(
-                        "Failed to structure a loop region starting at %#x. Remove it from loop headers.", node.addr
-                    )
-                    self._loop_headers.remove(node)
-                else:
-                    l.debug("Structured a loop region %r.", region)
-                    new_regions.append(region)
-                    structured_loop_headers.add(node)
-                    restart = True
+                self._start_node = self._get_start_node(graph)
+
+                # re-find loop headers
+                self._loop_headers = self._find_loop_headers(graph)
+                if not self._loop_headers:
                     break
 
-            if restart:
-                continue
+                # Start from loops
+                for node in list(reversed(self._loop_headers)):
+                    if node in structured_loop_headers:
+                        continue
+                    if node not in graph:
+                        continue
+                    region = self._make_cyclic_region(node, graph)
+                    if region is None:
+                        # failed to struct the loop region - remove the header node from loop headers
+                        l.debug(
+                            "Failed to structure a loop region starting at %#x. Remove it from loop headers.", node.addr
+                        )
+                        self._loop_headers.remove(node)
+                    else:
+                        l.debug("Structured a loop region %r.", region)
+                        new_regions.append(region)
+                        structured_loop_headers.add(node)
+                        restart = True
+                        break
 
-            break
+                if restart:
+                    continue
+
+                break
 
         new_regions.append(GraphRegion(self._get_start_node(graph), graph, None, None, False, None))
 
@@ -871,7 +882,7 @@ class RegionIdentifier(Analysis):
                 full_graph.add_edge(src, dst, **data)
                 if src in loop_nodes:
                     subgraph.add_edge(src, dst, **data)
-                elif src is region:
+                elif src == region:
                     subgraph.add_edge(head, dst, **data)
                 elif src in normal_entries:
                     # graph.add_edge(src, region, **data)
@@ -887,9 +898,9 @@ class RegionIdentifier(Analysis):
                 full_graph.add_edge(src, dst, **data)
                 if dst in loop_nodes:
                     subgraph.add_edge(src, dst, **data)
-                elif dst is region:
+                elif dst == region:
                     subgraph.add_edge(src, head, **data)
-                elif dst is normal_exit_node:
+                elif dst == normal_exit_node:
                     region_outedges.append((node, dst))
                     # graph.add_edge(region, dst, **data)
                     delayed_edges.append((region, dst, data))

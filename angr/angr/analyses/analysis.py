@@ -1,3 +1,4 @@
+# ruff: noqa: F401
 import functools
 import sys
 import contextlib
@@ -5,9 +6,11 @@ from collections import defaultdict
 from inspect import Signature
 from typing import TYPE_CHECKING, TypeVar, Type, Generic, Callable, Optional
 
-import progressbar
 import logging
 import time
+import typing
+
+from rich import progress
 
 from ..misc.plugins import PluginVendor, VendorPreset
 from ..misc.ux import deprecated
@@ -16,6 +19,36 @@ if TYPE_CHECKING:
     from ..knowledge_base import KnowledgeBase
     from ..project import Project
     from typing_extensions import ParamSpec
+    from .identifier import Identifier
+    from .callee_cleanup_finder import CalleeCleanupFinder
+    from .vsa_ddg import VSA_DDG
+    from .cdg import CDG
+    from .bindiff import BinDiff
+    from .cfg import CFGEmulated
+    from .cfg import CFBlanket
+    from .cfg import CFG
+    from .cfg import CFGFast
+    from .static_hooker import StaticHooker
+    from .ddg import DDG
+    from .congruency_check import CongruencyCheck
+    from .reassembler import Reassembler
+    from .backward_slice import BackwardSlice
+    from .binary_optimizer import BinaryOptimizer
+    from .vfg import VFG
+    from .loopfinder import LoopFinder
+    from .disassembly import Disassembly
+    from .veritesting import Veritesting
+    from .code_tagging import CodeTagging
+    from .boyscout import BoyScout
+    from .variable_recovery import VariableRecoveryFast
+    from .variable_recovery import VariableRecovery
+    from .reaching_definitions import ReachingDefinitionsAnalysis
+    from .complete_calling_conventions import CompleteCallingConventionsAnalysis
+    from .decompiler.clinic import Clinic
+    from .propagator import PropagatorAnalysis
+    from .calling_convention import CallingConventionAnalysis
+    from .decompiler.decompiler import Decompiler
+    from .xrefs import XRefsAnalysis
 
     AnalysisParams = ParamSpec("AnalysisParams")
 
@@ -67,7 +100,7 @@ class AnalysisLogEntry:
 A = TypeVar("A", bound="Analysis")
 
 
-class AnalysesHub(PluginVendor):
+class AnalysesHub(PluginVendor[A]):
     """
     This class contains functions for all the registered and runnable analyses,
     """
@@ -91,8 +124,48 @@ class AnalysesHub(PluginVendor):
         s, self.project = sd
         super().__setstate__(s)
 
-    def __getitem__(self, plugin_cls: "Type[A]") -> "AnalysisFactory[A]":
+    def __getitem__(self, plugin_cls: Type[A]) -> "AnalysisFactory[A]":
         return AnalysisFactory(self.project, plugin_cls)
+
+
+class KnownAnalysesPlugin(typing.Protocol):
+    Identifier: "Type[Identifier]"
+    CalleeCleanupFinder: "Type[CalleeCleanupFinder]"
+    VSA_DDG: "Type[VSA_DDG]"
+    CDG: "Type[CDG]"
+    BinDiff: "Type[BinDiff]"
+    CFGEmulated: "Type[CFGEmulated]"
+    CFB: "Type[CFBlanket]"
+    CFBlanket: "Type[CFBlanket]"
+    CFG: "Type[CFG]"
+    CFGFast: "Type[CFGFast]"
+    StaticHooker: "Type[StaticHooker]"
+    DDG: "Type[DDG]"
+    CongruencyCheck: "Type[CongruencyCheck]"
+    Reassembler: "Type[Reassembler]"
+    BackwardSlice: "Type[BackwardSlice]"
+    BinaryOptimizer: "Type[BinaryOptimizer]"
+    VFG: "Type[VFG]"
+    LoopFinder: "Type[LoopFinder]"
+    Disassembly: "Type[Disassembly]"
+    Veritesting: "Type[Veritesting]"
+    CodeTagging: "Type[CodeTagging]"
+    BoyScout: "Type[BoyScout]"
+    VariableRecoveryFast: "Type[VariableRecoveryFast]"
+    VariableRecovery: "Type[VariableRecovery]"
+    ReachingDefinitions: "Type[ReachingDefinitionsAnalysis]"
+    CompleteCallingConventions: "Type[CompleteCallingConventionsAnalysis]"
+    Clinic: "Type[Clinic]"
+    Propagator: "Type[PropagatorAnalysis]"
+    CallingConvention: "Type[CallingConventionAnalysis]"
+    Decompiler: "Type[Decompiler]"
+    XRefs: "Type[XRefsAnalysis]"
+
+
+class AnalysesHubWithDefault(AnalysesHub, KnownAnalysesPlugin):
+    """
+    This class has type-hinting for all built-in analyses plugin
+    """
 
 
 class AnalysisFactory(Generic[A]):
@@ -146,25 +219,6 @@ class AnalysisFactory(Generic[A]):
         return r
 
 
-class StatusBar(progressbar.widgets.WidgetBase):
-    """
-    Implements a progressbar component for displaying raw text.
-    """
-
-    def __init__(self, width: Optional[int] = 40):
-        super().__init__()
-        self.status: str = ""
-        self.width = width
-
-    def __call__(self, progress, data, **kwargs):  # pylint:disable=unused-argument
-        if self.width is None:
-            return self.status
-        if len(self.status) < self.width:
-            return self.status.ljust(self.width, " ")
-        else:
-            return self.status[: self.width]
-
-
 class Analysis:
     """
     This class represents an analysis on the program.
@@ -177,30 +231,28 @@ class Analysis:
                                         progress.
     :ivar bool _show_progressbar: If a progressbar should be shown during the analysis. It's independent from
                                     _progress_callback.
-    :ivar progressbar.ProgressBar _progressbar: The progress bar object.
+    :ivar progress.Progress _progressbar: The progress bar object.
     """
 
-    project: "Project" = None
-    kb: "KnowledgeBase" = None
-    _fail_fast = None
-    _name = None
+    project: "Project"
+    kb: "KnowledgeBase"
+    _fail_fast: bool
+    _name: str
     errors = []
     named_errors = defaultdict(list)
     _progress_callback = None
     _show_progressbar = False
     _progressbar = None
-    _statusbar: Optional[StatusBar] = None
+    _task = None
 
     _PROGRESS_WIDGETS = [
-        progressbar.Percentage(),
-        " ",
-        progressbar.Bar(),
-        " ",
-        progressbar.Timer(),
-        " ",
-        progressbar.ETA(),
-        " ",
-        StatusBar(),
+        progress.TaskProgressColumn(),
+        progress.BarColumn(),
+        progress.TextColumn("Elapsed Time:"),
+        progress.TimeElapsedColumn(),
+        progress.TextColumn("Time:"),
+        progress.TimeRemainingColumn(),
+        progress.TextColumn("{task.description}"),
     ]
 
     @contextlib.contextmanager
@@ -224,8 +276,10 @@ class Analysis:
         :return: None
         """
 
-        self._progressbar = progressbar.ProgressBar(widgets=Analysis._PROGRESS_WIDGETS, max_value=10000 * 100).start()
-        self._statusbar = self._progressbar.widgets[-1]
+        self._progressbar = progress.Progress(*self._PROGRESS_WIDGETS)
+        self._task = self._progressbar.add_task(total=100, description="")
+
+        self._progressbar.start()
 
     def _update_progress(self, percentage, text=None, **kwargs):
         """
@@ -241,10 +295,10 @@ class Analysis:
             if self._progressbar is None:
                 self._initialize_progressbar()
 
-            self._progressbar.update(percentage * 10000)
+            self._progressbar.update(self._task, completed=percentage)
 
-        if text is not None and self._statusbar is not None:
-            self._statusbar.status = text
+        if text is not None and self._progressbar:
+            self._progressbar.update(self._task, description=text)
 
         if self._progress_callback is not None:
             self._progress_callback(percentage, text=text, **kwargs)  # pylint:disable=not-callable
@@ -259,8 +313,8 @@ class Analysis:
             if self._progressbar is None:
                 self._initialize_progressbar()
             if self._progressbar is not None:
-                self._progressbar.finish()
-                # Remove the progressbar object so it will not be pickled
+                self._progressbar.update(self._task, completed=100)
+                self._progressbar.stop()
                 self._progressbar = None
 
         if self._progress_callback is not None:

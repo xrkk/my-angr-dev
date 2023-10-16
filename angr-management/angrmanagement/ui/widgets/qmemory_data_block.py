@@ -80,8 +80,10 @@ class QMemoryDataBlock(QCachedGraphicsItem):
         self._addr_text = "%08x" % self.addr
         self._bytes = []
         if self.memory_data.content:
-            for byt in self.memory_data.content:
-                self._bytes.append(byt)
+            cnt = self.memory_data.content
+            if self.memory_data.size is not None:
+                cnt = cnt[: self.memory_data.size]
+            self._bytes += list(cnt)
 
         if self.memory_data.size is not None and len(self._bytes) < self.memory_data.size:
             # load more from mapped memory
@@ -131,10 +133,7 @@ class QMemoryDataBlock(QCachedGraphicsItem):
 
         while i < len(self._bytes):
             byte_offset = addr % self.bytes_per_line
-            if byte_offset == 0:
-                end_pos = i + self.bytes_per_line
-            else:
-                end_pos = self.bytes_per_line - byte_offset
+            end_pos = i + self.bytes_per_line if byte_offset == 0 else self.bytes_per_line - byte_offset
 
             all_bytes = self._bytes[i:end_pos]
             # print("... print %#x, %d bytes, byte_offset %d" % (addr, len(all_bytes), byte_offset))
@@ -162,11 +161,8 @@ class QMemoryDataBlock(QCachedGraphicsItem):
         # draw each byte
         bytes_list = []
         for idx, byt in enumerate(all_bytes):
-            if type(byt) is int:
-                if is_printable(byt):
-                    color = printable_byte_color
-                else:
-                    color = unprintable_byte_color
+            if isinstance(byt, int):
+                color = printable_byte_color if is_printable(byt) else unprintable_byte_color
                 o = QGraphicsSimpleTextItem("%02x" % byt, self)
                 o.setFont(Conf.disasm_font)
                 o.setBrush(color)
@@ -187,7 +183,7 @@ class QMemoryDataBlock(QCachedGraphicsItem):
         # printable characters
         character_list = []
         for byt in all_bytes:
-            if type(byt) is int:
+            if isinstance(byt, int):
                 if is_printable(byt):
                     color = printable_char_color
                     ch = chr(byt)

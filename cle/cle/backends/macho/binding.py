@@ -6,7 +6,6 @@ import struct
 from typing import TYPE_CHECKING, Callable, Dict, Tuple
 
 from cle.address_translator import AT
-from cle.backends.backend import Backend
 from cle.backends.relocation import Relocation
 from cle.errors import CLEInvalidBinaryError
 
@@ -390,38 +389,31 @@ def n_opcode_do_bind_uleb_times_skipping_uleb(s: BindingState, b: "MachO", _i: i
 
 class MachORelocation(Relocation):
     """
-    Generic Relocation for MachO. For now it just deals with symbols
+    Generic Relocation for MachO. It handles relocations that point to symbols
     """
 
-    def __init__(self, owner: Backend, symbol: AbstractMachOSymbol, relative_addr: int, data):
-        # This is a sanity check
-        # There should never be a reloc inside PAGEZERO
-        # If it supposedly is, it implies that the address calculation went wrong
-        sec = owner.find_section_containing(addr=relative_addr)
-        assert sec.name != "__PAGEZERO", "Reloc inside __PAGEZERO implies addr calculation error"
+    def __init__(self, owner: "MachO", symbol: AbstractMachOSymbol, relative_addr: int, data):
         super().__init__(owner, symbol, relative_addr)
         self.data = data
 
     def resolve_symbol(self, solist, thumb=False, extern_object=None, **kwargs):
         if isinstance(self.symbol, (SymbolTableSymbol, BindingSymbol, DyldBoundSymbol)):
-            if self.symbol.library_name in [so.binary_basename for so in solist]:
-                raise NotImplementedError(
-                    "Symbol could actually be resolved because we have the required library,"
-                    " but that isn't implemented yet"
-                )
-            else:
-                # Create an extern symbol for it
-                new_symbol = extern_object.make_extern(self.symbol.name, sym_type=self.symbol._type, thumb=thumb)
-                self.resolve(new_symbol, extern_object=extern_object)
+            for so in solist:
+                if self.symbol.library_base_name == so.binary_basename:
+                    [symbol] = so.get_symbol(self.symbol.name)
+                    assert symbol.is_export
+                    self.resolve(symbol, extern_object=extern_object)
+                    log.info("Resolved %s to %s", self.symbol.name, symbol)
+                    return
+            # None of the available libraries contain it, so we create an extern symbol for it
+            new_symbol = extern_object.make_extern(self.symbol.name, sym_type=self.symbol._type, thumb=thumb)
+            self.resolve(new_symbol, extern_object=extern_object)
         else:
             raise NotImplementedError("Did not expect this to happen")
 
     @property
     def dest_addr(self):
-        """
-        mach-o rebasing is hard to handle, so this behaviour differs from other relocations
-        """
-        return self.rebased_addr
+        return self.relative_addr
 
     @property
     def value(self):
@@ -429,6 +421,43 @@ class MachORelocation(Relocation):
 
     def __repr__(self):
         return f"<MachO Reloc for {self.symbol} at {hex(self.relative_addr)}>"
+
+
+class MachOChainedFixup(Relocation):
+    """
+    A special kind of relocation that handles internal pointers in the binary.
+    This was introduced with iOS15+ and is somewhat explained here
+    https://github.com/datatheorem/strongarm/blob/release/chained_fixup_pointers.md
+    """
+
+    def __init__(self, owner: "MachO", relative_addr: int, data):
+        """
+
+        :param owner:
+        :param relative_addr: the relative addr where this relocation is located
+        :param data: the rebase offset relative to the linked base
+        """
+        super().__init__(owner, None, relative_addr)
+        self.data = data
+
+    @property
+    def value(self):
+        return self.owner.mapped_base + self.data
+
+    def resolve_symbol(self, solist, thumb=False, extern_object=None, **kwargs):
+        """
+        This relocation has no associated symbol, so we don't need to resolve it.
+        :param solist:
+        :param thumb:
+        :param extern_object:
+        :param kwargs:
+        :return:
+        """
+        # This needs to be set to true, so that the rebase will actually be applied later
+        self.resolved = True
+
+    def __repr__(self):
+        return f"<MachO Ptr Fixup at {hex(self.relative_addr)} to {hex(self.data)}>"
 
 
 # default binding handler
@@ -456,7 +485,7 @@ def default_binding_handler(state: BindingState, binary: "MachO"):
 
     if state.binding_type == 1:  # POINTER
         log.debug("Updating address %#x with symobl %r @ %#x", location, state.sym_name, value)
-        addr = AT.from_mva(location, binary).to_rva()
+        addr = AT.from_lva(location, binary).to_rva()
         data = struct.pack(binary.struct_byteorder + ("Q" if binary.arch.bits == 64 else "I"), value)
         reloc = MachORelocation(binary, symbol, addr, data)
         binary.relocs.append(reloc)

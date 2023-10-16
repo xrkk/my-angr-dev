@@ -40,13 +40,13 @@ class AssemblePatchDialog(QDialog):
     def __init__(self, address: int, instance: "Instance", parent=None):
         super().__init__(parent)
 
-        self.instance: "Instance" = instance
+        self.instance: Instance = instance
         self._patch_addr: int = address
 
         block = self.instance.project.factory.block(self._patch_addr)
         insn = block.disassembly.insns[0]
 
-        self._original_bytes: bytes = self.instance.project.loader.memory.load(insn.address, insn.size)
+        self._original_bytes: bytes = block.bytes[: insn.size]
         self._new_bytes: Optional[bytes] = self._original_bytes
         self._initial_text = insn.mnemonic
         if insn.op_str:
@@ -172,11 +172,16 @@ class AssemblePatchDialog(QDialog):
 
     def _on_ok_clicked(self):
         if self._new_bytes != self._original_bytes:
-            # FIXME: Patches object should be initialized with project
             pm = self.instance.project.kb.patches
-            pm.add_patch_obj(Patch(self._patch_addr, self._new_bytes))
-            if self.instance.patches.am_none:
-                self.instance.patches.am_obj = pm
-            self.instance.patches.am_event()
+
+            # XXX: Currently patch manager stores patches by address, so remove any existing patch at this addr
+            existing_patch = pm.get_patch(self._patch_addr)
+            if existing_patch:
+                self.instance.patches.remove_patch(existing_patch.addr)
+                self.instance.patches.am_event(removed={existing_patch})
+
+            patch = Patch(self._patch_addr, self._new_bytes)
+            pm.add_patch_obj(patch)
+            self.instance.patches.am_event(added={patch})
 
         self.accept()

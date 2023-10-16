@@ -1,4 +1,6 @@
-from .arch import Arch, register_arch, Endness, Register
+from archinfo.types import RegisterOffset
+
+from .arch import Arch, Endness, Register, register_arch
 from .tls import TLSArchInfo
 
 try:
@@ -33,7 +35,7 @@ class ArchAArch64(Arch):
     linux_name = "aarch64"
     triplet = "aarch64-linux-gnueabihf"
     max_inst_bytes = 4
-    ret_offset = 16
+    ret_offset = RegisterOffset(16)
     vex_conditional_helpers = True
     syscall_num_offset = 80
     call_pushes_ret = False
@@ -56,8 +58,6 @@ class ArchAArch64(Arch):
 
     ret_instruction = b"\xC0\x03\x5F\xD6"  # ret
     nop_instruction = b"\x1F\x20\x03\xD5"  # nop
-    function_prologs = set()
-    function_epilogs = set()
     instruction_alignment = 4
     register_list = [
         Register(
@@ -395,6 +395,136 @@ class ArchAArch64(Arch):
     got_section_name = ".got"
     ld_linux_name = "ld-linux-aarch64.so.1"
     elf_tls = TLSArchInfo(1, 32, [], [0], [], 0, 0)
+    dwarf_registers = [
+        "x0",
+        "x1",
+        "x2",
+        "x3",
+        "x4",
+        "x5",
+        "x6",
+        "x7",
+        "x8",
+        "x9",
+        "x10",
+        "x11",
+        "x12",
+        "x13",
+        "x14",
+        "x15",
+        "x16",
+        "x17",
+        "x18",
+        "x19",
+        "x20",
+        "x21",
+        "x22",
+        "x23",
+        "x24",
+        "x25",
+        "x26",
+        "x27",
+        "x28",
+        "x29",
+        "x30",
+        "sp",
+        "<none>",
+        "ELR_mode",
+        "RA_SIGN_STATE",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "VG",
+        "FFR",
+        "p0",
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+        "p10",
+        "p11",
+        "p12",
+        "p13",
+        "p14",
+        "p15",
+        "v0",
+        "v1",
+        "v2",
+        "v3",
+        "v4",
+        "v5",
+        "v6",
+        "v7",
+        "v8",
+        "v9",
+        "v10",
+        "v11",
+        "v12",
+        "v13",
+        "v14",
+        "v15",
+        "v16",
+        "v17",
+        "v18",
+        "v19",
+        "v20",
+        "v21",
+        "v22",
+        "v23",
+        "v24",
+        "v25",
+        "v26",
+        "v27",
+        "v28",
+        "v29",
+        "v30",
+        "v31",
+        "z0",
+        "z1",
+        "z2",
+        "z3",
+        "z4",
+        "z5",
+        "z6",
+        "z7",
+        "z8",
+        "z9",
+        "z10",
+        "z11",
+        "z12",
+        "z13",
+        "z14",
+        "z15",
+        "z16",
+        "z17",
+        "z18",
+        "z19",
+        "z20",
+        "z21",
+        "z22",
+        "z23",
+        "z24",
+        "z25",
+        "z26",
+        "z27",
+        "z28",
+        "z29",
+        "z30",
+        "z31",
+    ]
 
 
-register_arch([r".*arm64.*|.*aarch64*"], 64, "any", ArchAArch64)
+register_arch([r".*arm64.*|.*aarch64*"], 64, Endness.ANY, ArchAArch64)

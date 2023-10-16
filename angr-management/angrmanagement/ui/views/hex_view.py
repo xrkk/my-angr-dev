@@ -91,7 +91,7 @@ class BreakpointHighlightRegion(HexHighlightRegion):
     def __init__(self, bp: Breakpoint, view: "HexView"):
         super().__init__(Qt.cyan, bp.addr, bp.size)
         self.bp: Breakpoint = bp
-        self.view: "HexView" = view
+        self.view: HexView = view
 
     def gen_context_menu_actions(self) -> Optional[QMenu]:
         """
@@ -134,7 +134,7 @@ class PatchHighlightRegion(HexHighlightRegion):
     def __init__(self, patch: Patch, view: "HexView"):
         super().__init__(Qt.yellow, patch.addr, len(patch))
         self.patch: Patch = patch
-        self.view: "HexView" = view
+        self.view: HexView = view
 
     def get_tooltip(self) -> Optional[str]:
         """
@@ -244,7 +244,7 @@ class HexGraphicsObject(QGraphicsObject):
         self.setFlag(QGraphicsItem.ItemIsFocusable, True)  # Give me focus/key events
         self.setFlag(QGraphicsItem.ItemClipsToShape, True)
         self.display_offset_addr: HexAddress = 0
-        self.display_num_rows: int = 0
+        self.display_num_rows: int = 1
         self.display_start_addr: HexAddress = 0
         self.display_end_addr: HexAddress = 0
         self.start_addr: HexAddress = 0
@@ -314,17 +314,28 @@ class HexGraphicsObject(QGraphicsObject):
             self.cursor_blink_state = self.always_show_cursor
             self.update()
 
-    def set_display_offset_range(self, offset: HexAddress, num_rows: Optional[int] = None):
+    def _set_display_common(self):
         """
-        Set the visible byte range.
+        Handle common update of offset or row count changed.
         """
-        offset = max(0, min(offset & ~0xF, self.end_addr - self.start_addr - 0x10))
-        self.display_offset_addr = offset
-        self.display_start_addr = self.start_addr + self.display_offset_addr
-        self.display_num_rows = num_rows or self.num_rows
         self.display_end_addr = min(self.end_addr, self.display_start_addr + self.display_num_rows * 16)
         self._update_layout()
         self.viewport_changed.emit()
+
+    def set_display_num_rows(self, num_rows: int):
+        """
+        Set number of rows to display.
+        """
+        self.display_num_rows = max(num_rows, 1)
+        self._set_display_common()
+
+    def set_display_offset(self, offset: HexAddress):
+        """
+        Set displayed range offset.
+        """
+        self.display_offset_addr = max(0, min(offset & ~0xF, self.end_addr - self.start_addr - 0x10))
+        self.display_start_addr = self.start_addr + self.display_offset_addr
+        self._set_display_common()
 
     def move_viewport_to(self, addr: HexAddress, preserve_relative_offset: bool = False):
         """
@@ -334,14 +345,12 @@ class HexGraphicsObject(QGraphicsObject):
 
         if preserve_relative_offset and (self.display_start_addr <= self.cursor < self.display_end_addr):
             # Let the target addr be on the same relative row from top of screen
-            self.set_display_offset_range(
-                addr - self.cursor + self.display_start_addr - self.start_addr, self.display_num_rows
-            )
+            self.set_display_offset(addr - self.cursor + self.display_start_addr - self.start_addr)
             return
 
         if addr < self.display_start_addr:
             # Let the target addr be on the first displayed row
-            self.set_display_offset_range(addr - self.start_addr, self.display_num_rows)
+            self.set_display_offset(addr - self.start_addr)
             return
 
         # Let the target addr be on last fully displayed row
@@ -349,7 +358,7 @@ class HexGraphicsObject(QGraphicsObject):
         display_end = self.display_start_addr + max_fully_visible_bytes
         if addr >= display_end:
             offset = addr - max_fully_visible_bytes - self.start_addr + 0x10
-            self.set_display_offset_range(offset, self.display_num_rows)
+            self.set_display_offset(offset)
 
     def _set_data_common(self):
         """
@@ -359,7 +368,7 @@ class HexGraphicsObject(QGraphicsObject):
         self.num_rows = int((self.num_bytes + (self.start_addr & 0xF) + 0xF) / 16)
         self.end_addr = self.start_addr + self.num_bytes
         self.clear_selection()
-        self.set_display_offset_range(offset=0, num_rows=None)  # Show all
+        self.set_display_offset(0)
         self.set_cursor(self.start_addr)
         self._update_layout()
 
@@ -697,7 +706,7 @@ class HexGraphicsObject(QGraphicsObject):
             return
         elif QApplication.keyboardModifiers() & Qt.ControlModifier:
             if event.key() == Qt.Key_Space:
-                self.set_cursor(self.cursor, ascii_column=(not self.ascii_column_active))
+                self.set_cursor(self.cursor, ascii_column=not self.ascii_column_active)
                 event.accept()
                 return
         else:
@@ -959,24 +968,21 @@ class HexGraphicsObject(QGraphicsObject):
             painter.drawText(pt, addr_text)
 
             # Paint byte values
-            for col in range(0, 16):
+            for col in range(16):
                 addr = self.row_col_to_addr(row, col)
                 if addr < self.display_start_addr or addr >= self.display_end_addr:
                     continue
                 val = self.read_func(addr)
                 pt.setX(self.byte_column_offsets[col])
 
-                if type(val) is int:
+                if isinstance(val, int):
                     if is_printable(val):
                         color = Conf.disasm_view_printable_byte_color
                     else:
                         color = Conf.disasm_view_unprintable_byte_color
                     byte_text = "%02x" % val
                 else:
-                    if type(val) is str and len(val) == 1:
-                        byte_text = val * 2
-                    else:
-                        byte_text = "??"
+                    byte_text = val * 2 if isinstance(val, str) and len(val) == 1 else "??"
                     color = Conf.disasm_view_unknown_byte_color
 
                 pt.setX(self.byte_column_offsets[col])
@@ -984,14 +990,14 @@ class HexGraphicsObject(QGraphicsObject):
                 painter.drawText(pt, byte_text)
 
             # Paint ASCII representation
-            for col in range(0, 16):
+            for col in range(16):
                 addr = self.row_col_to_addr(row, col)
                 if addr < self.display_start_addr or addr >= self.display_end_addr:
                     continue
                 val = self.read_func(addr)
                 pt.setX(self.ascii_column_offsets[col])
 
-                if type(val) is int:
+                if isinstance(val, int):
                     if is_printable(val):
                         color = Conf.disasm_view_printable_character_color
                         ch = chr(val)
@@ -1000,10 +1006,7 @@ class HexGraphicsObject(QGraphicsObject):
                         ch = "."
                 else:
                     color = Conf.disasm_view_unknown_character_color
-                    if type(val) is str and len(val) == 1:
-                        ch = val
-                    else:
-                        ch = "?"
+                    ch = val if isinstance(val, str) and len(val) == 1 else "?"
 
                 pt.setX(self.ascii_column_offsets[col])
                 painter.setPen(color)
@@ -1016,10 +1019,7 @@ class HexGraphicsObject(QGraphicsObject):
             def set_pen_brush_for_active_cursor(active):
                 painter.setPen(Qt.NoPen)
                 if active:
-                    if self.cursor_blink_state:
-                        col = Conf.palette_text
-                    else:
-                        col = Qt.NoBrush
+                    col = Conf.palette_text if self.cursor_blink_state else Qt.NoBrush
                 else:
                     col = Conf.palette_disabled_text
                 painter.setBrush(col)
@@ -1077,9 +1077,6 @@ class HexGraphicsSubView(QGraphicsView):
         self.parent().wheelEvent(event)
         super().wheelEvent(event)
 
-    def resizeEvent(self, event):
-        self.parent().resizeEvent(event)
-
     def mouseMoveEvent(self, event):
         """
         Handle mouse move events.
@@ -1116,6 +1113,7 @@ class HexGraphicsView(QAbstractScrollArea):
         self.verticalScrollBar().actionTriggered.connect(self._on_vertical_scroll_bar_triggered)
         self.horizontalScrollBar().actionTriggered.connect(self._on_horizontal_scroll_bar_triggered)
         self._view.setFrameStyle(QFrame.NoFrame)
+        self.setFrameStyle(QFrame.NoFrame)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1161,8 +1159,11 @@ class HexGraphicsView(QAbstractScrollArea):
             num_rows_visible += 1
         return num_rows_visible
 
+    def update_display_num_rows(self):
+        self.hex.set_display_num_rows(self._get_num_rows_visible())
+
     def set_display_offset(self, offset: HexAddress):
-        self.hex.set_display_offset_range(offset, self._get_num_rows_visible())
+        self.hex.set_display_offset(offset)
         self._update_vertical_scrollbar()
 
     def get_display_start_addr(self) -> HexAddress:
@@ -1171,11 +1172,11 @@ class HexGraphicsView(QAbstractScrollArea):
     def set_display_start_addr(self, start: HexAddress):
         self.set_display_offset(start - self.hex.start_addr)
 
-    def _on_vertical_scroll_bar_triggered(self, action):
+    def _on_vertical_scroll_bar_triggered(self, action: int):
         if self._processing_scroll_event:
             return
         self._processing_scroll_event = True
-        action = QAbstractSlider.SliderAction(action)  # XXX: `action` is passed as an int
+        action = QAbstractSlider.SliderAction(action)
         if action == QAbstractSlider.SliderSingleStepAdd:
             self.set_display_offset(self.hex.display_offset_addr + 0x10)
         elif action == QAbstractSlider.SliderSingleStepSub:
@@ -1200,8 +1201,9 @@ class HexGraphicsView(QAbstractScrollArea):
             self.set_display_offset(display_offset_addr)
         self._processing_scroll_event = False
 
-    def _on_horizontal_scroll_bar_triggered(self, action):
+    def _on_horizontal_scroll_bar_triggered(self, action: int):
         self._processing_scroll_event = True
+        action = QAbstractSlider.SliderAction(action)
         if action == QAbstractSlider.SliderMove:
             vp = self.viewport().geometry()
             vp.moveTo(0, 0)
@@ -1246,7 +1248,7 @@ class HexGraphicsView(QAbstractScrollArea):
     def resizeEvent(self, event: PySide6.QtGui.QResizeEvent) -> None:  # pylint: disable=unused-argument
         self._view.resize(self.viewport().size())
         self.update_scene_rect()
-        self.set_display_offset(self.hex.display_offset_addr)
+        self.update_display_num_rows()
 
     def set_region_callback(self, write, mem, addr, size):
         """
@@ -1262,7 +1264,6 @@ class HexGraphicsView(QAbstractScrollArea):
         """
         self.hex.clear()
         self.update_scene_rect()
-        self.set_display_offset(0)
 
     def on_cursor_changed(self):
         """
@@ -1281,7 +1282,7 @@ class HexGraphicsView(QAbstractScrollArea):
         else:
             self._view.scale(scale, scale)
         self.update_scene_rect()
-        self.set_display_offset(self.hex.display_offset_addr)
+        self.update_display_num_rows()
 
     def changeEvent(self, event: QEvent):
         """
@@ -1318,8 +1319,8 @@ class HexView(ViewStatePublisherMixin, SynchronizedView):
 
     _widgets_initialized: bool = False
 
-    def __init__(self, instance, default_docking_position, *args, **kwargs):
-        super().__init__("hex", instance, default_docking_position, *args, **kwargs)
+    def __init__(self, workspace, instance, default_docking_position, *args, **kwargs):
+        super().__init__("hex", workspace, instance, default_docking_position, *args, **kwargs)
         self.base_caption: str = "Hex"
         self.smart_highlighting_enabled: bool = True
         self._clipboard = None
@@ -1388,7 +1389,7 @@ class HexView(ViewStatePublisherMixin, SynchronizedView):
                 0x10000000000000000,  # FIXME: Get actual ranges and add them
             )
         else:
-            raise NotImplementedError()
+            raise NotImplementedError
 
         self.inner_widget.set_display_start_addr(start)
         self.inner_widget.hex.set_cursor(cursor)
@@ -1483,7 +1484,7 @@ class HexView(ViewStatePublisherMixin, SynchronizedView):
             patch_max_addr = p.addr + len(p) - 1
             if (p.addr <= addr) and (patch_max_addr >= max_addr):
                 # Existing patch contains new patch entirely. Update it.
-                p.new_bytes[(addr - p.addr) : (max_addr - p.addr + 1)] = new_bytes
+                p.new_bytes = p.new_bytes[: addr - p.addr] + new_bytes + p.new_bytes[max_addr - p.addr + 1 :]
                 return
             elif (p.addr >= addr) and (patch_max_addr <= max_addr):
                 # Patch will be entirely overwritten, remove it.
@@ -1501,7 +1502,7 @@ class HexView(ViewStatePublisherMixin, SynchronizedView):
                 p.new_bytes = p.new_bytes[0 : (addr - p.addr)]
                 pm.add_patch_obj(p)
             else:
-                assert False
+                raise AssertionError
 
         # Check to see if we should extend an adjacent patch
         if addr > 0:
@@ -1580,7 +1581,7 @@ class HexView(ViewStatePublisherMixin, SynchronizedView):
         lyt.addWidget(status_bar)
         lyt.addWidget(self.inner_widget)
         lyt.setContentsMargins(0, 0, 0, 0)
-        lyt.setSpacing(1)
+        lyt.setSpacing(0)
         self.setLayout(lyt)
         self.inner_widget.cursor_changed.connect(self.on_cursor_changed)
         self.inner_widget.hex.viewport_changed.connect(self.on_cursor_changed)
@@ -1660,7 +1661,7 @@ class HexView(ViewStatePublisherMixin, SynchronizedView):
         self._clipboard = bytearray(num_bytes_selected)
         for addr in range(minaddr, maxaddr + 1):
             d = self.project_memory_read_func(addr)  # FIXME: Support multibyte read
-            if type(d) is int:
+            if isinstance(d, int):
                 self._clipboard[addr - minaddr] = d
 
     def _paste_copied_bytes_at_cursor(self):
@@ -1870,7 +1871,7 @@ class HexView(ViewStatePublisherMixin, SynchronizedView):
         self._sync_view_highlights = regions
         self._set_highlighted_regions()
 
-    def _update_highlight_regions_from_patches(self):
+    def _update_highlight_regions_from_patches(self, **_):
         """
         Updates cached list of highlight regions from patches.
         """

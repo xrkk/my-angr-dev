@@ -25,7 +25,7 @@ class QDataDepPreviewGraph(QZoomableDraggableGraphicsView):
     def __init__(self, parent: QtWidgets.QWidget):
         super().__init__(parent)
 
-        self._display_node: Optional["QDataDepGraphBlock"] = None
+        self._display_node: Optional[QDataDepGraphBlock] = None
 
     @property
     def node(self) -> Optional["QDataDepGraphBlock"]:
@@ -84,7 +84,7 @@ class QDataDepPreview(QtWidgets.QFrame):
             self._caption.setText(self._DST_JUMP_TEXT)
 
     def _init_widgets(self):
-        parent_background_color = self.parent().palette().color(QtGui.QPalette.Background)
+        parent_background_color = self.parent().palette().color(QtGui.QPalette.Window)
         self.setStyleSheet(f"background-color: {parent_background_color.name()};")
         self.setFrameStyle(QtWidgets.QFrame.Raised | QtWidgets.QFrame.Panel)
         self._layout_manager.addWidget(self.preview_graph, 0, QtCore.Qt.AlignCenter)
@@ -107,8 +107,8 @@ class QDataDepGraph(QZoomableDraggableGraphicsView):
         self._node_preview.preview_graph._reset_scene()
         self._node_preview.hide()
 
-        self._graph: Optional["DiGraph"] = None  # Graph to render
-        self._reference_data_dep_graph: Optional["DiGraph"] = None  # Graph from analysis, used to check edge data
+        self._graph: Optional[DiGraph] = None  # Graph to render
+        self._reference_data_dep_graph: Optional[DiGraph] = None  # Graph from analysis, used to check edge data
         self.nodes = set()
         self._edges: List[Edge] = []
         self._arrows_by_src: Dict[Any, List[QDataDepGraphArrow]] = defaultdict(list)

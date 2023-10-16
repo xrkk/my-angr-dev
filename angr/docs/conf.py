@@ -17,8 +17,10 @@ author = "The angr Project"
 
 extensions = [
     "sphinx.ext.autodoc",
+    "sphinx.ext.autosectionlabel",
     "sphinx.ext.autosummary",
     "sphinx.ext.coverage",
+    "sphinx.ext.intersphinx",
     "sphinx.ext.napoleon",
     "sphinx.ext.todo",
     "sphinx.ext.viewcode",
@@ -35,8 +37,8 @@ autoclass_content = "class"
 autodoc_default_options = {
     "members": True,
     "member-order": "bysource",
-    "inherited-members": True,
     "show-inheritance": True,
+    "special-members": "__init__",
     "undoc-members": True,
 }
 autodoc_inherit_docstrings = True
@@ -51,6 +53,21 @@ coverage_ignore_pyobjects = [
     "angr.sim_type.SimTypeFixedSizeArray",  # Alias to SimTypeArray
 ]
 
+# -- Options for intersphinx -------------------------------------------------
+# https://www.sphinx-doc.org/en/master/usage/extensions/intersphinx.html
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "ailment": ("https://docs.angr.io/projects/ailment/en/latest/", None),
+    "archinfo": ("https://docs.angr.io/projects/archinfo/en/latest/", None),
+    "claripy": ("https://docs.angr.io/projects/claripy/en/latest/", None),
+    "cle": ("https://docs.angr.io/projects/cle/en/latest/", None),
+    "pypcode": ("https://docs.angr.io/projects/pypcode/en/latest/", None),
+    "pyvex": ("https://docs.angr.io/projects/pyvex/en/latest/", None),
+}
+
+# -- Options for todos -------------------------------------------------------
+# https://www.sphinx-doc.org/en/master/usage/extensions/todo.html
+todo_include_todos = True
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output

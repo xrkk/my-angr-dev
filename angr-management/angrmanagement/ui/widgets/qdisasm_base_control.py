@@ -2,6 +2,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional, Tuple
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMessageBox
 
 if TYPE_CHECKING:
     from angrmanagement.ui.views import DisassemblyView
@@ -22,7 +23,7 @@ class QDisassemblyBaseControl:
 
     def __init__(self, instance, disasm_view, base_cls):
         self.instance = instance
-        self.disasm_view: "DisassemblyView" = disasm_view
+        self.disasm_view: DisassemblyView = disasm_view
         self._base_cls = base_cls
         self._insaddr_to_block = {}
         self._disassembly_level = disasm_view.disassembly_level
@@ -38,13 +39,13 @@ class QDisassemblyBaseControl:
 
         :return:    None
         """
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def reload(self):
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def show_instruction(self, insn_addr, insn_pos=None, centering=False, use_block_pos=False, use_animation=False):
-        raise NotImplementedError()
+        raise NotImplementedError
 
     #
     # Public methods
@@ -93,5 +94,20 @@ class QDisassemblyBaseControl:
                 lbl_addr = next(iter(self.infodock.selected_labels))
                 self.disasm_view.popup_xref_dialog(addr=lbl_addr, dst_addr=lbl_addr)
                 return
+
+            # try to get a selected variable
+            if len(self.infodock.selected_variables) == 1:
+                variable = next(iter(self.infodock.selected_variables))
+                self.disasm_view.popup_xref_dialog(addr=0, variable=variable)
+                return
+
+            # message the user
+            QMessageBox.critical(
+                None,
+                "Invalid selection for XRefs",
+                "You must select an operand, a label, a variable, or a function header before requesting XRefs.",
+            )
+
+            return
 
         self._base_cls.keyPressEvent(self, event)

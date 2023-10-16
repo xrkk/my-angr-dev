@@ -21,8 +21,8 @@ class TypesView(BaseView):
 
     FUNCTION_SPECIFIC_VIEW = True
 
-    def __init__(self, instance, default_docking_position, *args, **kwargs):
-        super().__init__("types", instance, default_docking_position, *args, **kwargs)
+    def __init__(self, workspace, instance, default_docking_position, *args, **kwargs):
+        super().__init__("types", workspace, instance, default_docking_position, *args, **kwargs)
 
         self.base_caption = "Types"
 
@@ -53,7 +53,7 @@ class TypesView(BaseView):
     def current_typestore(self) -> "TypesStore":
         if self._function.am_none:
             return self.instance.kb.types
-        var_manager: "VariableManagerInternal" = self.instance.pseudocode_variable_kb.variables[self._function.addr]
+        var_manager: VariableManagerInternal = self.instance.pseudocode_variable_kb.variables[self._function.addr]
         return var_manager.types
 
     #

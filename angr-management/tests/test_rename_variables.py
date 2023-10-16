@@ -12,6 +12,7 @@ from PySide6.QtTest import QTest
 
 from angrmanagement.logic.threads import gui_thread_schedule
 from angrmanagement.ui.dialogs.rename_node import RenameNode
+from angrmanagement.ui.views import DisassemblyView
 
 if TYPE_CHECKING:
     from angrmanagement.ui.views import CodeView
@@ -32,12 +33,12 @@ class TestRenameVariables(unittest.TestCase):
         self.assertIsNotNone(self.func)
 
         # decompile the function
-        disasm_view = self.main.workspace._get_or_create_disassembly_view()
+        disasm_view = self.main.workspace._get_or_create_view("disassembly", DisassemblyView)
         disasm_view.display_disasm_graph()
         gui_thread_schedule(disasm_view.display_function, args=(self.func,))
         disasm_view.decompile_current_function()
         self.main.workspace.main_instance.join_all_jobs()
-        self.code_view: "CodeView" = self.main.workspace.view_manager.first_view_in_category("pseudocode")
+        self.code_view: CodeView = self.main.workspace.view_manager.first_view_in_category("pseudocode")
 
     def tearDown(self) -> None:
         self.main = None

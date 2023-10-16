@@ -38,7 +38,7 @@ class AnalysesConfiguration:
 
     def __init__(self, analyses: Sequence["AnalysisConfiguration"], instance):
         self.instance = instance
-        self.analyses: Sequence["AnalysisConfiguration"] = analyses
+        self.analyses: Sequence[AnalysisConfiguration] = analyses
 
     def __len__(self):
         return len(self.analyses)
@@ -88,6 +88,8 @@ class AnalysisConfiguration:
         Update dictionary `out` with configuration for this option.
         """
         for o in self.options.values():
+            if getattr(o, "enabled", None) is False:
+                continue
             o.update_dict(out)
 
 
@@ -130,6 +132,20 @@ class BoolAnalysisOption(PrimitiveAnalysisOption):
     """
 
     def __init__(self, name: str, description: str, default: bool = False, tooltip: str = ""):
+        super().__init__(name, description, default, tooltip)
+
+
+class StringAnalysisOption(PrimitiveAnalysisOption):
+    """
+    String option for an analysis.
+
+    :ivar optional: If this option is optional or mandatory.
+    :ivar enabled:  Is this option enabled by the user or not.
+    """
+
+    def __init__(self, name: str, description: str, default: str = "", tooltip: str = "", optional: bool = False):
+        self.optional = optional
+        self.enabled = not self.optional
         super().__init__(name, description, default, tooltip)
 
 
@@ -190,6 +206,10 @@ class CFGAnalysisConfiguration(AnalysisConfiguration):
                 BoolAnalysisOption("data_references", "Collect cross-references and guess data types", True),
                 BoolAnalysisOption("cross_references", "Perform deep analysis on cross-references (slow)"),
                 BoolAnalysisOption("skip_unmapped_addrs", "Skip unmapped addresses", True),
+                BoolAnalysisOption("exclude_sparse_regions", "Exclude Sparse Regions", True),
+                BoolAnalysisOption(
+                    "explicit_analysis_starts", "Exclude non-explicit functions for analysis (incomplete)", False
+                ),
                 ChoiceAnalysisOption(
                     "scanning_mode",
                     "Scan to maximize identified code blocks",
@@ -199,6 +219,20 @@ class CFGAnalysisConfiguration(AnalysisConfiguration):
                         CFGForceScanMode.CompleteScan: "Complete Scan",
                     },
                     CFGForceScanMode.SmartScan,
+                ),
+                StringAnalysisOption(
+                    "regions",
+                    "Regions for analysis",
+                    tooltip="Specify ranges of regions for which to recover CFG. Example: 0x400000-0x401000. You may "
+                    "specify multiple address ranges for analysis.",
+                    optional=True,
+                ),
+                StringAnalysisOption(
+                    "function_starts",
+                    "Start at function addresses",
+                    tooltip="Specify function addresses to start recursive descent of CFG generation to speed up "
+                    "analysis. Example: 0x400000,0x401000",
+                    optional=True,
                 ),
             ]
         }
@@ -212,9 +246,22 @@ class FlirtAnalysisConfiguration(AnalysisConfiguration):
     def __init__(self, instance):
         super().__init__(instance)
         self.name = "flirt"
-        self.display_name = "Signature Matching"
+        self.display_name = "Function Signature Matching"
         self.description = self.project.analyses.Flirt.__doc__.strip()
         self.enabled = True
+
+
+class CodeTaggingConfiguration(AnalysisConfiguration):
+    """
+    Configuration for Code Tagging.
+    """
+
+    def __init__(self, instance):
+        super().__init__(instance)
+        self.name = "code_tagging"
+        self.display_name = "Tag Functions Based on Syntactic Features"
+        self.description = "Add tags to functions based on syntactic features in assembly code and referenced strings."
+        self.enabled = False
 
 
 class VariableRecoveryConfiguration(AnalysisConfiguration):
@@ -228,7 +275,7 @@ class VariableRecoveryConfiguration(AnalysisConfiguration):
     def __init__(self, instance):
         super().__init__(instance)
         self.name = "varec"
-        self.display_name = "Complete Variable Recovery"
+        self.display_name = "Recover Variables on All Functions"
         self.description = (
             "Perform a full-project variable recovery and calling-convention recovery analysis. "
             "Recommended for small- to medium-sized binaries. This analysis takes a long time to "

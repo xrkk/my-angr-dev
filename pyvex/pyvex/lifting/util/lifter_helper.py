@@ -56,7 +56,7 @@ class GymratLifter(Lifter):
         # Try every instruction until one works
         for possible_instr in self.instrs:
             try:
-                log.info("Trying %s", possible_instr.name)
+                log.debug("Trying %s", possible_instr.name)
                 return possible_instr(self.bitstrm, self.irsb.arch, addr)
             # a ParserError signals that this instruction did not match
             # we need to try other instructions, so we ignore this error
@@ -97,7 +97,7 @@ class GymratLifter(Lifter):
             log.exception(f"Error decoding block at offset {bytepos:#x} (address {addr:#x}):")
             raise
 
-    def lift(self, disassemble=False, dump_irsb=False):
+    def _lift(self, disassemble=False, dump_irsb=False):
         self.thedata = (
             self.data[: self.max_bytes]
             if isinstance(self.data, (bytes, bytearray, memoryview))

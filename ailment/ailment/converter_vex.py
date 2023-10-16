@@ -52,9 +52,22 @@ class VEXExprConverter(Converter):
         if isinstance(expr, pyvex.IRExpr.CCall):
             operands = tuple(VEXExprConverter.convert(arg, manager) for arg in expr.args)
             ccall = VEXCCallExpression(
-                manager.next_atom(), expr.cee.name, operands, bits=expr.result_size(manager.tyenv)
+                manager.next_atom(),
+                expr.cee.name,
+                operands,
+                bits=expr.result_size(manager.tyenv),
+                ins_addr=manager.ins_addr,
+                vex_block_addr=manager.block_addr,
+                vex_stmt_idx=manager.vex_stmt_idx,
             )
-            return DirtyExpression(manager.next_atom(), ccall, bits=expr.result_size(manager.tyenv))
+            return DirtyExpression(
+                manager.next_atom(),
+                ccall,
+                bits=expr.result_size(manager.tyenv),
+                ins_addr=manager.ins_addr,
+                vex_block_addr=manager.block_addr,
+                vex_stmt_idx=manager.vex_stmt_idx,
+            )
 
         log.warning("VEXExprConverter: Unsupported VEX expression of type %s.", type(expr))
         return DirtyExpression(manager.next_atom(), expr, bits=expr.result_size(manager.tyenv))
@@ -137,7 +150,13 @@ class VEXExprConverter(Converter):
                     # returns the high-half of the argument
                     inner = VEXExprConverter.convert(expr.args[0], manager)
                     shifted = BinaryOp(
-                        manager.next_atom(), "Shr", [inner, Const(manager.next_atom(), None, simop._to_size, 8)], False
+                        manager.next_atom(),
+                        "Shr",
+                        [inner, Const(manager.next_atom(), None, simop._to_size, 8)],
+                        False,
+                        ins_addr=manager.ins_addr,
+                        vex_block_addr=manager.block_addr,
+                        vex_stmt_idx=manager.vex_stmt_idx,
                     )
                     return Convert(
                         manager.next_atom(),
@@ -161,6 +180,9 @@ class VEXExprConverter(Converter):
                     vex_stmt_idx=manager.vex_stmt_idx,
                 )
             raise NotImplementedError("Unsupported operation")
+        elif op_name == "Not" and expr.op != "Iop_Not1":
+            # NotN (N != 1) is equivalent to bitwise negation
+            op_name = "BitwiseNeg"
 
         return UnaryOp(
             manager.next_atom(),
@@ -627,7 +649,7 @@ class VEXIRSBConverter(Converter):
             manager.vex_stmt_idx = vex_stmt_idx
             try:
                 converted = VEXStmtConverter.convert(idx, stmt, manager)
-                if type(converted) is list:
+                if isinstance(converted, list):
                     # got multiple statements
                     statements.extend(converted)
                     idx += len(converted)
@@ -699,7 +721,6 @@ class VEXIRSBConverter(Converter):
             statements.append(
                 Return(
                     manager.next_atom(),
-                    VEXExprConverter.convert(irsb.next, manager),
                     [],
                     ins_addr=manager.ins_addr,
                     vex_block_addr=manager.block_addr,

@@ -275,7 +275,7 @@ class QOperand(QCachedGraphicsItem):
             # without displaying variable
             self._label = self.operand.render(formatting=formatting)[0]
 
-            if variable_sort:
+            if variable_sort and self.variable_manager is not None:
                 # try find the corresponding variable
                 variable_and_offsets = self.variable_manager[self.func_addr].find_variables_by_insn(
                     self.insn.addr, variable_sort
@@ -295,10 +295,7 @@ class QOperand(QCachedGraphicsItem):
                         if "custom_values_str" not in formatting:
                             formatting["custom_values_str"] = {}
                         if variable_sort == "memory":
-                            if offset == 0:
-                                custom_value_str = variable_str
-                            else:
-                                custom_value_str = "%s[%d]" % (variable_str, offset)
+                            custom_value_str = variable_str if offset == 0 else "%s[%d]" % (variable_str, offset)
                         else:
                             custom_value_str = ""
 
@@ -372,7 +369,7 @@ class QOperand(QCachedGraphicsItem):
         if self._branch_targets_text:
             self._branch_targets_item = QGraphicsSimpleTextItem(self._branch_targets_text, self)
             self._branch_targets_item.setFont(self._config.disasm_font)
-            self._branch_targets_item.setBrush(Qt.darkYellow)  # TODO: Expose as a configuration entry in Config
+            self._branch_targets_item.setBrush(self._config.disasm_view_branch_target_text_color)
 
         # variable identifier
         if self._variable_ident_item is not None:
@@ -381,7 +378,7 @@ class QOperand(QCachedGraphicsItem):
         if self.variable is not None and self.disasm_view.show_variable_identifier:
             self._variable_ident_item = QGraphicsSimpleTextItem(self._variable_ident, self)
             self._variable_ident_item.setFont(self._config.disasm_font)
-            self._variable_ident_item.setBrush(Qt.darkGreen)  # TODO: Expose as a configuration entry in Config
+            self._variable_ident_item.setBrush(self._config.disasm_view_variable_ident_color)
 
         self._layout_items_and_update_size()
 
@@ -471,9 +468,8 @@ class QOperand(QCachedGraphicsItem):
             # this is the destination operand
             # which variable is written here?
             for var, offset in variable_and_offsets:
-                if arch.registers[reg_name][0] == var.reg:
-                    if self._variable_has_access(var, self.insn.addr, "write"):
-                        return var, offset
+                if arch.registers[reg_name][0] == var.reg and self._variable_has_access(var, self.insn.addr, "write"):
+                    return var, offset
 
             log.debug(
                 "Cannot find any destination variable for operand %d at instruction %#x.",
@@ -495,11 +491,7 @@ class QOperand(QCachedGraphicsItem):
             return False
 
         accesses = self.variable_manager[self.func_addr]._variable_accesses[variable]
-        for access in accesses:
-            if access.location.ins_addr == ins_addr and access.access_type == access_type:
-                return True
-
-        return False
+        return any(access.location.ins_addr == ins_addr and access.access_type == access_type for access in accesses)
 
     def _equals_for_highlighting_purposes(self, other):
         """

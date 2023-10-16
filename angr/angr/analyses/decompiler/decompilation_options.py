@@ -3,6 +3,7 @@ from typing import Optional, List, Callable
 from collections import defaultdict
 
 from .structuring import structurer_class_from_name
+from .structuring.phoenix import MultiStmtExprMode
 
 
 class DecompilationOption:
@@ -103,7 +104,7 @@ options = [
         "codegen",
         "comment_gotos",
         category="Display",
-        default_value=True,
+        default_value=False,
         clears_cache=False,
     ),
     O(
@@ -147,13 +148,23 @@ options = [
         clears_cache=False,
     ),
     O(
+        "Show demangled name",
+        "Demangles names in higher-level languages like C++",
+        bool,
+        "codegen",
+        "show_demangled_name",
+        category="Display",
+        default_value=True,
+        clears_cache=True,
+    ),
+    O(
         "Structuring algorithm",
         "Select a structuring algorithm. Currently supports Dream and Phoenix.",
         type,
         "recursive_structurer",
         "structurer_cls",
         category="Structuring",
-        default_value="Dream",
+        default_value="Phoenix",
         candidate_values=["Dream", "Phoenix"],
         clears_cache=True,
         convert=structurer_class_from_name,
@@ -168,14 +179,58 @@ options = [
         default_value=True,
         clears_cache=True,
     ),
+    O(
+        "C-style null compares",
+        "Rewrites the (x == 0) => (!x) && (x != 0) => (x)",
+        bool,
+        "codegen",
+        "cstyle_null_cmp",
+        category="Display",
+        default_value=True,
+        clears_cache=True,
+    ),
+    O(
+        "Simplified else",
+        "Removes redundant else scopes",
+        bool,
+        "codegen",
+        "simplify_else_scope",
+        category="Display",
+        default_value=True,
+        clears_cache=True,
+    ),
+    O(
+        "C-style if statements",
+        "Omits braces for single statement if blocks that have no else",
+        bool,
+        "codegen",
+        "cstyle_ifs",
+        category="Display",
+        default_value=True,
+        clears_cache=True,
+    ),
+    O(
+        "Multi-expression statements generation",
+        "Should the structuring algorithm generate multi-expression statements? If so, under what conditions?",
+        type,
+        "recursive_structurer",
+        "use_multistmtexprs",
+        category="Structuring",
+        default_value=MultiStmtExprMode.MAX_ONE_CALL.value,
+        candidate_values=[op.value for op in MultiStmtExprMode],
+        clears_cache=True,
+        convert=MultiStmtExprMode,
+    ),
 ]
 
 # NOTE: if you add a codegen option here, please add it to reapply_options
 
 options_by_category = defaultdict(list)
+PARAM_TO_OPTION = {}
 
 for o in options:
     options_by_category[o.category].append(o)
+    PARAM_TO_OPTION[o.param] = o
 
 
 #

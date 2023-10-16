@@ -5,6 +5,7 @@ from angr.analyses.decompiler.utils import to_ail_supergraph
 from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, QTimeLine
 from PySide6.QtWidgets import QFrame
 
+from angrmanagement.config import Conf
 from angrmanagement.utils import get_out_branches
 from angrmanagement.utils.cfg import categorize_edges
 from angrmanagement.utils.graph_layouter import GraphLayouter
@@ -76,6 +77,7 @@ class QDisassemblyGraph(QDisassemblyBaseControl, QZoomableDraggableGraphicsView)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.setFrameStyle(QFrame.NoFrame)
+        self.setBackgroundBrush(Conf.disasm_view_background_color)
 
         self._minimap = QMiniMapView(self, parent=self)
         self._minimap.setMaximumSize(200, 400)
@@ -112,18 +114,16 @@ class QDisassemblyGraph(QDisassemblyBaseControl, QZoomableDraggableGraphicsView)
     def reload(self, old_infodock: Optional["InfoDock"] = None):
         # if there is an instruction in selection, we will want to select that instruction again after reloading this
         # view.
-        if old_infodock is not None:
-            selected_insns = old_infodock.selected_insns.am_obj
-        else:
-            selected_insns = set()
+        selected_insns = old_infodock.selected_insns.am_obj if old_infodock is not None else set()
 
         self._reset_scene()
         self._arrows.clear()
+        self._minimap.reload_target_scene()
+        self.blocks.clear()
+        self._insaddr_to_block.clear()
         if self._function_graph is None:
             return
 
-        self.blocks.clear()
-        self._insaddr_to_block.clear()
         scene = self.scene()
 
         if self._disassembly_level is DisassemblyLevel.AIL:
@@ -148,7 +148,7 @@ class QDisassemblyGraph(QDisassemblyBaseControl, QZoomableDraggableGraphicsView)
             self.disasm = self.instance.project.analyses.Disassembly(
                 function=self._function_graph.function, include_ir=include_ir
             )
-            view = self.instance.workspace.view_manager.first_view_in_category("console")
+            view = self.disasm_view.workspace.view_manager.first_view_in_category("console")
             if view is not None:
                 view.push_namespace(
                     {
@@ -181,7 +181,7 @@ class QDisassemblyGraph(QDisassemblyBaseControl, QZoomableDraggableGraphicsView)
             scene.addItem(block)
             self.blocks.append(block)
 
-            for insn_addr in block.addr_to_insns.keys():
+            for insn_addr in block.addr_to_insns:
                 self._insaddr_to_block[insn_addr] = block
 
         self.request_relayout()
@@ -248,6 +248,7 @@ class QDisassemblyGraph(QDisassemblyBaseControl, QZoomableDraggableGraphicsView)
         Redraw on color scheme update.
         """
         if event.type() == QEvent.PaletteChange:
+            self.setBackgroundBrush(Conf.disasm_view_background_color)
             self.reload()
 
     def on_background_click(self):

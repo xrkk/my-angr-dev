@@ -179,6 +179,10 @@ int vex_init() {
 #  endif
 #elif defined(__powerpc__)
         vta.arch_host = VexArchPPC64;
+#elif defined(__riscv)
+#  if defined(__riscv_xlen) && (__riscv_xlen == 64)
+	vta.arch_host = VexArchRISCV64;
+#  endif
 #else
 #error "Unsupported host arch"
 #endif
@@ -271,6 +275,9 @@ static void vex_prepare_vai(VexArch arch, VexArchInfo *vai) {
 		case VexArchMIPS32:
 		case VexArchMIPS64:
 			vai->hwcaps = VEX_PRID_COMP_CAVIUM;
+			break;
+		case VexArchRISCV64:
+			vai->hwcaps = 0;
 			break;
 		default:
 			pyvex_error("Invalid arch in vex_prepare_vai.\n");

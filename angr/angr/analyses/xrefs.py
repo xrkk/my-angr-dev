@@ -4,19 +4,24 @@ from collections import defaultdict
 import claripy
 import pyvex
 
+from angr.analyses import visitors, ForwardAnalysis
 from ..knowledge_plugins.xrefs import XRef, XRefType
+from ..knowledge_plugins.functions.function import Function
 from ..engines.light import SimEngineLight, SimEngineLightVEXMixin
 from .propagator.vex_vars import VEXTmp
 from .propagator.values import Top
 from . import register_analysis, PropagatorAnalysis
 from .analysis import Analysis
-from .forward_analysis import FunctionGraphVisitor, SingleNodeGraphVisitor, ForwardAnalysis
 
 
 class SimEngineXRefsVEX(
     SimEngineLightVEXMixin,
     SimEngineLight,
 ):
+    """
+    The VEX engine class for XRefs analysis.
+    """
+
     def __init__(self, xref_manager, project=None, replacements=None):
         super().__init__()
         self.project = project
@@ -183,16 +188,18 @@ class XRefsAnalysis(ForwardAnalysis, Analysis):  # pylint:disable=abstract-metho
 
     def __init__(self, func=None, func_graph=None, block=None, max_iterations=1, replacements=None):
         if func is not None:
+            if not isinstance(func, Function):
+                func = self.kb.functions[func]
             if block is not None:
                 raise ValueError('You cannot specify both "func" and "block".')
             # traversing a function
-            graph_visitor = FunctionGraphVisitor(func, func_graph)
+            graph_visitor = visitors.FunctionGraphVisitor(func, func_graph)
             if replacements is None:
                 prop = self.project.analyses[PropagatorAnalysis].prep()(func=func, func_graph=func_graph)
                 replacements = prop.model.replacements
         elif block is not None:
             # traversing a block
-            graph_visitor = SingleNodeGraphVisitor(block)
+            graph_visitor = visitors.SingleNodeGraphVisitor(block)
             if replacements is None:
                 prop = self.project.analyses[PropagatorAnalysis].prep()(block=block)
                 replacements = prop.model.replacements

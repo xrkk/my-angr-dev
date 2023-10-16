@@ -1,25 +1,50 @@
 import logging
 import os
+import time
 import traceback
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Callable, List, Optional, Type, TypeVar, Union
 
 from angr import StateHierarchy
+from angr.knowledge_plugins.cfg import MemoryData, MemoryDataSort
 from angr.knowledge_plugins.functions.function import Function
+from angr.knowledge_plugins.patches import Patch
+from angr.misc.testing import is_testing
 from cle import SymbolType
 from PySide6.QtWidgets import QMessageBox
 
 from angrmanagement.config import Conf
+from angrmanagement.data.analysis_options import (
+    AnalysesConfiguration,
+    CFGAnalysisConfiguration,
+    CodeTaggingConfiguration,
+    FlirtAnalysisConfiguration,
+    VariableRecoveryConfiguration,
+)
 from angrmanagement.data.breakpoint import Breakpoint, BreakpointType
 from angrmanagement.data.instance import ObjectContainer
+from angrmanagement.data.jobs import (
+    CFGGenerationJob,
+    CodeTaggingJob,
+    FlirtSignatureRecognitionJob,
+    Job,
+    PrototypeFindingJob,
+    VariableRecoveryJob,
+)
 from angrmanagement.data.jobs.loading import LoadBinaryJob
 from angrmanagement.data.trace import BintraceTrace, Trace
 from angrmanagement.logic.commands import CommandManager
 from angrmanagement.logic.debugger import DebuggerWatcher
 from angrmanagement.logic.debugger.bintrace import BintraceDebugger
+from angrmanagement.logic.debugger.simgr import SimulationDebugger
+from angrmanagement.logic.threads import gui_thread_schedule_async
 from angrmanagement.plugins import PluginManager
+from angrmanagement.ui.dialogs import AnalysisOptionsDialog, FunctionDialog
+from angrmanagement.utils import locate_function
+from angrmanagement.utils.daemon_thread import start_daemon_thread
 
 from .view_manager import ViewManager
 from .views import (
+    BaseView,
     BreakpointsView,
     CallExplorerView,
     CodeView,
@@ -44,15 +69,12 @@ from .views import (
 )
 
 if TYPE_CHECKING:
-    from angrmanagement.data.analysis_options import AnalysesConfiguration
     from angrmanagement.data.instance import Instance
-    from angrmanagement.data.jobs import VariableRecoveryJob
     from angrmanagement.ui.main_window import MainWindow
-
-    from .menus.disasm_insn_context_menu import DisasmInsnContextMenu
 
 
 _l = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 class Workspace:
@@ -61,7 +83,7 @@ class Workspace:
     """
 
     def __init__(self, main_window, instance):
-        self.main_window: "MainWindow" = main_window
+        self.main_window: MainWindow = main_window
         self._main_instance = instance
         instance.workspace = self
 
@@ -69,26 +91,27 @@ class Workspace:
         self.view_manager: ViewManager = ViewManager(self)
         self.plugins: PluginManager = PluginManager(self)
         self.variable_recovery_job: Optional[VariableRecoveryJob] = None
+        self._first_cfg_generation_callback_completed: bool = False
+
+        # Configure callbacks on main_instance
+        instance.project.am_subscribe(self._instance_project_initalization)
+        instance.simgrs.am_subscribe(self._update_simgr_debuggers)
+        instance.handle_comment_changed_callback = self.plugins.handle_comment_changed
+        instance.job_worker_exception_callback = self._handle_job_exception
 
         self.current_screen = ObjectContainer(None, name="current_screen")
 
         self.default_tabs = [
-            DisassemblyView(self._main_instance, "center"),
-            HexView(self._main_instance, "center"),
-            ProximityView(self._main_instance, "center"),
-            CodeView(self._main_instance, "center"),
-            FunctionsView(self._main_instance, "left"),
+            DisassemblyView(self, self._main_instance, "center"),
+            HexView(self, self._main_instance, "center"),
+            CodeView(self, self._main_instance, "center"),
+            FunctionsView(self, self._main_instance, "left"),
         ]
         if Conf.has_operation_mango:
-            self.default_tabs.append(DependencyView(self._main_instance, "center"))
+            self.default_tabs.append(DependencyView(self, self._main_instance, "center"))
         self.default_tabs += [
-            StringsView(self._main_instance, "center"),
-            PatchesView(self._main_instance, "center"),
-            SymexecView(self._main_instance, "center"),
-            StatesView(self._main_instance, "center"),
-            InteractionView(self._main_instance, "center"),
-            ConsoleView(self._main_instance, "bottom"),
-            LogView(self._main_instance, "bottom"),
+            ConsoleView(self, self._main_instance, "bottom"),
+            LogView(self, self._main_instance, "bottom"),
         ]
 
         enabled_tabs = [x.strip() for x in Conf.enabled_tabs.split(",") if x.strip()]
@@ -99,9 +122,9 @@ class Workspace:
         self._dbg_watcher = DebuggerWatcher(self.on_debugger_state_updated, self.main_instance.debugger_mgr.debugger)
         self.on_debugger_state_updated()
 
-        self._analysis_configuration: Optional[AnalysesConfiguration] = None
-
         DisassemblyView.register_commands(self)
+
+        instance.patches.am_subscribe(self._on_patch_event)
 
     #
     # Properties
@@ -138,13 +161,164 @@ class Workspace:
                     view.jump_to(addr, True)
 
     def on_function_selected(self, func: Function):
-        self.main_instance.on_function_selected(func)
+        """
+        Callback function triggered when a new function is selected in the function view.
+
+        :param func:    The function that is selected.
+        :return:        None
+        """
+
+        # Ask all current views to display this function
+        current_view = self.view_manager.current_tab
+        if current_view is None or not current_view.FUNCTION_SPECIFIC_VIEW:
+            # we don't have a current view or the current view does not have function-specific content. create a
+            # disassembly view to display the selected function.
+            disasm_view = self._get_or_create_view("dissasembly", DisassemblyView)
+            disasm_view.display_function(func)
+            self.view_manager.raise_view(disasm_view)
+        else:
+            # ask the current view to display this function
+            current_view.function = func
 
     def on_function_tagged(self):
-        self.main_instance.on_function_tagged()
+        # reload disassembly view
+        if len(self.view_manager.views_by_category["disassembly"]) == 1:
+            view = self.view_manager.first_view_in_category("disassembly")
+        else:
+            view = self.view_manager.current_view_in_category("disassembly")
+
+        if view is not None and view.current_function.am_obj is not None:
+            view.reload()
 
     def on_variable_recovered(self, func_addr: int):
-        self.main_instance.on_variable_recovered(func_addr)
+        """
+        Called when variable information of the given function is available.
+
+        :param int func_addr:   Address of the function whose variable information is available.
+        """
+        disassembly_view = self.view_manager.first_view_in_category("disassembly")
+        if disassembly_view is not None:
+            disassembly_view.on_variable_recovered(func_addr)
+
+    def generate_cfg(self, cfg_args=None):
+        if cfg_args is None:
+            cfg_args = {}
+
+        cfg_job = CFGGenerationJob(on_finish=self.on_cfg_generated, **cfg_args)
+        self.main_instance.add_job(cfg_job)
+        start_daemon_thread(self._refresh_cfg, "Progressively Refreshing CFG", args=(cfg_job,))
+
+    def _refresh_cfg(self, cfg_job):
+        """
+        Reload once and then refresh in a loop, while the CFG job is running
+        """
+        reloaded = False
+        while True:
+            if not self.main_instance.cfg.am_none:
+                if reloaded:
+                    gui_thread_schedule_async(
+                        self.refresh,
+                        kwargs={
+                            "categories": ["disassembly", "functions"],
+                        },
+                    )
+                else:
+                    gui_thread_schedule_async(
+                        self.reload,
+                        kwargs={
+                            "categories": ["disassembly", "functions"],
+                        },
+                    )
+                    reloaded = True
+
+            time.sleep(0.3)
+            if cfg_job not in self.main_instance.jobs:
+                break
+
+    def on_cfg_generated(self):
+        if self.main_instance._analysis_configuration["flirt"].enabled:
+            self.main_instance.add_job(
+                FlirtSignatureRecognitionJob(
+                    on_finish=self._on_flirt_signature_recognized,
+                )
+            )
+
+        if self.main_instance.cfg is not None:
+            if not self._first_cfg_generation_callback_completed:
+                self._first_cfg_generation_callback_completed = True
+                the_func = self.main_instance.kb.functions.function(name="main")
+                if the_func is None:
+                    the_func = self.main_instance.kb.functions.function(addr=self.main_instance.project.entry)
+                if the_func is not None:
+                    self.on_function_selected(the_func)
+
+            # Reload the pseudocode view
+            view = self.view_manager.first_view_in_category("pseudocode")
+            if view is not None:
+                view.reload()
+
+            # Reload the strings view
+            view = self.view_manager.first_view_in_category("strings")
+            if view is not None:
+                view.reload()
+
+            # Clear the proximity view
+            view = self.view_manager.first_view_in_category("proximity")
+            if view is not None:
+                view.clear()
+
+    def _on_flirt_signature_recognized(self):
+        self.main_instance.add_job(
+            PrototypeFindingJob(
+                on_finish=self._on_prototype_found,
+            )
+        )
+
+    def _on_prototype_found(self):
+        if self.main_instance._analysis_configuration["code_tagging"].enabled:
+            self.main_instance.add_job(
+                CodeTaggingJob(
+                    on_finish=self.on_function_tagged,
+                )
+            )
+
+        if self.main_instance._analysis_configuration["varec"].enabled:
+            options = self.main_instance._analysis_configuration["varec"].to_dict()
+            if is_testing:
+                # disable multiprocessing on angr CI
+                options["workers"] = 0
+            self.main_instance.variable_recovery_job = VariableRecoveryJob(
+                **self.main_instance._analysis_configuration["varec"].to_dict(),
+                on_variable_recovered=self.on_variable_recovered,
+            )
+            # prioritize the current function in display
+            disassembly_view = self.view_manager.first_view_in_category("disassembly")
+            if disassembly_view is not None and not disassembly_view.function.am_none:
+                self.main_instance.variable_recovery_job.prioritize_function(disassembly_view.function.addr)
+            self.main_instance.add_job(self.main_instance.variable_recovery_job)
+
+    def _on_patch_event(self, **kwargs):
+        if self.main_instance.cfg.am_none:
+            return
+
+        update_cfg = False
+        for k in ("added", "removed"):
+            for patch in kwargs.get(k, set()):
+                self.main_instance.cfg.clear_region_for_reflow(
+                    patch.addr, len(patch.new_bytes), self.main_instance.project.kb
+                )
+                update_cfg = True
+
+        if update_cfg:
+            self.generate_cfg(
+                cfg_args={
+                    "force_smart_scan": False,
+                    "force_complete_scan": False,
+                    "model": self.main_instance.kb.cfgs.get_most_accurate(),
+                    # FIXME: We don't want to force scan the entire binary, just the patched region. Add an
+                    #        option for it.
+                }
+            )
 
     #
     # Public methods
@@ -155,12 +329,9 @@ class Workspace:
         Add a new disassembly view.
         """
         disassembly_view = self.view_manager.first_view_in_category("disassembly")
-        if disassembly_view is not None:
-            current_addr = disassembly_view.jump_history.current
-        else:
-            current_addr = None
+        current_addr = disassembly_view.jump_history.current if disassembly_view is not None else None
 
-        view = DisassemblyView(self._main_instance, "center")
+        view = DisassemblyView(self, self._main_instance, "center")
         self.add_view(view)
         self.raise_view(view)
         view._linear_viewer.initialize()  # FIXME: Don't access protected member
@@ -237,18 +408,18 @@ class Workspace:
         - For strings, look up the symbol of that name and jump there
         """
 
-        if type(obj) is int:
+        if isinstance(obj, int):
             self.jump_to(obj)
-        elif type(obj) is str:
+        elif isinstance(obj, str):
             sym = self.main_instance.project.loader.find_symbol(obj)
             if sym is not None:
                 self.jump_to(sym.rebased_addr)
-        elif type(obj) is Function:
+        elif isinstance(obj, Function):
             self.jump_to(obj.addr)
 
     def jump_to(self, addr, view=None, use_animation=False):
         if view is None or view.category != "disassembly":
-            view = self._get_or_create_disassembly_view()
+            view = self._get_or_create_view("disassembly", DisassemblyView)
 
         self.raise_view(view)
         view.setFocus()
@@ -264,9 +435,9 @@ class Workspace:
         - `workspace.add_breakpoint('global_value')` sets a write breakpoint on `global_value`
         - `workspace.add_breakpoint('global_value', 'read', 1)` sets a 1-byte read breakpoint on `global_value`
         """
-        if type(obj) is int:
+        if isinstance(obj, int):
             addr = obj
-        elif type(obj) is str:
+        elif isinstance(obj, str):
             sym = self.main_instance.project.loader.find_symbol(obj)
             if sym is None:
                 _l.error("Couldn't resolve '%s'", obj)
@@ -275,11 +446,8 @@ class Workspace:
             if not size:
                 size = sym.size
             if not type_:
-                if sym.type == SymbolType.TYPE_FUNCTION:
-                    type_ = "execute"
-                else:
-                    type_ = "write"
-        elif type(obj) is Function:
+                type_ = "execute" if sym.type == SymbolType.TYPE_FUNCTION else "write"
+        elif isinstance(obj, Function):
             addr = obj.addr
             if not type_:
                 type_ = "execute"
@@ -306,31 +474,128 @@ class Workspace:
     def set_comment(self, addr, comment_text):
         self.main_instance.set_comment(addr, comment_text)
 
-        disasm_view = self._get_or_create_disassembly_view()
+        disasm_view = self._get_or_create_view("disassembly", DisassemblyView)
         if disasm_view._flow_graph.disasm is not None:
             # redraw
             disasm_view.current_graph.refresh()
 
     def run_analysis(self, prompt_for_configuration=True):
-        self.main_instance.run_analysis(prompt_for_configuration=prompt_for_configuration)
+        if self.main_instance.project.am_none:
+            return
+
+        if not self.main_window.shown_at_start:
+            # If we are running headlessly (e.g. tests), just run with default configuration
+            prompt_for_configuration = False
+
+        if self.main_instance._analysis_configuration is None:
+            self.main_instance._analysis_configuration = AnalysesConfiguration(
+                [
+                    a(self.main_instance)
+                    for a in [
+                        CFGAnalysisConfiguration,
+                        FlirtAnalysisConfiguration,
+                        CodeTaggingConfiguration,
+                        VariableRecoveryConfiguration,
+                    ]
+                ],
+                self,
+            )
+
+        if prompt_for_configuration:
+            dlg = AnalysisOptionsDialog(self.main_instance._analysis_configuration, self, self.main_window)
+            dlg.setModal(True)
+            should_run = dlg.exec_()
+        else:
+            should_run = True
+
+        if should_run and self.main_instance._analysis_configuration["cfg"].enabled:
+            cfg_options = self.main_instance._analysis_configuration["cfg"].to_dict()
+            # update function start locations
+            if "function_starts" in cfg_options:
+                function_starts = []
+                for func_start_str in cfg_options["function_starts"].split(","):
+                    func_start_str = func_start_str.strip(" ")
+                    if not func_start_str:
+                        continue
+
+                    try:
+                        func_addr = int(func_start_str, 16)
+                    except ValueError:
+                        if prompt_for_configuration:
+                            QMessageBox.critical(
+                                None, "Invalid function start string", f"Invalid analysis start {func_start_str}."
+                            )
+                        return
+
+                    function_starts.append(func_addr)
+
+                if function_starts:
+                    if "explicit_analysis_starts" in cfg_options:
+                        cfg_options["elf_eh_frame"] = False
+                        cfg_options["symbols"] = False
+                        cfg_options["start_at_entry"] = False
+
+                    cfg_options["function_starts"] = function_starts
+
+            # discard "explicit_analysis_starts" even if function_starts is not set
+            if "explicit_analysis_starts" in cfg_options:
+                del cfg_options["explicit_analysis_starts"]
+
+            # update options for region specification
+            if "regions" in cfg_options:
+                regions = []
+                for region_str in cfg_options["regions"].split(","):
+                    region_str = region_str.strip(" ")
+                    if not region_str:
+                        continue
+                    if "-" not in region_str or region_str.count("-") != 1:
+                        # invalid region
+                        if prompt_for_configuration:
+                            QMessageBox.critical(
+                                None, "Invalid region setting", f"Invalid analysis region {region_str}."
+                            )
+                        return
+                    min_addr, max_addr = region_str.split("-")
+                    try:
+                        min_addr = int(min_addr, 16)
+                    except ValueError:
+                        if prompt_for_configuration:
+                            QMessageBox.critical(
+                                None, "Invalid region setting", f"Invalid analysis region {region_str}."
+                            )
+                        return
+                    try:
+                        max_addr = int(max_addr, 16)
+                    except ValueError:
+                        if prompt_for_configuration:
+                            QMessageBox.critical(
+                                None, "Invalid region setting", f"Invalid analysis region {region_str}."
+                            )
+                        return
+                    regions.append((min_addr, max_addr))
+                if regions:
+                    cfg_options["regions"] = regions
+
+            self.generate_cfg(cfg_options)
 
     def decompile_current_function(self):
         current = self.view_manager.current_tab
         if isinstance(current, CodeView):
             current.decompile()
         else:
-            view = self._get_or_create_disassembly_view()
+            view = self._get_or_create_view("disassembly", DisassemblyView)
             view.decompile_current_function()
 
     def view_data_dependency_graph(self, analysis_params: dict):
-        view = self._get_or_create_data_dependency_graph(analysis_params)
+        view = self._get_or_create_view("data_dependency", DataDepView)
+        view.analysis_params = analysis_params
         self.raise_view(view)
 
     def view_proximity_for_current_function(self, view=None):
         if view is None or view.category != "proximity":
-            view = self._get_or_create_proximity_view()
+            view = self._get_or_create_view("proximity", ProximityView)
 
-        disasm_view = self._get_or_create_disassembly_view()
+        disasm_view = self._get_or_create_view("disassembly", DisassemblyView)
         if disasm_view.current_function is not None:
             view.function = disasm_view.current_function.am_obj
 
@@ -338,7 +603,7 @@ class Workspace:
 
     def decompile_function(self, func: Function, curr_ins=None, view=None):
         """
-        Decompile a function a switch to decompiled view. If curr_ins is
+        Decompile a function and switch to decompiled view. If curr_ins is
         defined, then also switch cursor focus to the position associated
         with the asm instruction addr
 
@@ -349,7 +614,7 @@ class Workspace:
         """
 
         if view is None or view.category != "pseudocode":
-            view = self._get_or_create_pseudocode_view()
+            view = self._get_or_create_view("pseudocode", CodeView)
 
         view.function.am_obj = func
         view.function.am_event(focus=True, focus_addr=curr_ins)
@@ -363,7 +628,7 @@ class Workspace:
         inst.simgrs.am_event(src="new_path")
 
         if view is None:
-            view = self._get_or_create_symexec_view()
+            view = self._get_or_create_view("symexec", SymexecView)
         view.select_simgr(simgr_container)
 
         self.raise_view(view)
@@ -449,7 +714,7 @@ class Workspace:
 
     def interact_program(self, img_name, view=None):
         if view is None or view.category != "interaction":
-            view = self._get_or_create_interaction_view()
+            view = self._get_or_create_view("interaction", InteractionView)
         view.initialize(img_name)
 
         self.raise_view(view)
@@ -466,14 +731,19 @@ class Workspace:
             console.print_text(msg)
             console.print_text("\n")
 
+    def show_view(self, category: str, type_: Type[BaseView], position: str = "center"):
+        view = self._get_or_create_view(category, type_, position=position)
+        self.raise_view(view)
+        view.setFocus()
+
     def show_linear_disassembly_view(self):
-        view = self._get_or_create_disassembly_view()
+        view = self._get_or_create_view("disassembly", DisassemblyView, position="center")
         view.display_linear_viewer()
         self.raise_view(view)
         view.setFocus()
 
     def show_graph_disassembly_view(self):
-        view = self._get_or_create_disassembly_view()
+        view = self._get_or_create_view("disassembly", DisassemblyView, position="center")
         view.display_disasm_graph()
         self.raise_view(view)
         view.setFocus()
@@ -496,101 +766,61 @@ class Workspace:
         self.raise_view(view)
         view.setFocus()
 
-    def create_and_show_hex_view(self):
-        """
-        Create and show a new hex view.
-        """
-        view = self._create_hex_view()
-        self.raise_view(view)
-        view.setFocus()
-
     def show_pseudocode_view(self):
-        """
-        Create code view if it does not exist, then show code view.
-        """
-        view = self._get_or_create_pseudocode_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("pseudocode", CodeView)
 
     def show_hex_view(self):
-        view = self._get_or_create_hex_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("hex", HexView)
 
     def show_symexec_view(self):
-        view = self._get_or_create_symexec_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("symexec", SymexecView)
 
     def show_states_view(self):
-        view = self._get_or_create_states_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("states", StatesView)
 
     def show_strings_view(self):
-        view = self._get_or_create_strings_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("strings", StringsView)
 
     def show_patches_view(self):
-        view = self._get_or_create_patches_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("patches", PatchesView)
 
     def show_interaction_view(self):
-        view = self._get_or_create_interaction_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("interaction", InteractionView)
 
     def show_types_view(self):
-        view = self._get_or_create_types_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("types", TypesView)
 
     def show_functions_view(self):
-        view = self._get_or_create_functions_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("functions", FunctionsView, position="left")
 
     def show_traces_view(self):
-        view = self._get_or_create_traces_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("traces", TracesView)
 
     def show_trace_map_view(self):
-        view = self._get_or_create_trace_map_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("tracemap", TraceMapView, position="top")
 
     def show_registers_view(self):
-        view = self._get_or_create_registers_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("registers", RegistersView, position="right")
 
     def show_stack_view(self):
-        view = self._get_or_create_stack_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("stack", StackView, position="right")
 
     def show_breakpoints_view(self):
-        view = self._get_or_create_breakpoints_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("breakpoints", BreakpointsView)
 
     def show_call_explorer_view(self):
-        view = self._get_or_create_call_explorer_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("call_explorer", CallExplorerView)
 
     def show_console_view(self):
-        view = self._get_or_create_console_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("console", ConsoleView, position="bottom")
 
     def show_log_view(self):
-        view = self._get_or_create_log_view()
-        self.raise_view(view)
-        view.setFocus()
+        self.show_view("log", LogView, position="bottom")
+
+    def create_and_show_hex_view(self):
+        view = HexView(self, self._main_instance, "center")
+        self.add_view(view)
+        return view
 
     def toggle_exec_breakpoint(self):
         if self.main_instance is None:
@@ -615,280 +845,143 @@ class Workspace:
 
         self.main_instance.debugger_mgr.debugger.continue_forward()
 
+    def append_code_to_console(self, hook_code_string):
+        console = self._get_or_create_view("console", ConsoleView)
+        console.set_input_buffer(hook_code_string)
+
+    def patch(self, addr: int, asm: str, pad: bool = True) -> None:
+        ks = self.main_instance.project.arch.keystone
+        block = self.main_instance.project.factory.block(addr)
+        insn = block.disassembly.insns[0]
+        original_bytes: bytes = self.main_instance.project.loader.memory.load(insn.address, insn.size)
+        ks = self.main_instance.project.arch.keystone
+        new_bytes = (ks.asm(asm, addr, as_bytes=True)[0] or b"") if len(asm) else b""
+
+        # Pad to original instruction length
+        byte_length_delta = len(original_bytes) - len(new_bytes)
+        if byte_length_delta > 0:
+            if pad:
+                nop_instruction_bytes = self.main_instance.project.arch.nop_instruction
+                new_bytes += (byte_length_delta // len(nop_instruction_bytes)) * nop_instruction_bytes
+                byte_length_delta = len(original_bytes) - len(new_bytes)
+                if byte_length_delta:
+                    _l.warning("Unable to completely pad remainder")
+        elif byte_length_delta < 0:
+            _l.warning("Patch exceeds original instruction length")
+
+        pm = self.main_instance.project.kb.patches
+        patch = Patch(addr, new_bytes)
+        pm.add_patch_obj(patch)
+        self.main_instance.patches.am_event(added={patch})
+
+    def define_code(self, addr: int):
+        cfg = self.main_instance.cfg
+        if cfg.am_none:
+            _l.error("Run initial CFG analysis before defining code")
+            return
+
+        func = locate_function(self.main_instance, addr)
+        if func is not None:
+            _l.warning("Address %#x is already defined as code", addr)
+            return
+
+        # Attempt flow into preceding function
+        func = cfg.find_function_for_reflow_into_addr(addr)
+        if func:
+            cfg.clear_region_for_reflow(func.addr)
+
+        # Truncate existing memory data
+        if addr in cfg.memory_data:
+            del cfg.memory_data[addr]
+        for md in cfg.memory_data.values():
+            if md.size and md.addr < addr < (md.addr + md.size):
+                md.size = addr - md.addr
+
+        self.generate_cfg(
+            cfg_args={
+                "symbols": False,
+                "function_prologues": False,
+                "start_at_entry": False,
+                "force_smart_scan": False,
+                "force_complete_scan": False,
+                "function_starts": [func.addr if func else addr],
+                "model": self.main_instance.kb.cfgs.get_most_accurate(),
+            }
+        )
+
+    def undefine_code(self, addr: int):
+        cfg = self.main_instance.cfg
+        if cfg.am_none:
+            _l.error("Run initial CFG analysis before undefining code")
+            return
+
+        func = locate_function(self.main_instance, addr)
+        if func is None:
+            _l.warning("Could not determine function for addr %#x", addr)
+            return
+
+        md = MemoryData(addr, 1, MemoryDataSort.Integer)  # FIXME: Type, expand size
+        cfg.memory_data[md.addr] = md.copy()
+        cfg.clear_region_for_reflow(func.addr)
+
+        self.generate_cfg(
+            cfg_args={
+                "symbols": False,
+                "function_prologues": False,
+                "start_at_entry": False,
+                "force_smart_scan": False,
+                "force_complete_scan": False,
+                "function_starts": [func.addr],
+                "model": self.main_instance.kb.cfgs.get_most_accurate(),
+            }
+        )
+
+    def show_function_info(self, function: Union[str, int, "Function"]):
+        if isinstance(function, (str, int)):
+            function = self.main_instance.project.kb.functions[function]
+        FunctionDialog(function).exec_()
+
+    #
+    # Instance Callbacks
+    #
+    def _instance_project_initalization(self, **kwargs):  # pylint:disable=unused-argument
+        if self.main_instance.project.am_none:
+            return
+
+        gui_thread_schedule_async(self.run_analysis)
+
+        self.plugins.handle_project_initialization()
+
+    def _handle_job_exception(self, job: Job, e: Exception):
+        self.log('Exception while running job "%s":' % job.name)
+        self.log(e)
+        self.log("Type %debug to debug it")
+
+    def _update_simgr_debuggers(self, **kwargs):  # pylint:disable=unused-argument
+        sim_dbg = None
+        for dbg in self.main_instance.debugger_list_mgr.debugger_list:
+            if isinstance(dbg, SimulationDebugger):
+                sim_dbg = dbg
+                break
+
+        if len(self.main_instance.simgrs) > 0:
+            if sim_dbg is None:
+                simgrs = self._get_or_create_view("symexec", SymexecView)._simgrs
+                dbg = SimulationDebugger(simgrs, self)
+                self.main_instance.debugger_list_mgr.add_debugger(dbg)
+                self.main_instance.debugger_mgr.set_debugger(dbg)
+        elif sim_dbg is not None:
+            self.main_instance.debugger_list_mgr.remove_debugger(sim_dbg)
+
     #
     # Private methods
     #
 
-    def _get_or_create_disassembly_view(self) -> DisassemblyView:
-        view = self.view_manager.current_view_in_category("disassembly")
+    def _get_or_create_view(self, category: str, view_type: Type[T], position: str = "center") -> T:
+        view = self.view_manager.current_view_in_category(category)
         if view is None:
-            view = self.view_manager.first_view_in_category("disassembly")
+            view = self.view_manager.first_view_in_category(category)
         if view is None:
-            view = DisassemblyView(self._main_instance, "center")
-            self.add_view(view)
-            view.reload()
-
-        return view
-
-    def _create_hex_view(self) -> HexView:
-        """
-        Create a new hex view.
-        """
-        view = HexView(self._main_instance, "center")
-        self.add_view(view)
-        return view
-
-    def _get_or_create_hex_view(self) -> HexView:
-        view = self.view_manager.first_view_in_category("hex")
-
-        if view is None:
-            view = self._create_hex_view()
-
-        return view
-
-    def _get_or_create_pseudocode_view(self):
-        # Take the first pseudo-code view
-        view = self.view_manager.first_view_in_category("pseudocode")
-
-        if view is None:
-            # Create a new pseudo-code view
-            view = CodeView(self._main_instance, "center")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_symexec_view(self):
-        # Take the first symexec view
-        view = self.view_manager.first_view_in_category("symexec")
-
-        if view is None:
-            # Create a new symexec view
-            view = SymexecView(self._main_instance, "center")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_states_view(self):
-        # Take the first states view
-        view = self.view_manager.first_view_in_category("states")
-
-        if view is None:
-            # Create a new states view
-            view = StatesView(self._main_instance, "center")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_strings_view(self):
-        # Take the first strings view
-        view = self.view_manager.first_view_in_category("strings")
-
-        if view is None:
-            # Create a new states view
-            view = StringsView(self._main_instance, "center")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_patches_view(self):
-        # Take the first strings view
-        view = self.view_manager.first_view_in_category("patches")
-
-        if view is None:
-            # Create a new states view
-            view = PatchesView(self._main_instance, "center")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_interaction_view(self):
-        view = self.view_manager.first_view_in_category("interaction")
-        if view is None:
-            # Create a new interaction view
-            view = InteractionView(self._main_instance, "center")
+            view = view_type(self, self._main_instance, position)
             self.add_view(view)
         return view
-
-    def _get_or_create_types_view(self):
-        view = self.view_manager.first_view_in_category("types")
-        if view is None:
-            # Create a new interaction view
-            view = TypesView(self._main_instance, "center")
-            self.add_view(view)
-        return view
-
-    def _get_or_create_data_dependency_graph(self, analysis_params: dict) -> Optional[DataDepView]:
-        # Take the first data dependency view
-        view = self.view_manager.first_view_in_category("data_dependency")
-
-        if view is None:
-            # Create a new data dependency view
-            view = DataDepView(self._main_instance, "center")
-            self.add_view(view)
-
-        # Update DataDepView to utilize new analysis params
-        view.analysis_params = analysis_params
-
-        return view
-
-    def _get_or_create_proximity_view(self) -> ProximityView:
-        # Take the first proximity view
-        view = self.view_manager.first_view_in_category("proximity")
-
-        if view is None:
-            # Create a new proximity view
-            view = ProximityView(self._main_instance, "center")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_console_view(self) -> ConsoleView:
-        # Take the first console view
-        view = self.view_manager.first_view_in_category("console")
-
-        if view is None:
-            # Create a new console view
-            view = ConsoleView(self._main_instance, "bottom")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_log_view(self) -> LogView:
-        # Take the first log view
-        view = self.view_manager.first_view_in_category("log")
-
-        if view is None:
-            # Create a new log view
-            view = LogView(self._main_instance, "bottom")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_functions_view(self) -> FunctionsView:
-        # Take the first functions view
-        view = self.view_manager.first_view_in_category("functions")
-
-        if view is None:
-            # Create a new functions view
-            view = FunctionsView(self._main_instance, "left")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_registers_view(self) -> RegistersView:
-        # Take the first registers view
-        view = self.view_manager.first_view_in_category("registers")
-
-        if view is None:
-            view = RegistersView(self._main_instance, "right")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_stack_view(self) -> RegistersView:
-        # Take the first stack view
-        view = self.view_manager.first_view_in_category("stack")
-
-        if view is None:
-            view = StackView(self._main_instance, "right")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_traces_view(self) -> TracesView:
-        # Take the first traces view
-        view = self.view_manager.first_view_in_category("traces")
-
-        if view is None:
-            view = TracesView(self._main_instance, "center")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_trace_map_view(self) -> TraceMapView:
-        # Take the first tracemap view
-        view = self.view_manager.first_view_in_category("tracemap")
-
-        if view is None:
-            view = TraceMapView(self._main_instance, "top")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_breakpoints_view(self) -> BreakpointsView:
-        # Take the first breakpoints view
-        view = self.view_manager.first_view_in_category("breakpoints")
-
-        if view is None:
-            view = BreakpointsView(self._main_instance, "center")
-            self.add_view(view)
-
-        return view
-
-    def _get_or_create_call_explorer_view(self) -> CallExplorerView:
-        # Take the first function call explorer view
-        view = self.view_manager.first_view_in_category("call_explorer")
-
-        if view is None:
-            view = CallExplorerView(self._main_instance, "right")
-            self.add_view(view)
-
-        return view
-
-    #
-    # UI-related Callback Setters & Manipulation
-    #
-
-    # TODO: should these be removed? Nobody is using them and there is equivalent functionality elsewhere.
-
-    def set_cb_function_backcolor(self, callback: Callable[[Function], None]):
-        fv: FunctionsView = self.view_manager.first_view_in_category("functions")
-        if fv:
-            fv.backcolor_callback = callback
-
-    def set_cb_insn_backcolor(self, callback: Callable[[int, bool], None]):
-        dv: DisassemblyView
-        if len(self.view_manager.views_by_category["disassembly"]) == 1:
-            dv = self.view_manager.first_view_in_category("disassembly")
-        else:
-            dv = self.view_manager.current_view_in_category("disassembly")
-        if dv:
-            dv.insn_backcolor_callback = callback
-
-    def set_cb_label_rename(self, callback):
-        dv: DisassemblyView
-        if len(self.view_manager.views_by_category["disassembly"]) == 1:
-            dv = self.view_manager.first_view_in_category("disassembly")
-        else:
-            dv = self.view_manager.current_view_in_category("disassembly")
-        if dv:
-            dv.label_rename_callback = callback
-
-    def add_disasm_insn_ctx_menu_entry(
-        self, text, callback: Callable[["DisasmInsnContextMenu"], None], add_separator_first=True
-    ):
-        dv: DisassemblyView
-        if len(self.view_manager.views_by_category["disassembly"]) == 1:
-            dv = self.view_manager.first_view_in_category("disassembly")
-        else:
-            dv = self.view_manager.current_view_in_category("disassembly")
-        if dv._insn_menu:
-            dv._insn_menu.add_menu_entry(text, callback, add_separator_first)
-
-    def remove_disasm_insn_ctx_menu_entry(self, text, remove_preceding_separator=True):
-        dv: DisassemblyView
-        if len(self.view_manager.views_by_category["disassembly"]) == 1:
-            dv = self.view_manager.first_view_in_category("disassembly")
-        else:
-            dv = self.view_manager.current_view_in_category("disassembly")
-        if dv._insn_menu:
-            dv._insn_menu.remove_menu_entry(text, remove_preceding_separator)
-
-    def set_cb_set_comment(self, callback):
-        dv: DisassemblyView
-        if len(self.view_manager.views_by_category["disassembly"]) == 1:
-            dv = self.view_manager.first_view_in_category("disassembly")
-        else:
-            dv = self.view_manager.current_view_in_category("disassembly")
-        if dv:
-            dv.set_comment_callback = callback

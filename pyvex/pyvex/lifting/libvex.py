@@ -23,6 +23,7 @@ LIBVEX_SUPPORTED_ARCHES = {
     "PPC32",
     "PPC64",
     "S390X",
+    "RISCV64",
 }
 
 VEX_MAX_INSTRUCTIONS = 99
@@ -47,7 +48,7 @@ class LibVEXLifter(Lifter):
     def get_vex_log():
         return bytes(ffi.buffer(pvc.msg_buffer, pvc.msg_current_size)).decode() if pvc.msg_buffer != ffi.NULL else None
 
-    def lift(self):
+    def _lift(self):
         try:
             _libvex_lock.acquire()
 

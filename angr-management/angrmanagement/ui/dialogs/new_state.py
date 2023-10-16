@@ -50,10 +50,7 @@ StateMetadata.register_default("gui_data")
 
 
 def is_option(o):
-    for ch in o:
-        if ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_":
-            return False
-    return True
+    return all(ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for ch in o)
 
 
 class NewState(QDialog):
@@ -61,11 +58,12 @@ class NewState(QDialog):
     Dialog to create a new simulation state.
     """
 
-    def __init__(self, instance, addr=None, create_simgr=False, parent=None, push_to_instance=True):
+    def __init__(self, workspace, instance, addr=None, create_simgr=False, parent=None, push_to_instance=True):
         super().__init__(parent)
 
         # initialization
 
+        self.workspace = workspace
         self.instance = instance
         self.state = None  # output
 
@@ -329,7 +327,7 @@ class NewState(QDialog):
         parent = QTreeWidgetItem(options_tree)
         parent.setText(0, "All options")
         parent.setFlags(parent.flags() | Qt.ItemIsAutoTristate | Qt.ItemIsUserCheckable)
-        for option in {x for x in angr.sim_options.__dict__.values() if type(x) is str and is_option(x)}:
+        for option in {x for x in angr.sim_options.__dict__.values() if isinstance(x, str) and is_option(x)}:
             child = QTreeWidgetItem(parent)
             child.setText(0, option)
             child.setFlags(child.flags() | Qt.ItemIsUserCheckable)
@@ -430,7 +428,7 @@ class NewState(QDialog):
                 states_list.am_event(src="new", state=self.state)
 
             if self._create_simgr:
-                self.instance.workspace.create_simulation_manager(self.state, name)
+                self.workspace.create_simulation_manager(self.state, name)
 
             self.close()
 

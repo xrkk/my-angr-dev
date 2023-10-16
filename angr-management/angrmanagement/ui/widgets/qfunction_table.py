@@ -1,16 +1,20 @@
 import os
 import string
+from functools import partial
 from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
+import qtawesome as qta
 from angr.analyses.code_tagging import CodeTags
+from cle.backends.uefi_firmware import UefiPE
 from PySide6.QtCore import SIGNAL, QAbstractTableModel, QEvent, Qt
-from PySide6.QtGui import QBrush, QColor, QCursor
+from PySide6.QtGui import QAction, QBrush, QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -41,11 +45,12 @@ class QFunctionTableModel(QAbstractTableModel):
     SIZE_COL = 4
     BLOCKS_COL = 5
 
-    def __init__(self, instance, func_list):
+    def __init__(self, workspace, instance, func_list):
         super().__init__()
 
         self._func_list = None
         self._raw_func_list = func_list
+        self.workspace = workspace
         self.instance = instance
         self._config = Conf
         self._data_cache = {}
@@ -75,7 +80,7 @@ class QFunctionTableModel(QAbstractTableModel):
             # remove the filtering
             self._func_list = None
         else:
-            extra_columns = self.instance.workspace.plugins.count_func_columns()
+            extra_columns = self.workspace.plugins.count_func_columns()
             self._func_list = [
                 func
                 for func in self._raw_func_list
@@ -91,7 +96,7 @@ class QFunctionTableModel(QAbstractTableModel):
         return len(self.func_list)
 
     def columnCount(self, *args, **kwargs):  # pylint:disable=unused-argument
-        return len(self.Headers) + self.instance.workspace.plugins.count_func_columns()
+        return len(self.Headers) + self.workspace.plugins.count_func_columns()
 
     def headerData(self, section, orientation, role):  # pylint:disable=unused-argument
         if role != Qt.DisplayRole:
@@ -101,7 +106,7 @@ class QFunctionTableModel(QAbstractTableModel):
             return self.Headers[section]
         else:
             try:
-                return self.instance.workspace.plugins.get_func_column(section - len(self.Headers))
+                return self.workspace.plugins.get_func_column(section - len(self.Headers))
             except IndexError:
                 # Not enough columns
                 return None
@@ -149,7 +154,7 @@ class QFunctionTableModel(QAbstractTableModel):
             return QBrush(color)
 
         elif role == Qt.BackgroundColorRole:
-            color = self.instance.workspace.plugins.color_func(func)
+            color = self.workspace.plugins.color_func(func)
             if color is None:
                 # default colors
                 if func.from_signature:
@@ -186,7 +191,7 @@ class QFunctionTableModel(QAbstractTableModel):
         elif idx == self.BLOCKS_COL:
             return len(func.block_addrs_set)
         else:
-            return self.instance.workspace.plugins.extract_func_column(func, idx - len(self.Headers))[0]
+            return self.workspace.plugins.extract_func_column(func, idx - len(self.Headers))[0]
 
     def _get_column_text(self, func, idx):
         if idx < len(self.Headers):
@@ -198,11 +203,20 @@ class QFunctionTableModel(QAbstractTableModel):
             else:
                 return str(data)
 
-        return self.instance.workspace.plugins.extract_func_column(func, idx - len(self.Headers))[1]
+        return self.workspace.plugins.extract_func_column(func, idx - len(self.Headers))[1]
 
     @staticmethod
-    def _get_binary_name(func):
-        return os.path.basename(func.binary.binary) if func.binary is not None else ""
+    def _get_binary_name(func) -> str:
+        if func.binary is not None:
+            if func.binary.binary is not None:
+                return os.path.basename(func.binary.binary)
+            if isinstance(func.binary, UefiPE):
+                if func.binary.user_interface_name:
+                    return func.binary.user_interface_name
+                if func.binary.guid:
+                    return str(func.binary.guid)
+                return str(func.binary)
+        return ""
 
     def _get_function_backcolor(self, func) -> QColor:
         return self._backcolor_callback(func)
@@ -234,21 +248,47 @@ class QFunctionTableModel(QAbstractTableModel):
         demangled_name = func.demangled_name
         if demangled_name and keyword in demangled_name.lower():
             return True
-        if type(func.addr) is int:
+        if isinstance(func.addr, int):
             if keyword in "%x" % func.addr:
                 return True
             if keyword in "%#x" % func.addr:
                 return True
         if keyword in ",".join(func.tags).lower():
             return True
-        if func.binary and keyword in func.binary.binary.lower():
+        if func.binary and keyword in self._get_binary_name(func).lower():
             return True
         if extra_columns > 0:
             for idx in range(extra_columns):
-                txt = self.instance.workspace.plugins.extract_func_column(func, idx)[1]
+                txt = self.workspace.plugins.extract_func_column(func, idx)[1]
                 if txt and keyword in txt.lower():
                     return True
         return False
+
+
+class QFunctionTableHeaderView(QHeaderView):
+    """
+    The header for QFunctionTableView.
+    """
+
+    def contextMenuEvent(self, event: "PySide6.QtGui.QContextMenuEvent") -> None:  # pylint:disable=unused-argument
+        menu = QMenu("Column Menu", self)
+        for idx in range(self.model().columnCount()):
+            column_text = self.model().headerData(idx, Qt.Orientation.Horizontal, Qt.DisplayRole)
+            action = QAction(column_text, self)
+            action.setCheckable(True)
+            hidden = self.isSectionHidden(idx)
+            action.setChecked(not hidden)
+            action.setEnabled(hidden or self.visibleSectionCount() > 1)
+            action.toggled.connect(partial(self.setSectionVisible, idx))
+            menu.addAction(action)
+        menu.exec_(QCursor.pos())
+
+    def visibleSectionCount(self):
+        return self.model().columnCount() - self.hiddenSectionCount()
+
+    def setSectionVisible(self, idx, visible):
+        if visible or self.visibleSectionCount() > 1:
+            self.setSectionHidden(idx, not visible)
 
 
 class QFunctionTableView(QTableView):
@@ -256,32 +296,40 @@ class QFunctionTableView(QTableView):
     The table view for QFunctionTable.
     """
 
-    def __init__(self, parent, instance, selection_callback=None):
+    def __init__(self, parent, workspace, instance, selection_callback=None):
         super().__init__(parent)
+        self.workspace = workspace
         self.instance = instance
-        self._context_menu = FunctionContextMenu(self)
+        self._context_menu = FunctionContextMenu(workspace, self)
 
         self._function_table: QFunctionTable = parent
         self._selected_func = ObjectContainer(None, "Currently selected function")
         self._selected_func.am_subscribe(selection_callback)
 
+        header = QFunctionTableHeaderView(Qt.Orientation.Horizontal, self)
+        header.setSectionsClickable(True)
+        self.setHorizontalHeader(header)
         self.horizontalHeader().setVisible(True)
         self.verticalHeader().setVisible(False)
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
 
         self.show_alignment_functions = False
+        self.filter_text = ""
         self._functions = None
-        self._model = QFunctionTableModel(self.instance, [])
+        self._model = QFunctionTableModel(self.workspace, self.instance, [])
 
         self.setModel(self._model)
 
         self.horizontalHeader().setDefaultAlignment(Qt.AlignLeft)
         self.horizontalHeader().setSortIndicatorShown(True)
-        self.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        for i, w in enumerate([80, 80, 80, 50, 50]):
-            self.setColumnWidth(i + 1, w)
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.horizontalHeader().setStretchLastSection(True)
         self.verticalHeader().setDefaultSectionSize(24)
+
+        column_widths = [200, 80, 80, 80, 50, 50]
+        for idx, width in enumerate(column_widths):
+            self.setColumnWidth(idx, width)
 
         # slots
         self.horizontalHeader().sortIndicatorChanged.connect(self.sortByColumn)
@@ -315,6 +363,7 @@ class QFunctionTableView(QTableView):
         self._selected_func.am_subscribe(callback)
 
     def filter(self, keyword):
+        self.filter_text = keyword
         self._model.filter(keyword)
 
     def jump_to_result(self, index=0):
@@ -327,6 +376,7 @@ class QFunctionTableView(QTableView):
             self._model.func_list = [v for v in self._functions.values() if not v.alignment]
         else:
             self._model.func_list = list(self._functions.values())
+        self._model.filter(self.filter_text)
 
     def _on_function_selected(self, model_index):
         row = model_index.row()
@@ -362,15 +412,12 @@ class QFunctionTableFilterBox(QLineEdit):
         self.installEventFilter(self)
 
     def eventFilter(self, obj, event):  # pylint:disable=unused-argument
-        if event.type() == QEvent.KeyPress:
-            if event.key() == Qt.Key_Escape:
-                if self.text():
-                    # clear the text
-                    self.setText("")
-                else:
-                    # close the filterbox and set the function table on focus
-                    self._table.hide_filter_box()
-                return True
+        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+            if self.text():
+                self.setText("")
+            else:
+                self._table.clear_filter_box()
+            return True
 
         return False
 
@@ -384,13 +431,14 @@ class QFunctionTable(QWidget):
         super().__init__(parent)
         self.instance = instance
 
-        self._view: "FunctionsView" = parent
+        self._view: FunctionsView = parent
         self._table_view: QFunctionTableView
         self._filter_box: QFunctionTableFilterBox
         self._toolbar: FunctionTableToolbar
         self._status_label: QLabel
 
         self._last_known_func_addrs: Set[int] = set()
+        self._function_count = None
 
         self._init_widgets(selection_callback)
 
@@ -407,7 +455,7 @@ class QFunctionTable(QWidget):
     @function_manager.setter
     def function_manager(self, v):
         if v is not None:
-            self._view.set_function_count(len(v))
+            self._function_count = len(v)
         if self._table_view is not None:
             self._table_view.function_manager = v
         else:
@@ -424,14 +472,14 @@ class QFunctionTable(QWidget):
         if self.function_manager is None:
             return
 
-        if self._view.function_count != len(self.function_manager):
+        if self._function_count != len(self.function_manager):
             # the number of functions has increased - we need to update the table
             added_funcs, removed_funcs = self._updated_functions(self.function_manager)
         else:
             added_funcs, removed_funcs = None, None
 
         self._table_view.refresh(added_funcs=added_funcs, removed_funcs=removed_funcs)
-        self._view.set_function_count(len(self._last_known_func_addrs))
+        self._function_count = len(self._last_known_func_addrs)
         self.update_displayed_function_count()
 
     def show_filter_box(self, prefix=""):
@@ -440,10 +488,8 @@ class QFunctionTable(QWidget):
         self._filter_box.show()
         self._filter_box.setFocus()
 
-    def hide_filter_box(self):
-        # clear the text inside filter box
+    def clear_filter_box(self):
         self._filter_box.setText("")
-        self._filter_box.hide()
         self._table_view.setFocus()
 
     def toggle_show_alignment_functions(self):
@@ -460,18 +506,13 @@ class QFunctionTable(QWidget):
             self._status_label.setText("")
             return
         if cnt == len(self.function_manager):
-            self._view.set_displayed_function_count(None)  # no filtering
             self._status_label.setText("%d functions" % cnt)
         else:
-            self._view.set_displayed_function_count(cnt)
             self._status_label.setText("%d/%d functions" % (cnt, len(self.function_manager)))
 
     def filter_functions(self, text):
         self._table_view.filter(text)
-        if not text:
-            self._view.set_displayed_function_count(None)
-        else:
-            self.update_displayed_function_count()
+        self.update_displayed_function_count()
 
     #
     # Private methods
@@ -479,11 +520,15 @@ class QFunctionTable(QWidget):
 
     def _init_widgets(self, selection_callback=None):
         # function table view
-        self._table_view = QFunctionTableView(self, self.instance, selection_callback)
+        self._table_view = QFunctionTableView(self, self._view.workspace, self.instance, selection_callback)
 
         # filter text box
         self._filter_box = QFunctionTableFilterBox(self)
-        self._filter_box.hide()
+        self._filter_box.setClearButtonEnabled(True)
+        self._filter_box.addAction(
+            qta.icon("fa5s.search", color=Conf.palette_placeholdertext), QLineEdit.LeadingPosition
+        )
+        self._filter_box.setPlaceholderText("Filter by name...")
         self._filter_box.textChanged.connect(self._on_filter_box_text_changed)
         self._filter_box.returnPressed.connect(self._on_filter_box_return_pressed)
 
@@ -496,13 +541,12 @@ class QFunctionTable(QWidget):
         status_lyt.setContentsMargins(3, 3, 3, 3)
         status_lyt.setSpacing(3)
         status_lyt.addWidget(self._toolbar.qtoolbar())
-        status_lyt.addStretch(0)
+        status_lyt.addWidget(self._filter_box)
         status_lyt.addWidget(self._status_label)
 
         # layout
         layout = QVBoxLayout()
         layout.addLayout(status_lyt)
-        layout.addWidget(self._filter_box)
         layout.addWidget(self._table_view)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -527,5 +571,4 @@ class QFunctionTable(QWidget):
 
     def _on_filter_box_return_pressed(self):
         self._table_view.jump_to_result()
-        # Hide the filter box
-        self.hide_filter_box()
+        self.clear_filter_box()
